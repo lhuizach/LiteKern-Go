@@ -192,8 +192,12 @@ void shell_flush(void)
         if (dt > drag_slowest)
             drag_slowest = dt;
     } else if (!wm_grabbed() && drag_redraws) {
-        kprintf("desktop: drag: %u redraws, slowest %u ms\n", drag_redraws, drag_slowest);
+        /* Reset first: with the Log app open, kprintf draws into its window,
+         * which comes back here, and would log again and again until the
+         * kernel stack overflowed. */
+        uint32_t n = drag_redraws, slowest = drag_slowest;
         drag_redraws = drag_slowest = 0;
+        kprintf("desktop: drag: %u redraws, slowest %u ms\n", n, slowest);
     }
 }
 
