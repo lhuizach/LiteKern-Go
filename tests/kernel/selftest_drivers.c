@@ -6,6 +6,7 @@
  * line per check and a summary. With -DLKX_SELFTEST_BAD_DRIVER it also
  * registers a driver with a missing operation, which must panic. */
 #include "drivers/builtin.h"
+#include "kernel/cpu.h"
 #include "kernel/driver.h"
 #include "kernel/errno.h"
 #include "kernel/fb.h"
@@ -203,6 +204,18 @@ void selftest_drivers_run(void)
     check(dev_read(mouse, mev, sizeof(mev)) == 0, "reading with no movement returns 0 (non-blocking)");
     check(dev_ioctl(mouse, MOUSE_GET_DROPPED, &dropped) == 0 && dropped == 0, "no mouse events dropped");
     check(irq_register(12, ide_shutdown_irq, 0) == -EBUSY, "a second handler on IRQ 12 -> -EBUSY");
+
+    /* rdmsr_safe (kernel/cpu.h), which the hardware probe relies on: a real
+     * register reads, a missing one returns -1 instead of panicking. QEMU
+     * reads unknown MSRs as 0, but faults on the x2APIC range when the CPU
+     * has no x2APIC (the n270 model doesn't). */
+    uint64_t v = 0;
+    uint32_t a, b, c, d;
+    cpuid(1, &a, &b, &c, &d);
+    check(rdmsr_safe(0x1a0, &v) == 0 && v == rdmsr(0x1a0),
+          "rdmsr_safe reads what rdmsr does (IA32_MISC_ENABLE)");
+    check(!(c >> 21 & 1) && rdmsr_safe(0x802, &v) == -1, "rdmsr_safe of a missing MSR (x2APIC ID) -> -1");
+    check(rdmsr_safe(0x1a0, &v) == 0, "and the kernel carries on reading MSRs after it");
 
     kprintf("selftest: drivers %d/%d passed\n", passed, passed + failed);
     if (failed)

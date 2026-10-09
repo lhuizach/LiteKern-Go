@@ -14,11 +14,16 @@ extern const driver_t mouse_driver;
 extern const driver_t rtc_driver;
 extern const driver_t bios_disk_driver;
 extern const driver_t ata_driver;
+extern const driver_t ec_driver;
 
 /* Register every built-in driver (before any binding happens). */
 void drivers_register(void);
 
 /* Create and bind the legacy (non-PCI) devices. */
 void drivers_add_legacy_devices(const struct boot_info *bi);
+
+/* The devices ACPI's tables describe (the embedded controller): after
+ * acpi_init(). */
+void drivers_add_acpi_devices(void);
 
 #endif

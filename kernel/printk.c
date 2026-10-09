@@ -12,9 +12,18 @@ static char log_buf[16 * 1024];
 static uint32_t log_len;
 static int panicking;
 static int serial_only;     /* kdebugf(): serial, not the log or the screen */
+static char *sink;          /* ksnprintf(): into this buffer instead */
+static uint32_t sink_left;
 
 static void out(char c)
 {
+    if (sink) {
+        if (sink_left > 1) {
+            *sink++ = c;
+            sink_left--;
+        }
+        return;
+    }
     serial_putc(c);
     if (serial_only)
         return;
@@ -128,6 +137,22 @@ void kprintf(const char *fmt, ...)
     vkprintf(fmt, ap);
     va_end(ap);
     console_flush();        /* one screen update per message, not per character */
+}
+
+void ksnprintf(char *buf, uint32_t size, const char *fmt, ...)
+{
+    if (!size)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    uint32_t flags = irq_save();        /* nothing else may print into it meanwhile */
+    sink = buf;
+    sink_left = size;
+    vkprintf(fmt, ap);
+    *sink = '\0';
+    sink = 0;
+    irq_restore(flags);
+    va_end(ap);
 }
 
 void kdebugf(const char *fmt, ...)

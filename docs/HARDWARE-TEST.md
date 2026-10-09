@@ -99,6 +99,34 @@ If Files or the log shows a `boot0: BIOS read ... failed (AH=0x..)` line, photo 
 | Windows | Two apps open at once; dragging a window by its title bar keeps up with the touchpad; minimise, maximise and the dock's dots behave as in the videos |
 | Shut Down | The power menu's Shut Down switches the EeePC off by itself (the Log app's `acpi:` line says what it found; photo it if it doesn't) |
 
+### G. Hardware Probe (`litekernx.img`, 2026-10-03 and later)
+Stage (a) of the monitor and fan control app (`docs/MONITOR.md`). It only reads; nothing is written to the hardware. Run it on mains power first, then again on battery.
+
+| # | Do | Photograph |
+|---|---|---|
+| 1 | Show Apps → **Hardware Probe**. Wait a second | **Every section** (click each one in the sidebar; scroll with PgDn or the scrollbar until the end). Summary, Processor, Firmware and Embedded controller matter most |
+| 2 | **Read EC RAM** (header bar) → **Read**, with the EeePC idle for a minute | The Embedded controller page: its 16 rows of hex |
+| 3 | Make the CPU busy: Settings → Screen Saver → **Preview**, and leave it 2 minutes (the ribbons keep the CPU working). Touch the touchpad, then **Rescan** in Hardware Probe straight away | The hex rows again: changed bytes are highlighted, and the footer counts them |
+| 4 | Let it cool for 2 minutes with the lid open, **Rescan** | The hex rows, and the EC fields page |
+| 5 | Unplug the charger, **Rescan** | The hex rows (the AC and battery bytes change) |
+| 6 | Open the Log app | The `probe:` lines and the `ec0:` and `smbios:` lines |
+
+What to look for: the **Firmware** page's BIOS version; whether **Embedded controller** says found (accent dot) and where its ports came from; the **EC fields** count; the **Thermal sensor (DTS)** temperature and whether TjMax was read or assumed; whether **P-states** were found. A red dot anywhere is worth a close-up.
+
+### G2. Finding the fan: Watch and Stress (`litekernx.img`, 2026-10-04 and later)
+The first EeePC run mapped the battery, AC and CPU-temperature bytes by hand. This finds the **fan** byte, with the app doing the logging. Run it on the charger, lid open, on a hard surface; nothing is written to the hardware.
+
+| # | Do | Photograph |
+|---|---|---|
+| 1 | Show Apps → **Hardware Probe**, press **Watch** → **Watch**. Leave it 20 seconds | nothing yet |
+| 2 | Press **Stress** (it starts the CPU test, up to 4 minutes; **Stop stress** ends it any time). **Listen to the fan** the whole time and note when it gets louder | the **Watch** page at about 1 minute, and again just before it ends: the bytes that moved, with their lowest and highest values |
+| 3 | While it runs, **unplug the charger for 20 seconds, then plug it back** | the **Watch** page: the event lines ("charger unplugged (0xd0 bit 0)") are logged by themselves |
+| 4 | When Stress ends (or is stopped), leave Watch on 2 more minutes while it cools | the **Watch** page again |
+| 5 | Press **Stop watch**, open **EC fields** | all 3 screens (PgDn between them): about 60 names and current values each |
+| 6 | Open the Log app | the `probe: watch ...` lines (one per byte that moved) |
+
+Stress stops by itself if the EC's CPU temperature reaches 85 °C, reads nonsense, or the EC stops answering. The firmware keeps running the fan throughout. Tell me what the fan did: when it got louder, whether it ever started or stopped, and how loud at the end.
+
 ## 5. Send back
 The photos (or just the answers to the tables). I'll tick the roadmap boxes, fill in the measurements table in `docs/BOOT-BUDGET.md`, and fix anything the real hardware disagrees with.
 

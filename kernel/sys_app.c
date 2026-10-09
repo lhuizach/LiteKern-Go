@@ -1,7 +1,10 @@
 #include "kernel/sys_app.h"
 #include "kernel/errno.h"
 #include "kernel/desktop.h"
+#include "kernel/driver.h"
+#include "kernel/ec.h"
 #include "kernel/fat32.h"
+#include "kernel/hwprobe.h"
 #include "kernel/font.h"
 #include "kernel/lkx.h"
 #include "kernel/kern86_abi.h"
@@ -313,6 +316,30 @@ static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, u
     return fat_read(v, &e, 0, (void *)buf, len);
 }
 
+
+static int hw_probe(uint32_t out, uint32_t max, uint32_t flags)
+{
+    if (max > 1024 || user_check(out, max * (uint32_t)sizeof(struct k86_probe_item), 1))
+        return -EFAULT;
+    return hwprobe((struct k86_probe_item *)out, (int)max, flags);
+}
+
+/* The embedded controller's 256 bytes, read only (the hardware probe's Watch). */
+static int ec_read(uint32_t out)
+{
+    static uint8_t ram[256];
+    if (user_check(out, sizeof(ram), 1))
+        return -EFAULT;
+    device_t *dev = device_find("ec0");
+    if (!dev || dev->state != DEVICE_BOUND)
+        return -ENODEV;
+    int err = dev_ioctl(dev, EC_READ_ALL, ram);
+    if (err)
+        return err;
+    memcpy((void *)out, ram, sizeof(ram));
+    return 0;
+}
+
 int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
 {
     switch (nr) {
@@ -331,6 +358,9 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_WALLPAPER_THUMB: return wallpaper_thumbnail(a1, a2, (int)a3, (int)a4);
     case SYS_FS_READ:        return fs_read(a1, a2, a3, a4, a5);
     case SYS_SCREENSAVER_SET: return screensaver_set(a1, a2);
+    case SYS_HW_PROBE:       return hw_probe(a1, a2, a3);
+    case SYS_TIMER_SET:      return lkx_set_timer(a1);
+    case SYS_EC_READ:        return ec_read(a1);
     default:                 return -ENOSYS;
     }
 }

@@ -25,7 +25,8 @@ Coordinates may use $vars and arithmetic: "to $r-24 $y+24".
 Recording: build the image with -DANIM_SLOW=N and set LKX_SLOW=N here; every
 pause in the script is then N times longer too, and the video is played back
 N times faster, so it shows real speed with N times the frames. Encoding
-needs an ffmpeg: LKX_FFMPEG (default: ffmpeg).
+needs an ffmpeg: LKX_FFMPEG (default: ffmpeg). LKX_QEMU_ARGS adds QEMU options
+(e.g. "-acpitable file=X.aml").
 """
 import os, re, socket, struct, subprocess, sys, threading, time, zlib
 
@@ -49,8 +50,10 @@ def main():
     if os.path.exists(sock):
         os.remove(sock)
     logf = open(log, "w")
+    extra = os.environ.get("LKX_QEMU_ARGS", "").split()
     qemu = subprocess.Popen(["bash", "vm/qemu.sh", "--headless", "--image", img, "--",
-                             "-monitor", f"unix:{sock},server,nowait"], stdout=logf, stderr=subprocess.STDOUT)
+                             "-monitor", f"unix:{sock},server,nowait"] + extra,
+                            stdout=logf, stderr=subprocess.STDOUT)
     for _ in range(100):
         if os.path.exists(sock):
             break

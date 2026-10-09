@@ -18,7 +18,7 @@ uint32_t pci_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset)
     return inl(PCI_CONFIG_DATA);
 }
 
-static const char *class_name(uint8_t cls, uint8_t sub)
+const char *pci_class_name(uint8_t cls, uint8_t sub)
 {
     static const struct { uint8_t cls, sub; const char *name; } names[] = {
         { 0x01, 0x01, "IDE controller" },
@@ -122,7 +122,7 @@ void pci_report(void)
         const struct pci_device *d = &pci_devices[i];
         kprintf("pci %02x:%02x.%u %04x:%04x class %02x.%02x.%02x rev %02x %s\n",
                 d->bus, d->dev, d->func, d->vendor_id, d->device_id, d->class_code,
-                d->subclass, d->prog_if, d->revision, class_name(d->class_code, d->subclass));
+                d->subclass, d->prog_if, d->revision, pci_class_name(d->class_code, d->subclass));
     }
     kprintf("pci: %u devices on %u buses\n", pci_device_count + dropped, bus_count);
     if (dropped)

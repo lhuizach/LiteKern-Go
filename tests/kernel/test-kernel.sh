@@ -48,6 +48,12 @@ make -s BUILD=build/test-apps FAT_MB=64 "EXTRA_APPS=tests/apps/crash tests/apps/
 make -s BUILD=build/test-saver SCREENSAVER=2 build/test-saver/litekernx.img >/dev/null || exit 1
 make -s BUILD=build/test-widgets EXTRA_CFLAGS=-DLKX_SELFTEST_WIDGETS \
     EXTRA_KERNEL_SRCS=tests/kernel/selftest_widgets.c build/test-widgets/litekernx.img >/dev/null || exit 1
+make -s BUILD=build/test-fakeec EXTRA_CFLAGS=-DLKX_FAKE_EC build/test-fakeec/litekernx.img >/dev/null || exit 1
+# The hardware probe's test ACPI table and a blank second disk (for SMART).
+mkdir -p build/test-probe
+python3 tests/kernel/make-probe-ssdt.py build/test-probe/ssdt.aml || exit 1
+rm -f build/test-probe/disk.img
+truncate -s 64M build/test-probe/disk.img
 
 # The 1024x600 video BIOS patch, tested on QEMU's q35 (945-style PAM registers)
 # with a video BIOS carrying the EeePC's Intel mode table. SeaBIOS on q35
@@ -113,7 +119,7 @@ NAVY=1e3a5f TEXT=c8d0dc RED=801010 WHITE=ffffff
 #   dock_x I N: the centre of dock item I of N pinned apps (Show Apps is item
 #     N), with no other app open: the dock is Files, Log, Show Apps
 #   grid_x I N: of app I in the app menu (one row, y 311-415; centre 363).
-#     Its order: Files, Calculator, Settings, Log
+#     Its order: Files, Calculator, Settings, Hardware Probe, Log
 #   win_close W H: the close button of a W x H window, which opens centred
 #     below the 30 px top bar (kernel/wm.c); win_xy W H: its top-left corner
 dock_x() { echo $(( (1024 - (($2 + 1) * 60 + 16)) / 2 + 38 + $1 * 60 )); }
@@ -122,11 +128,12 @@ win_xy() { echo "$(( (1024 - $1) / 2 )) $(( 30 + (738 - $2) / 2 ))"; }
 win_close() { set -- $(( (1024 - $1) / 2 + $1 - 24 )) $(( 30 + (738 - $2) / 2 + 24 )); echo "$1 $2"; }
 NAPPS=$(( $(ls -d apps/*/ | wc -l) + 1 ))      # the apps/ folders, then Log
 FILES_X=$(dock_x 0 2) LOG_X=$(dock_x 1 2) SHOWAPPS_X=$(dock_x 2 2) DOCK_Y=728 GRID_Y=363
-CALC_TILE=$(grid_x 1 "$NAPPS") SETTINGS_TILE=$(grid_x 2 "$NAPPS") LOG_TILE=$(grid_x 3 "$NAPPS")
+CALC_TILE=$(grid_x 1 "$NAPPS") SETTINGS_TILE=$(grid_x 2 "$NAPPS") PROBE_TILE=$(grid_x 3 "$NAPPS")
+LOG_TILE=$(grid_x 4 "$NAPPS")
 FILES_ICON="$((FILES_X - 30)),698,$((FILES_X + 30)),758"      # the folder icon in the dock
 FILES_BLUE=63a0e9                                             # its front (assets/icons/files.png)
 FILES_CLOSE=$(win_close 760 500) LOG_CLOSE=$(win_close 760 480)
-CALC_CLOSE=$(win_close 420 548) SETTINGS_CLOSE=$(win_close 944 552)
+CALC_CLOSE=$(win_close 420 548) SETTINGS_CLOSE=$(win_close 944 552) PROBE_CLOSE=$(win_close 1000 560)
 
 # Pointer paths: absolute positions turned into the relative moves QEMU sends.
 #   path; go X Y; click; key a b; ... then KEYS="$P"
@@ -209,7 +216,8 @@ check "binds the drivers (COM1, display, keyboard, touchpad, clock, disks)" \
     '^dev rtc0 driver=cmos-rtc bound$' \
     '^dev boot0 driver=bios-disk bound$' \
     '^ata0: no internal disk \(only the one we booted from\)$' \
-    '^drivers: 7 registered, 6 devices bound, 1 failed; [0-9]+ PCI devices without a driver$'
+    '^drivers: 8 registered, 6 devices bound, 1 failed; [0-9]+ PCI devices without a driver$' \
+    '^ec0: no embedded controller in the ACPI tables$'
 
 # docs/BOOT-BUDGET.md: <= 5 s from stage 1 to the desktop (QEMU here; the
 # EeePC numbers are what count).
@@ -484,6 +492,55 @@ check "Settings: the screen saver's idle time, and a preview" \
     '^screensaver: off after [0-9]+ s: [1-9][0-9]* frames' \
     '!PANIC'
 
+# The hardware probe (kernel/hwprobe.h, apps/probe/), with a test SSDT that
+# declares what an Eee PC's tables do (tests/kernel/make-probe-ssdt.py: an EC
+# with named fields, a battery, an AC adapter, the ASUS device, a thermal
+# zone, P-states) and a second disk for SMART. QEMU has no EC: it's declared,
+# but nothing answers, so E (Read EC RAM) shows the EC page with no dialog
+# and nothing is read.
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click; add sleep:2 e sleep:0.5
+KEYS="$P" KEYS_DONE='^user: probe: [0-9]+ items$' boot_until build/litekernx.img "$done_re" 30 \
+    -acpitable file=build/test-probe/ssdt.aml \
+    -drive file=build/test-probe/disk.img,format=raw,if=ide,index=1
+check "Hardware Probe: CPU, firmware, ACPI devices, EC fields, SMART; reads only" \
+    '^smbios: 2\.[0-9]+; QEMU Standard PC' \
+    '^ec0: \\_SB\.EC0 declared at 0x62/0x66, but nothing answers there$' \
+    '^user: probe: open$' \
+    '^probe: cpu: Processor: Intel\(R\) Atom\(TM\) CPU N270 ' \
+    '^probe: cpu: P-state: 1666 MHz, 2500 mW \[ok\] _PSS\[0\] in the SSDT: control 0xa26' \
+    '^probe: acpi: PNP0C0A: \\_SB\.BAT0 \[info\] battery$' \
+    '^probe: acpi: Thermal zone: \\_TZ\.TZ00 \[partial\] _CRT 100 C, _PSV 90 C, _HOT \?' \
+    '^probe: acpi: Processor: \\_PR\.CPU0 \[info\] ID 1, P_BLK 0x810 \(6 bytes' \
+    '^probe: ec: Embedded controller: \\_SB\.EC0 \[error\] declared, but nothing answers' \
+    '^probe: ec-field: TAH0: 0x60, 1 byte \[info\] ECOR$' \
+    '^probe: ec-field: ACAP: 0x62 bit 3, 1 bit \[info\] ECOR$' \
+    '^probe: ec-field: RPM0: 0x93, 2 bytes \[info\] ECOR$' \
+    '^probe: disk: SMART: on, read \[ok\]' \
+    '^probe: Drive temperature: [0-9]+ C \(SMART\) \[ok\]$' \
+    '^probe: Fan control: not possible \[missing\]$' \
+    '^probe: Radio and device switches: ASUS device found \[partial\]$' \
+    '^user: probe: [0-9]+ items$' \
+    '!PANIC|exception|EC RAM read'
+
+# Watch and Stress, on a build with a fake EC (-DLKX_FAKE_EC: the CPU
+# temperature climbs 40 to 59 C, the charger toggles every 10 s). W agrees to
+# the read, S starts the CPU test, and a second W stops both: it only gets
+# through if the app keeps taking input while it's busy (SYS_TIMER_SET must
+# let the kernel's loop run between ticks).
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click
+add sleep:2 w ret sleep:1 s sleep:4 w
+KEYS="$P" KEYS_DONE='^user: probe: watch ended after ' boot_until build/test-fakeec/litekernx.img "$done_re" 40 \
+    -acpitable file=build/test-probe/ssdt.aml
+check "Hardware Probe: Watch and Stress keep the desktop responsive, and stop when asked" \
+    '^ec0: .*FAKE \(test build\); read-only$' \
+    '^user: probe: EC RAM reads allowed$' \
+    '^user: probe: watch started$' \
+    '^user: probe: watch 0:0[0-9]  stress started \(4 min, stops at 85 C\)$' \
+    '^user: probe: watch byte 0x51 now [0-9]+ min [0-9]+ max [0-9]+ changes [0-9]+$' \
+    '^user: probe: watch 0:0[0-9]  watch stopped$' \
+    '^user: probe: watch ended after [0-9]+ samples, [0-9]+ bytes changed$' \
+    '!PANIC|exception|stopped responding'
+
 # Calculator: sums typed on the keyboard, plus one with its own buttons (the
 # keypad's "7" is at column 0, row 1 of its 420x548 window: x 302 + 1 + 26 +
 # 42, y 125 + 47 + 24 + 112 + 16 + 66 + 28). Exact decimals; overflow and
@@ -519,6 +576,8 @@ go "$FILES_X" "$DOCK_Y"; click; add sleep:1.5; go $FILES_CLOSE; click; add sleep
 go "$LOG_X" "$DOCK_Y"; click; add sleep:1.5; go $LOG_CLOSE; click; add sleep:1
 go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$CALC_TILE" "$GRID_Y"; click; add sleep:1.5; go $CALC_CLOSE; click; add sleep:1
 go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5; go $SETTINGS_CLOSE; click; add sleep:1
+go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click; add sleep:2; go $PROBE_CLOSE; click; add sleep:1
+go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click; add sleep:2; go $PROBE_CLOSE; click; add sleep:1
 go 998 15; click; go 930 91; click
 WAIT_OFF=1 KEYS="$P" KEYS_DONE='^power: switching off' boot_until build/litekernx.img "$done_re" 60
 [ "$qemu_off" = 1 ] && out+=$'\n'"vm: switched off" || out+=$'\n'"vm: STILL ON"
@@ -527,6 +586,7 @@ check "run-through: open and close every app, then shut down (ACPI)" \
     '^lkx: Files exited \(0\)$' \
     '^lkx: Calculator exited \(0\)$' \
     '^lkx: Settings exited \(0\)$' \
+    '^lkx: Hardware Probe exited \(0\)$' \
     '^desktop: close Log$' \
     '^shell: shut down$' \
     '^power: switching off \(ACPI S5\)$' \

@@ -41,6 +41,15 @@
 #define SYS_SCREENSAVER_SET 18  /* ebx: seconds without input before the screen saver
                                  * starts (0 = never, at most 3600); or ecx = 1: show it
                                  * now (a preview; any input ends it) */
+#define SYS_TIMER_SET       20  /* ebx: milliseconds between K86_EVENT_TIMER events, 0 = off.
+                                 * The app is woken when one is due; it never wakes sooner than
+                                 * the kernel gets a turn (at least once a second) */
+#define SYS_EC_READ         21  /* ebx: uint8_t[256] out: the embedded controller's RAM, read
+                                 * only. -ENODEV if there is none */
+#define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
+                                 * (K86_PROBE_*). Lists the sensors and controls the kernel
+                                 * can see on this machine; only ever reads. Returns the
+                                 * count (all of them: may be > max) */
 
 /* --- memory -------------------------------------------------------------------- */
 #define K86_APP_BASE        0x80000000u     /* where an app's image is loaded */
@@ -89,6 +98,7 @@ struct k86_header {
 #define K86_EVENT_THEME     5   /* the style or accent changed: redraw (the SDK has already
                                  * fetched the new theme) */
 #define K86_EVENT_RESIZE    6   /* x, y: the canvas's new width and height: lay out, redraw */
+#define K86_EVENT_TIMER     7   /* SYS_TIMER_SET's interval is up */
 
 struct k86_event {
     int32_t type;
@@ -120,6 +130,33 @@ struct k86_appearance {
     int32_t nwallpapers;
     char wallpapers[K86_MAX_WALLPAPERS][32];
     int32_t screensaver_s;  /* seconds without input before it starts; 0 = never */
+};
+
+/* The hardware probe (SYS_HW_PROBE): one line of its report each. */
+#define K86_PROBE_EC_RAM    1   /* flag: also read the embedded controller's 256 bytes */
+
+#define K86_PS_SUMMARY      0   /* sections */
+#define K86_PS_CPU          1
+#define K86_PS_FIRMWARE     2
+#define K86_PS_ACPI         3
+#define K86_PS_EC           4
+#define K86_PS_EC_FIELDS    5
+#define K86_PS_DISK         6
+#define K86_PS_POWER        7
+#define K86_PS_DEVICES      8
+#define K86_PROBE_SECTIONS  9
+
+#define K86_PROBE_INFO      0   /* statuses: a plain fact */
+#define K86_PROBE_OK        1   /* there, and read */
+#define K86_PROBE_PARTIAL   2   /* there, but not usable yet (the note says why) */
+#define K86_PROBE_MISSING   3   /* not on this machine, or LiteKern X can't reach it */
+#define K86_PROBE_ERROR     4   /* there, but reading it failed or gave nonsense */
+
+struct k86_probe_item {
+    uint8_t section, status, pad[2];
+    char name[28];
+    char value[56];
+    char note[80];
 };
 
 struct k86_dirent {

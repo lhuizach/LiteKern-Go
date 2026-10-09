@@ -23,6 +23,7 @@
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/serial.h"
+#include "kernel/smbios.h"
 #include "kernel/splash.h"
 #include "kernel/status.h"
 #include "kernel/theme.h"
@@ -346,6 +347,8 @@ void kmain(uint32_t magic, const struct boot_info *handoff)
 #endif
 
     acpi_init();            /* power-off: the firmware's tables (before any app's address space) */
+    smbios_init();          /* the BIOS version, for the hardware probe (mapped now, likewise) */
+    drivers_add_acpi_devices();     /* the embedded controller, read-only */
     storage_init();         /* the disks Files can open (reads each partition table) */
     splash_progress(45);
     idle(bi);

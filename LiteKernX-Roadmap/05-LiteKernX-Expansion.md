@@ -39,7 +39,7 @@ Goal: the things removed from `docs/NON-GOALS.md` on 2026-09-29 that are too big
 - [ ] Translatable UI strings; non-Latin text needs a font that covers it
 
 ## 7. x86-64 (long mode)
-- [ ] **The EeePC's Atom N270 is 32-bit only and can't run 64-bit code.** This only makes sense together with new target hardware, and "hardware other than the EeePC" is still a non-goal. Decide the hardware first, then move it off `docs/NON-GOALS.md`
+- [ ] **The EeePC's Atom N280 is 32-bit only and can't run 64-bit code.** This only makes sense together with new target hardware, and "hardware other than the EeePC" is still a non-goal. Decide the hardware first, then move it off `docs/NON-GOALS.md`
 - [ ] 64-bit paging, GDT/IDT, syscall entry, and a 64-bit KERN86 ABI
 
 ## 8. Extensions (planned 2026-10-02, the user's request)
@@ -67,6 +67,22 @@ The pieces:
   - preinstalled ones can be edited freely, with **Reset to original**
 - [ ] **Starter extensions**, preinstalled and off: Seconds Clock, Window Snapper (keyboard snapping), System Monitor (memory, apps open), Sticky Notes, Dock Tweaks, Theme Switcher. They double as examples
 - [ ] Tests: the API from a test extension; a broken extension (a syntax error, a runtime error, an endless loop) never takes the desktop down; safe mode
+
+## 9. Monitor and fan control (planned 2026-10-03, the user's request; brought forward)
+**A deliberate exception to the phase order**, like §1's shutdown: started before v1.0 on the user's decision. A lightweight system monitor with fan control, built for the EeePC. Design, safety rules and stages: `docs/MONITOR.md`. Decided with the user:
+- **The kernel is the privileged helper.** Ring 3 can't reach ports or MSRs, so hardware access, the fan's safety floors, the emergency override and the hand-back to firmware live in the kernel, behind KERN86 calls. A crashed or stopped app can't leave the fan in manual mode
+- **The EC is read directly**, through a register map worked out from the EeePC's ACPI tables, not by running AML (no interpreter, no ACPICA). §1's AML question stays open for battery methods and suspend
+- **RAM only for now:** no FAT32 file writes yet, so settings, profiles and history last until a restart; CSV export and profile import/export wait for §8's SYS_FS_WRITE
+- **Monitoring only** until the register map is verified for the BIOS version and the user confirms a warning; that confirmation is asked again after every restart
+
+Stages, each finished before the next:
+- [x] **(a) Hardware probe** (2026-10-03): `kernel/hwprobe.c` and the Hardware Probe app list what this machine has and what LiteKern X can reach. Read-only: `rdmsr_safe` (a missing MSR can't panic), the CPU's thermal sensor and SpeedStep MSRs, SMBIOS (the BIOS version), every ACPI table, `kernel/aml.c` (devices and _HIDs, regions, EC fields, thermal zones, P-states, without running AML), `drivers/ec.c` (the EC, reads only), SMART in `drivers/ata.c`. Tested in QEMU with a test SSDT (`tests/kernel/make-probe-ssdt.py`). **Still to do: run it on the EeePC** (`docs/HARDWARE-TEST.md` §5)
+- [ ] (b) Read-only monitoring: kernel sampling (CPU %, clock, temperatures, fan, memory, disk, battery), a timer event for apps, the dashboard
+- [ ] (c) History and graphs (RAM, tiered: 1 s / 1 min / 5 min)
+- [ ] (d) Alerts with duration conditions, on screen and as a beep
+- [ ] (e) Fan control with every safety feature (floors, emergency maximum, sanity checks, hand-back to firmware on exit, crash or lost sensors)
+- [ ] (f) Profiles (Silent, Balanced, Performance, custom; AC/battery switching) and power management (SpeedStep, backlight)
+- [ ] (g) Top bar indicator and polish
 
 ---
 

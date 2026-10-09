@@ -14,6 +14,9 @@ void vkprintf(const char *fmt, va_list ap);
  * positions) that the tests read but that would cost screen redraws. */
 void kdebugf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+/* kprintf's formats into buf (always NUL-terminated, cut short to fit). */
+void ksnprintf(char *buf, uint32_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+
 /* Write exactly n bytes (no formatting, no NUL needed). */
 void kwrite(const char *s, unsigned n);
 

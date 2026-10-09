@@ -1,4 +1,5 @@
 #include "kernel/idt.h"
+#include "kernel/cpu.h"
 #include "kernel/gdt.h"
 #include "kernel/io.h"
 #include "kernel/irq.h"
@@ -117,5 +118,7 @@ void interrupt_handler(struct int_frame *f)
     }
     if (from_user)
         user_fault(f);
+    if (cpu_fault_fixup(f))
+        return;                 /* rdmsr_safe() probing a register that isn't there */
     kernel_fault(f);
 }

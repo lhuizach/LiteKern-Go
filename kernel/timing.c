@@ -17,7 +17,7 @@ static struct {
 static uint32_t phase_count;
 
 /* Time CALIBRATE_MS of PIT channel 2 (gated through port 0x61, speaker
- * off) with the TSC. The N270's TSC runs at a constant rate, so one
+ * off) with the TSC. The Atom's TSC runs at a constant rate, so one
  * calibration holds for the whole boot. */
 static uint64_t calibrate(void)
 {

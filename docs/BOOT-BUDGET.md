@@ -12,7 +12,7 @@
 
 ## How it's measured
 - The bootloader reads `rdtsc` at T0 and passes it to the kernel. Every phase boundary reads `rdtsc` again.
-- The N270's TSC runs at a constant rate. Calibrate it against the PIT once during early boot so ticks convert to ms, and log that calibration.
+- The Atom N280's TSC runs at a constant rate. Calibrate it against the PIT once during early boot so ticks convert to ms, and log that calibration.
 - Every phase boundary logs one line to COM1 in a fixed format that scripts can parse:
   ```
   [boot] t=<ms since T0> phase=<name> dt=<ms for this phase>

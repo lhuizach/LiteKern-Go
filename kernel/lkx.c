@@ -6,6 +6,7 @@
 #include "kernel/printk.h"
 #include "kernel/ramdisk.h"
 #include "kernel/string.h"
+#include "kernel/timing.h"
 #include "kernel/user.h"
 #include "kernel/vmm.h"
 #include "kernel/desktop.h"
@@ -166,7 +167,14 @@ struct proc {
     int close_sent;         /* its window asked it to close: its next wait ends it */
     uint32_t event_out;
     uint32_t free_before;   /* memory before it started (the stability tests) */
+    uint32_t timer_ms;      /* SYS_TIMER_SET: 0 = off */
+    uint32_t timer_due;     /* uptime_ms() of the next K86_EVENT_TIMER */
 };
+
+static int timer_due(const struct proc *p)
+{
+    return p->timer_ms && (int32_t)(uptime_ms() - p->timer_due) >= 0;
+}
 
 static struct proc procs[PROC_MAX];
 static struct proc *running_proc;
@@ -213,6 +221,7 @@ static const char *exception_name(uint32_t v)
     return v < sizeof(names) / sizeof(names[0]) ? names[v] : "exception";
 }
 
+
 static void ended(struct proc *p)
 {
     const struct app *a = p->app;
@@ -236,8 +245,13 @@ static void ended(struct proc *p)
 static int deliver(struct proc *p, uint32_t out)
 {
     struct wm_event ev;
-    if (!wm_poll_event(p->win, &ev))
-        return 0;
+    if (!wm_poll_event(p->win, &ev)) {
+        if (!timer_due(p))
+            return 0;
+        p->timer_due = uptime_ms() + p->timer_ms;
+        *(struct k86_event *)out = (struct k86_event){ .type = K86_EVENT_TIMER, .time_ms = uptime_ms() };
+        return 1;
+    }
     p->close_sent |= ev.type == WM_EVENT_CLOSE;
     *(struct k86_event *)out = (struct k86_event){
         .type = (int32_t)ev.type, .x = ev.x, .y = ev.y, .buttons = ev.buttons,
@@ -250,7 +264,7 @@ int lkx_schedule(void)
     int ran = 0;
     for (int i = 0; i < PROC_MAX; i++) {
         struct proc *p = &procs[i];
-        if (!p->used || (p->started && !(p->waiting && wm_has_event(p->win))))
+        if (!p->used || (p->started && !(p->waiting && (wm_has_event(p->win) || timer_due(p)))))
             continue;
         if (p->waiting) {               /* its SYS_WAIT_EVENT returns, with the event */
             uint32_t was = vmm_space_current();
@@ -289,13 +303,26 @@ void lkx_wait_event(struct int_frame *f)
     }
     if (p->close_sent)
         user_exit(0);                   /* told to close, and back for more: done */
-    if (deliver(p, out)) {
+    /* Window events come straight back. A due timer doesn't: the app yields
+     * and is resumed by lkx_schedule (at once, if the timer is already due),
+     * so the kernel's loop (input, the desktop) still runs between ticks. */
+    if (wm_has_event(p->win) && deliver(p, out)) {
         f->eax = 0;
         return;
     }
     p->waiting = 1;                     /* sleep until its window has an event */
     p->event_out = out;
     user_yield(f);
+}
+
+int lkx_set_timer(uint32_t ms)
+{
+    struct proc *p = running_proc;
+    if (!p || ms > 3600000)
+        return -EINVAL;
+    p->timer_ms = ms;
+    p->timer_due = uptime_ms() + ms;
+    return 0;
 }
 
 int lkx_running(const struct app *a)

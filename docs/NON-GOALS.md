@@ -7,6 +7,8 @@
 > - Networking, audio, USB, ACPI power management, multiple users, localisation and x86-64 → Phase 5 (`05-LiteKernX-Expansion.md`, after the v1.0 release)
 >
 > The same day, the boot budget was relaxed to ≤ 5 s to the desktop (`docs/BOOT-BUDGET.md`).
+>
+> **2026-10-03:** the monitor and fan control app is brought forward on the user's decision, before v1.0 (`05-LiteKernX-Expansion.md` §9, `docs/MONITOR.md`). Its read-only embedded controller driver and SMART reads are part of it; EC writes wait for its stage (e).
 
 These are things LiteKern X is deliberately **not** building for v1.0. If you want to work on one of them, first finish the current phase. Then either keep it here, or move it into a phase file on purpose. Starting something that isn't in the plan without deciding to is exactly how v1 ended up the way it did.
 
@@ -21,7 +23,7 @@ These are things LiteKern X is deliberately **not** building for v1.0. If you wa
 - Keyboard layouts other than US, and keyboard LEDs
 - Touchpad extended protocols (Elantech/Synaptics), gestures and multi-touch. Basic 3-byte PS/2 packets only.
 - SMP / Hyper-Threading. Only one logical CPU is used.
-- Drivers beyond the core set in Phase 1 §6, except the ones a phase file plans (Phase 5: ACPI, audio, USB, networking)
+- Drivers beyond the core set in Phase 1 §6, except the ones a phase file plans (Phase 5: ACPI, audio, USB, networking; the embedded controller, for §9's monitor)
 
 ## Kernel
 - POSIX compatibility, porting existing Unix software

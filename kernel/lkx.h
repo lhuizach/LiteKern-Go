@@ -32,6 +32,8 @@ int lkx_schedule(void);
 struct wm_window *lkx_window(void);
 /* SYS_WAIT_EVENT: the next event now, or sleep until there is one. */
 void lkx_wait_event(struct int_frame *f);
+/* SYS_TIMER_SET for the running app: a K86_EVENT_TIMER every `ms` (0: off). */
+int lkx_set_timer(uint32_t ms);
 /* Is the app running? */
 int lkx_running(const struct app *a);
 

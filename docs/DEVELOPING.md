@@ -53,10 +53,11 @@ boot/                the bootloader (stage 1 MBR, stage 2), boot_info, the BIOS 
 kernel/              the kernel: memory and paging, interrupts, the driver layer, ring 3
                      apps and their system calls (lkx.c, sys_app.c, user.c), the window
                      system (wm.c), the shell and compositor (desktop.c), graphics
-                     (gfx.c, text.c, theme.c), FAT32, ACPI power-off
+                     (gfx.c, text.c, theme.c), FAT32, ACPI (power-off, reading the tables),
+                     the hardware probe (hwprobe.c)
 drivers/             hardware drivers behind driver_t: serial, VBE display, PS/2 keyboard
-                     and touchpad, RTC, BIOS disk, ATA
-apps/                the KERN86 apps (Files, Calculator, Settings); one folder each
+                     and touchpad, RTC, BIOS disk, ATA, the embedded controller (read-only)
+apps/                the KERN86 apps (Files, Calculator, Settings, Hardware Probe); one folder each
 sdk/                 what apps are built with (kern86.h and friends)
 assets/              logo, icons, cursors, wallpapers, the GUI font
 tools/               build-time converters (fonts, icons, wallpapers, the ramdisk) and setup
@@ -71,3 +72,4 @@ vm/                  the QEMU and VirtualBox dev VMs
 - [Boot protocol](BOOT-PROTOCOL.md) and [boot-time budget](BOOT-BUDGET.md)
 - [Asset rules and prompts](ASSET-PROMPTS.md): icons, cursors, wallpapers, the logo
 - [Non-Goals](NON-GOALS.md): what LiteKern X deliberately doesn't do
+- [Monitor and fan control](MONITOR.md): the design, the safety rules, and each stage (the Hardware Probe first)

@@ -3,7 +3,9 @@
  * 8086:27c4; QEMU's and VirtualBox's PIIX IDE). Interface: kernel/block.h.
  *
  * Read-only on purpose (docs/NON-GOALS.md): the internal disk usually holds
- * Windows, and nothing here writes to it. BLK_WRITE is -EROFS.
+ * Windows, and nothing here writes to it. BLK_WRITE is -EROFS. BLK_SMART
+ * only reads the drive's SMART data (its temperature, for the hardware
+ * probe); it never changes a SMART setting.
  *
  * On init it looks at the four drive positions (primary/secondary, master/
  * slave) and takes the first ATA disk that isn't the one we booted from: in
@@ -36,6 +38,8 @@
 #define CMD_READ        0x20
 #define CMD_READ_EXT    0x24
 #define CMD_IDENTIFY    0xec
+#define CMD_SMART       0xb0    /* with feature SMART_READ_DATA: reads, changes nothing */
+#define SMART_READ_DATA 0xd0
 
 #define WAIT_LOOPS  2000000     /* status reads (~1 us each): about 2 s */
 
@@ -48,6 +52,7 @@ struct disk {
 
 static struct disk disk;
 static struct blk_info info;
+static uint8_t smart_supported, smart_enabled;     /* IDENTIFY words 82 and 85, bit 0 */
 
 static void read_words(uint16_t port, uint16_t *buf, int n)
 {
@@ -132,6 +137,27 @@ static int read_sectors(const struct disk *d, uint32_t lba, uint32_t count, uint
     return 0;
 }
 
+/* SMART READ DATA: the drive's attribute table (one sector of data in). */
+static int smart_read(const struct disk *d, uint8_t *buf)
+{
+    int err = wait_ready(d, 0);
+    if (err)
+        return err;
+    outb(d->io + REG_DRIVE, (uint8_t)(0xa0 | d->slave << 4));
+    settle(d);
+    outb(d->io + REG_ERROR, SMART_READ_DATA);           /* the features register */
+    outb(d->io + REG_COUNT, 0);
+    outb(d->io + REG_LBA0, 0);
+    outb(d->io + REG_LBA1, 0x4f);                       /* SMART's signature */
+    outb(d->io + REG_LBA2, 0xc2);
+    outb(d->io + REG_CMD, CMD_SMART);
+    settle(d);
+    if ((err = wait_ready(d, 1)))
+        return err;
+    read_words(d->io + REG_DATA, (uint16_t *)buf, BLK_SECTOR / 2);
+    return 0;
+}
+
 /* The controller's ports: legacy, unless its programming interface says a
  * channel runs in native mode (then they're in its BARs). */
 static void channel_ports(int ch, uint16_t *io, uint16_t *ctl)
@@ -186,6 +212,8 @@ static int ata_init(device_t *dev)
         }
         disk = d;
         info = (struct blk_info){ .sectors = d.sectors, .read_only = 1 };
+        smart_supported = id[82] != 0xffff && (id[82] & 1);
+        smart_enabled = smart_supported && id[85] != 0xffff && (id[85] & 1);
         int n = 0;
         for (int w = 27; w <= 46 && n < (int)sizeof(info.model) - 2; w++) {
             info.model[n++] = (char)(id[w] >> 8);
@@ -225,6 +253,15 @@ static int ata_ioctl(device_t *dev, unsigned cmd, void *arg)
         return 0;
     case BLK_WRITE:
         return -EROFS;                      /* never: see the top of this file */
+    case BLK_SMART: {
+        struct blk_smart *s = arg;
+        if (!s)
+            return -EINVAL;
+        s->supported = smart_supported;
+        s->enabled = smart_enabled;
+        /* Off is left off: turning it on would change the drive's settings. */
+        return smart_enabled ? smart_read(&disk, s->data) : -ENODEV;
+    }
     default:
         return -ENOSYS;
     }

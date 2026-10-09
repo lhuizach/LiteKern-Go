@@ -12,7 +12,7 @@ apps/notes/
 - `name` is shown under the icon and in the top bar.
 - `icon` is a name from `assets/icons.json` (48×48 PNG; see `docs/ASSET-PROMPTS.md` §4). Leave it empty for a letter tile.
 - `entry` must be `<folder>.lkx`: the build makes that file from the folder's C files.
-- `order` (optional) sets the position in the app menu (and the dock), lowest first; the default is 100. The current apps use Files 1, Calculator 2, Settings 3.
+- `order` (optional) sets the position in the app menu (and the dock), lowest first; the default is 100. The current apps use Files 1, Calculator 2, Settings 3, Hardware Probe 4.
 - `pinned` (optional, 1): a favourite, always in the dock. Other apps are started from Show Apps and sit in the dock, after a line, only while they're open. Files is pinned; so is Log.
 - `width`, `height` (optional): the window's size when it opens, header bar included (default 760 x 480). `min_width`, `min_height`: the smallest it can be resized to (default 300 x 200). Keep within 1024 x 570, the EeePC's space below the top bar.
 

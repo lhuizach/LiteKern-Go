@@ -1,4 +1,5 @@
 #include "kernel/acpi.h"
+#include "kernel/aml.h"
 #include "kernel/errno.h"
 #include "kernel/io.h"
 #include "kernel/printk.h"
@@ -17,14 +18,6 @@ struct __attribute__((packed)) rsdp {
     uint32_t rsdt;
 };
 
-struct __attribute__((packed)) sdt {
-    char sig[4];
-    uint32_t length;
-    uint8_t revision, checksum;
-    char oem[6], oem_table[8];
-    uint32_t oem_rev, creator, creator_rev;
-};
-
 /* The FADT fields we use (offsets from the ACPI spec, all versions). */
 #define FADT_DSDT        40
 #define FADT_SMI_CMD     48
@@ -32,11 +25,18 @@ struct __attribute__((packed)) sdt {
 #define FADT_PM1A_CNT    64
 #define FADT_PM1B_CNT    68
 
+#define MAX_TABLES 32
+
 static uint16_t pm1a_cnt, pm1b_cnt;
 static uint16_t slp_typ_a, slp_typ_b;
 static uint32_t smi_cmd;
 static uint8_t acpi_enable;
 static int ready;
+
+static const struct acpi_sdt *tables[MAX_TABLES];
+static int ntables;
+static char rsdp_oem[7];
+static int rsdp_rev;
 
 static int sum_ok(const void *p, uint32_t len)
 {
@@ -62,12 +62,12 @@ static const struct rsdp *find_rsdp(void)
     return 0;
 }
 
-/* A table, mapped and checked; NULL if it's not one. */
-static const struct sdt *table(uint32_t phys, const char *sig)
+/* A table, mapped and checked; NULL if it's not one. sig NULL: any. */
+static const struct acpi_sdt *table(uint32_t phys, const char *sig)
 {
-    if (!phys || vmm_map_firmware(phys, sizeof(struct sdt)))
+    if (!phys || vmm_map_firmware(phys, sizeof(struct acpi_sdt)))
         return 0;
-    const struct sdt *t = (const struct sdt *)phys;
+    const struct acpi_sdt *t = (const struct acpi_sdt *)phys;
     if (t->length < sizeof(*t) || t->length > 4 * 1024 * 1024 || vmm_map_firmware(phys, t->length))
         return 0;
     if ((sig && memcmp(t->sig, sig, 4)) || !sum_ok(t, t->length))
@@ -75,26 +75,14 @@ static const struct sdt *table(uint32_t phys, const char *sig)
     return t;
 }
 
-/* One AML integer at *p (ZeroOp, OneOp, or a Byte/Word/DWord prefix). */
-static int aml_int(const uint8_t **p, const uint8_t *end, uint32_t *v)
+static void keep(const struct acpi_sdt *t)
 {
-    const uint8_t *q = *p;
-    if (q >= end)
-        return -1;
-    switch (*q) {
-    case 0x00: *v = 0; *p = q + 1; return 0;            /* ZeroOp */
-    case 0x01: *v = 1; *p = q + 1; return 0;            /* OneOp */
-    case 0x0a: if (q + 2 > end) return -1; *v = q[1]; *p = q + 2; return 0;           /* BytePrefix */
-    case 0x0b: if (q + 3 > end) return -1; *v = q[1] | q[2] << 8; *p = q + 3; return 0;   /* Word */
-    case 0x0c: if (q + 5 > end) return -1;
-               *v = q[1] | q[2] << 8 | (uint32_t)q[3] << 16 | (uint32_t)q[4] << 24;
-               *p = q + 5; return 0;                    /* DWordPrefix */
-    default:   return -1;
-    }
+    if (t && ntables < MAX_TABLES)
+        tables[ntables++] = t;
 }
 
 /* Name(_S5, Package() { SLP_TYPa, SLP_TYPb, ... }) somewhere in the DSDT. */
-static int find_s5(const struct sdt *dsdt)
+static int find_s5(const struct acpi_sdt *dsdt)
 {
     const uint8_t *start = (const uint8_t *)dsdt + sizeof(*dsdt);
     const uint8_t *end = (const uint8_t *)dsdt + dsdt->length;
@@ -124,16 +112,26 @@ int acpi_init(void)
         kprintf("acpi: no RSDP; power-off unavailable\n");
         return -ENODEV;
     }
-    const struct sdt *rsdt = table(rp->rsdt, "RSDT");
+    memcpy(rsdp_oem, rp->oem, 6);
+    rsdp_oem[6] = '\0';
+    for (int i = 5; i >= 0 && rsdp_oem[i] == ' '; i--)
+        rsdp_oem[i] = '\0';
+    rsdp_rev = rp->revision;
+    const struct acpi_sdt *rsdt = table(rp->rsdt, "RSDT");
     if (!rsdt) {
         kprintf("acpi: RSDP at 0x%05x, but no valid RSDT; power-off unavailable\n", (uint32_t)rp);
         return -ENODEV;
     }
-    const struct sdt *fadt = 0;
+    const struct acpi_sdt *fadt = 0;
     uint32_t n = (rsdt->length - sizeof(*rsdt)) / 4;
     const uint32_t *entries = (const uint32_t *)(rsdt + 1);
-    for (uint32_t i = 0; i < n && !fadt; i++)
-        fadt = table(entries[i], "FACP");
+    ntables = 1;                        /* tables[0]: the DSDT, filled in below */
+    for (uint32_t i = 0; i < n; i++) {
+        const struct acpi_sdt *t = table(entries[i], 0);
+        keep(t);
+        if (t && !fadt && !memcmp(t->sig, "FACP", 4))
+            fadt = t;
+    }
     if (!fadt || fadt->length < FADT_PM1B_CNT + 4) {
         kprintf("acpi: no FADT; power-off unavailable\n");
         return -ENODEV;
@@ -147,21 +145,48 @@ int acpi_init(void)
     memcpy(&b_cnt, f + FADT_PM1B_CNT, 4);
     pm1a_cnt = (uint16_t)a_cnt;
     pm1b_cnt = (uint16_t)b_cnt;
-    const struct sdt *dsdt = table(dsdt_addr, "DSDT");
+    const struct acpi_sdt *dsdt = table(dsdt_addr, "DSDT");
+    tables[0] = dsdt;
     if (!pm1a_cnt || !dsdt || find_s5(dsdt)) {
         kprintf("acpi: %s; power-off unavailable\n", !pm1a_cnt ? "no PM1a control register"
                                                    : !dsdt ? "no DSDT" : "no _S5 in the DSDT");
         return -ENODEV;
     }
     ready = 1;
-    char oem[7];
-    memcpy(oem, rp->oem, 6);
-    oem[6] = '\0';
-    for (int i = 5; i >= 0 && oem[i] == ' '; i--)
-        oem[i] = '\0';
     kprintf("acpi: %s, RSDP rev %u at 0x%05x; PM1a_CNT 0x%x, PM1b_CNT 0x%x; _S5 SLP_TYP %u/%u\n",
-            oem, rp->revision, (uint32_t)rp, pm1a_cnt, pm1b_cnt, slp_typ_a, slp_typ_b);
+            rsdp_oem, rp->revision, (uint32_t)rp, pm1a_cnt, pm1b_cnt, slp_typ_a, slp_typ_b);
     return 0;
+}
+
+const struct acpi_sdt *acpi_table(int i)
+{
+    /* tables[0] (the DSDT) may be missing: skip the hole. */
+    int k = 0;
+    for (int j = 0; j < ntables; j++)
+        if (tables[j] && k++ == i)
+            return tables[j];
+    return 0;
+}
+
+const struct acpi_sdt *acpi_find(const char *sig)
+{
+    for (int i = 0; i < ntables; i++)
+        if (tables[i] && !memcmp(tables[i]->sig, sig, 4))
+            return tables[i];
+    return 0;
+}
+
+const char *acpi_oem(int *revision)
+{
+    *revision = rsdp_rev;
+    return rsdp_oem;
+}
+
+int acpi_sci_enabled(void)
+{
+    if (!pm1a_cnt)
+        return -1;
+    return (inw(pm1a_cnt) & SCI_EN) != 0;
 }
 
 int acpi_can_power_off(void)

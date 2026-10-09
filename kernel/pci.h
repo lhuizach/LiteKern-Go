@@ -27,6 +27,9 @@ uint32_t pci_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset);
  * the scan, not the logging). Panics if PCI config space is missing. */
 void pci_scan(void);
 
+/* "Ethernet controller", "USB controller"... ("unknown device"). */
+const char *pci_class_name(uint8_t cls, uint8_t sub);
+
 /* Log the table built by pci_scan(). */
 void pci_report(void);
 

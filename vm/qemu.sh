@@ -3,7 +3,7 @@
 #
 # This is a development VM, not a hardware-accurate emulator:
 #   real 1000HE                       this VM
-#   Atom N270 @1.6GHz, 1 core + HT    -cpu n270, 1 core (SMP/HT is a Non-Goal)
+#   Atom N280 @1.66GHz, 1 core + HT   -cpu n270 (QEMU has no N280: same core), 1 core (SMP/HT is a Non-Goal)
 #   1 GB DDR2                         -m 1G
 #   945GSE / ICH7-M                   i440FX / PIIX (-machine pc)
 #   GMA 950, 1024x600 panel           Bochs VBE (-vga std), no native 1024x600 VBE mode

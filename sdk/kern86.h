@@ -96,6 +96,26 @@ static inline int k86_wallpaper_thumb(const char *name, uint32_t *out, int w, in
     return k86_call(SYS_WALLPAPER_THUMB, (uint32_t)name, (uint32_t)out, (uint32_t)w, (uint32_t)h);
 }
 
+/* A K86_EVENT_TIMER every ms milliseconds (0: off). It's only checked when the
+ * kernel gets a turn: at least once a second, at once while any app is busy. */
+static inline int k86_timer_set(uint32_t ms)
+{
+    return k86_call(SYS_TIMER_SET, ms, 0, 0, 0);
+}
+
+/* The embedded controller's 256 bytes into buf. 0, or a negative errno. */
+static inline int k86_ec_read(uint8_t *buf)
+{
+    return k86_call(SYS_EC_READ, (uint32_t)buf, 0, 0, 0);
+}
+
+/* The hardware probe: up to max report lines into out; returns how many
+ * there are. flags: K86_PROBE_EC_RAM to read the EC's RAM too. Reads only. */
+static inline int k86_hw_probe(struct k86_probe_item *out, int max, uint32_t flags)
+{
+    return k86_call(SYS_HW_PROBE, (uint32_t)out, (uint32_t)max, flags, 0);
+}
+
 /* Files. Paths start with '/', inside a volume (index from k86_volumes). */
 static inline int k86_volumes(struct k86_volume *out, int max)
 {
@@ -122,6 +142,7 @@ static inline int k86_read(int vol, const char *dir, const char *name, void *buf
 {
     return k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
 }
+
 
 static inline int k86_delete(int vol, const char *dir, const char *name)
 {

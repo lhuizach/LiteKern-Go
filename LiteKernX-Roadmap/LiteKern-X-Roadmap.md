@@ -10,7 +10,7 @@
 > The Stage 0–6 breakdown below is kept for history. Where it disagrees with the phase files (e.g. the `driver_t` definition, KERN86 timing, memory protection), the phase files win.
 
 ## Why X exists
-LiteKern v1 (~50+ hrs of work) proved the concept — a from-scratch OS running on the EeePC 1000HE (Intel Atom N270, 32-bit x86) with a working KERN86 app architecture (`.lkx` format, `kerns.json` manifest, `kern86.h` API), framebuffer rendering, and cursor rasterization. But it grew organically: features were started faster than they were finished, drivers were bolted on ad hoc, and boot time ballooned to ~5000ms.
+LiteKern v1 (~50+ hrs of work) proved the concept — a from-scratch OS running on the EeePC 1000HE (Intel Atom N280, 32-bit x86) with a working KERN86 app architecture (`.lkx` format, `kerns.json` manifest, `kern86.h` API), framebuffer rendering, and cursor rasterization. But it grew organically: features were started faster than they were finished, drivers were bolted on ad hoc, and boot time ballooned to ~5000ms.
 
 **X is not a port. It's a clean-slate rewrite** that keeps the lessons and the KERN86 app model, but enforces one rule the whole way through:
 
@@ -21,7 +21,7 @@ This is the single biggest behavioral change from v1 to X.
 ---
 
 ## Target hardware
-- **Primary:** ASUS EeePC 1000HE — Intel Atom N270, 32-bit x86 (same as v1, for now)
+- **Primary:** ASUS EeePC 1000HE — Intel Atom N280 (1.66 GHz, 667 MHz bus; the same Diamondville core as the N270), 32-bit x86 (same as v1, for now)
 - **Future:** Raspberry Pi 4 (4GB), ARM64 — will require a 64-bit rewrite of the kernel core. Not in scope for X v1.0; noted here so early design decisions (e.g. avoiding x86-only assumptions where cheap to do so) can keep this door open without slowing X down.
 
 ---
