@@ -143,6 +143,11 @@ static inline int k86_read(int vol, const char *dir, const char *name, void *buf
     return k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
 }
 
+/* Replace a file's contents with len bytes (creating it if needed). */
+static inline int k86_write(int vol, const char *dir, const char *name, const void *buf, uint32_t len)
+{
+    return k86_call5(SYS_FS_WRITE, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
+}
 
 static inline int k86_delete(int vol, const char *dir, const char *name)
 {

@@ -9,6 +9,7 @@
 #include "kernel/timing.h"
 #include "kernel/user.h"
 #include "kernel/vmm.h"
+#include "kernel/wake.h"
 #include "kernel/desktop.h"
 #include "kernel/wm.h"
 
@@ -221,6 +222,20 @@ static const char *exception_name(uint32_t v)
     return v < sizeof(names) / sizeof(names[0]) ? names[v] : "exception";
 }
 
+/* rtc0 wakes the idle loop often enough for the fastest app timer (up to
+ * 64 times a second); otherwise it only ticks once a second. */
+static void timers_changed(void)
+{
+    uint32_t fastest = 0;
+    for (int i = 0; i < PROC_MAX; i++)
+        if (procs[i].used && procs[i].timer_ms && (!fastest || procs[i].timer_ms < fastest))
+            fastest = procs[i].timer_ms;
+    uint32_t hz = 0;
+    if (fastest && fastest < 1000)
+        for (hz = 2; hz < 64 && hz * fastest < 1000; hz *= 2)
+            ;
+    wake_rate(WAKE_APPS, hz);
+}
 
 static void ended(struct proc *p)
 {
@@ -238,6 +253,7 @@ static void ended(struct proc *p)
     /* Everything an app had must come back (the stability tests check it). */
     kprintf("lkx: memory free %u KiB before, %u KiB after\n", p->free_before * 4, pmm_free_frames() * 4);
     p->used = 0;
+    timers_changed();
     desktop_app_ended(a, w);
 }
 
@@ -322,6 +338,7 @@ int lkx_set_timer(uint32_t ms)
         return -EINVAL;
     p->timer_ms = ms;
     p->timer_due = uptime_ms() + ms;
+    timers_changed();
     return 0;
 }
 

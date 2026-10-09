@@ -12,7 +12,7 @@ apps/notes/
 - `name` is shown under the icon and in the top bar.
 - `icon` is a name from `assets/icons.json` (48×48 PNG; see `docs/ASSET-PROMPTS.md` §4). Leave it empty for a letter tile.
 - `entry` must be `<folder>.lkx`: the build makes that file from the folder's C files.
-- `order` (optional) sets the position in the app menu (and the dock), lowest first; the default is 100. The current apps use Files 1, Calculator 2, Settings 3, Hardware Probe 4.
+- `order` (optional) sets the position in the app menu (and the dock), lowest first; the default is 100. The current apps use Files 1, Calculator 2, Settings 3, Hardware Probe 4, Blocksmith 5.
 - `pinned` (optional, 1): a favourite, always in the dock. Other apps are started from Show Apps and sit in the dock, after a line, only while they're open. Files is pinned; so is Log.
 - `width`, `height` (optional): the window's size when it opens, header bar included (default 760 x 480). `min_width`, `min_height`: the smallest it can be resized to (default 300 x 200). Keep within 1024 x 570, the EeePC's space below the top bar.
 
@@ -63,7 +63,7 @@ int main(void)
 - **Text:** the GUI font, in five styles: `TEXT_BODY`, `TEXT_BOLD`, `TEXT_SMALL`, `TEXT_HEADING`, `TEXT_LARGE`. Use `text_width()` to measure and `text_draw_fit()` to cut text short with an ellipsis. `TEXT_MINUS`, `TEXT_TIMES`, `TEXT_DIVIDE` and `TEXT_ELLIPSIS` are the symbols beyond ASCII.
 - **Colours:** always come from `theme_get()`, never hard-coded. When the user changes the style or accent in Settings, the app gets `K86_EVENT_THEME`, and by then the SDK has already updated `theme_get()`: just redraw.
 - **Header bar:** `k86_header()` sets the title and up to 6 buttons (text, or the back/add/up icons). A press arrives as `K86_EVENT_HEADER` with its id.
-- **Files:** call `k86_volumes()`, then `k86_list/create/rename/delete/read(volume, "/folder/path", ...)`. The kernel checks every path and name itself, and only FAT32 is ever written.
+- **Files:** call `k86_volumes()`, then `k86_list/create/rename/delete/read/write(volume, "/folder/path", ...)`. `k86_write()` replaces a whole file (making it if it isn't there); the new contents are written before the old ones are let go, so a failed write leaves the file as it was. The kernel checks every path and name itself, and only FAT32 is ever written.
 - **Log:** `k86_log("...")` / `k86_logf(...)` shows up in the Log app as `user: ...`. Keep it ASCII, since the tests grep it.
 - The full list of calls, and their numbers and structures, is in `kernel/kern86_abi.h`. Each is a thin wrapper over `int 0x80` (`sdk/kern86.h`). New calls are added only when an app needs one.
 
@@ -71,9 +71,10 @@ int main(void)
 - `apps/files/files.c`: lists, dialogs, text entry, paths, a scrolling text viewer.
 - `apps/calculator/calculator.c`: a grid of buttons, the keyboard, and whole-number maths, because there's no floating point in apps.
 - `apps/settings/settings.c`: hand-drawn previews, appearance calls, theme events.
+- `apps/blocksmith/`: a bigger app in several files: dragging, menus, the timer (an interpreter that takes turns), saving files (see [BLOCKSMITH.md](BLOCKSMITH.md)).
 
 ## Limits
 - Up to 8 windows at once, one per app. Apps take turns: one runs while the others wait for events, so an app must go back to `k86_wait_event()` quickly; nothing else runs while it works.
 - Up to 1 MiB of code and data, a 16 KiB stack, and no `malloc`: use static arrays.
 - No floating point (apps are built with `-mgeneral-regs-only`). Use fixed-point whole numbers, as Calculator does.
-- There's no timer event yet. An app only wakes for input, and must return to `k86_wait_event()` within 10 s.
+- An app wakes for input, and for `K86_EVENT_TIMER` if it asked with `k86_timer_set(ms)`: up to 64 times a second (the kernel speeds up its only timer, the RTC, while an app wants that; `kernel/wake.h`). Turn it off (`k86_timer_set(0)`) when nothing is moving, to save the battery. Either way, an app must return to `k86_wait_event()` within 10 s.

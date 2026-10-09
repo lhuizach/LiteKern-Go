@@ -57,7 +57,7 @@ kernel/              the kernel: memory and paging, interrupts, the driver layer
                      the hardware probe (hwprobe.c)
 drivers/             hardware drivers behind driver_t: serial, VBE display, PS/2 keyboard
                      and touchpad, RTC, BIOS disk, ATA, the embedded controller (read-only)
-apps/                the KERN86 apps (Files, Calculator, Settings, Hardware Probe); one folder each
+apps/                the KERN86 apps (Files, Calculator, Settings, Hardware Probe, Blocksmith); one folder each
 sdk/                 what apps are built with (kern86.h and friends)
 assets/              logo, icons, cursors, wallpapers, the GUI font
 tools/               build-time converters (fonts, icons, wallpapers, the ramdisk) and setup
@@ -68,6 +68,7 @@ vm/                  the QEMU and VirtualBox dev VMs
 
 ## More docs
 - [Making an app](APPS.md): KERN86 apps, their manifest, the SDK
+- [Blocksmith](BLOCKSMITH.md): the block coding app, how to use it and its blocks
 - [Testing on the real Eee PC](HARDWARE-TEST.md)
 - [Boot protocol](BOOT-PROTOCOL.md) and [boot-time budget](BOOT-BUDGET.md)
 - [Asset rules and prompts](ASSET-PROMPTS.md): icons, cursors, wallpapers, the logo

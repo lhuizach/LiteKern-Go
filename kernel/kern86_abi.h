@@ -46,6 +46,10 @@
                                  * the kernel gets a turn (at least once a second) */
 #define SYS_EC_READ         21  /* ebx: uint8_t[256] out: the embedded controller's RAM, read
                                  * only. -ENODEV if there is none */
+#define SYS_FS_WRITE        22  /* ebx: volume, ecx: folder path, edx: name, esi: buffer,
+                                 * edi: length (<= 1 MiB). Replaces the file's contents,
+                                 * creating it if it isn't there; the old contents stay if
+                                 * it fails */
 #define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
                                  * (K86_PROBE_*). Lists the sensors and controls the kernel
                                  * can see on this machine; only ever reads. Returns the

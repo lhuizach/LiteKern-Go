@@ -124,16 +124,23 @@ NAVY=1e3a5f TEXT=c8d0dc RED=801010 WHITE=ffffff
 #     below the 30 px top bar (kernel/wm.c); win_xy W H: its top-left corner
 dock_x() { echo $(( (1024 - (($2 + 1) * 60 + 16)) / 2 + 38 + $1 * 60 )); }
 grid_x() { echo $(( (1024 - $2 * 112) / 2 + 56 + $1 * 112 )); }
+# Tile $1 of $2 when they may wrap: 8 a row (kernel/desktop.c tile_rect), rows centred.
+grid_xy() {
+    local row=$(( $1 / 8 )) rows=$(( ($2 + 7) / 8 )) in_row=$(( $2 - $1 / 8 * 8 ))
+    [ "$in_row" -gt 8 ] && in_row=8
+    echo "$(( (1024 - in_row * 112) / 2 + 56 + $1 % 8 * 112 )) $(( GRID_Y - (rows - 1) * 52 + row * 104 ))"
+}
 win_xy() { echo "$(( (1024 - $1) / 2 )) $(( 30 + (738 - $2) / 2 ))"; }
 win_close() { set -- $(( (1024 - $1) / 2 + $1 - 24 )) $(( 30 + (738 - $2) / 2 + 24 )); echo "$1 $2"; }
 NAPPS=$(( $(ls -d apps/*/ | wc -l) + 1 ))      # the apps/ folders, then Log
 FILES_X=$(dock_x 0 2) LOG_X=$(dock_x 1 2) SHOWAPPS_X=$(dock_x 2 2) DOCK_Y=728 GRID_Y=363
 CALC_TILE=$(grid_x 1 "$NAPPS") SETTINGS_TILE=$(grid_x 2 "$NAPPS") PROBE_TILE=$(grid_x 3 "$NAPPS")
-LOG_TILE=$(grid_x 4 "$NAPPS")
+LOG_TILE=$(grid_x $((NAPPS - 1)) "$NAPPS")     # Log is always last
 FILES_ICON="$((FILES_X - 30)),698,$((FILES_X + 30)),758"      # the folder icon in the dock
 FILES_BLUE=63a0e9                                             # its front (assets/icons/files.png)
 FILES_CLOSE=$(win_close 760 500) LOG_CLOSE=$(win_close 760 480)
 CALC_CLOSE=$(win_close 420 548) SETTINGS_CLOSE=$(win_close 944 552) PROBE_CLOSE=$(win_close 1000 560)
+BLOCKSMITH_TILE=$(grid_x 4 "$NAPPS") BLOCKSMITH_CLOSE=$(win_close 1024 570)
 
 # Pointer paths: absolute positions turned into the relative moves QEMU sends.
 #   path; go X Y; click; key a b; ... then KEYS="$P"
@@ -559,6 +566,23 @@ check "Calculator: exact decimals; overflow and division by zero are errors" \
     '^user: calculator: 1 / 3 = 0\.333333$' \
     '!PANIC'
 
+# Blocksmith: F5 runs the starter project (its "print" logs), a click on the
+# stage runs "when stage clicked", Esc stops, and Ctrl+S saves it to
+# /Blocksmith/Test.blocks (SYS_FS_WRITE) after asking for a name. On a
+# scratch copy of the image, since it writes to the disk.
+mkdir -p build/test-blocksmith
+cp build/litekernx.img build/test-blocksmith/disk.img
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$BLOCKSMITH_TILE" "$GRID_Y"; click; add sleep:1.5 f5 sleep:1
+go 850 300; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret
+KEYS="$P" KEYS_DONE='^user: blocksmith: saved' boot_until build/test-blocksmith/disk.img "$done_re" 30
+check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
+    '^user: blocksmith: open$' \
+    '^user: blocksmith: run$' \
+    '^user: blocksmith: print Hello from Blocksmith!$' \
+    '^user: blocksmith: print You clicked at x = [0-9]+$' \
+    '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
+    '!PANIC|blocksmith: error'
+
 # Files' text viewer: End selects the last file (the welcome text), Enter
 # opens it, Esc goes back to the folder with it still selected.
 KEYS="move:$((FILES_X - 512)),344 press:1 release sleep:1.5 end ret sleep:0.5 down esc sleep:0.3 ret" \
@@ -578,6 +602,7 @@ go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$CALC_TILE" "$GRID_Y"; click; add sleep:1
 go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5; go $SETTINGS_CLOSE; click; add sleep:1
 go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click; add sleep:2; go $PROBE_CLOSE; click; add sleep:1
 go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$PROBE_TILE" "$GRID_Y"; click; add sleep:2; go $PROBE_CLOSE; click; add sleep:1
+go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$BLOCKSMITH_TILE" "$GRID_Y"; click; add sleep:2; go $BLOCKSMITH_CLOSE; click; add sleep:1
 go 998 15; click; go 930 91; click
 WAIT_OFF=1 KEYS="$P" KEYS_DONE='^power: switching off' boot_until build/litekernx.img "$done_re" 60
 [ "$qemu_off" = 1 ] && out+=$'\n'"vm: switched off" || out+=$'\n'"vm: STILL ON"
@@ -587,6 +612,7 @@ check "run-through: open and close every app, then shut down (ACPI)" \
     '^lkx: Calculator exited \(0\)$' \
     '^lkx: Settings exited \(0\)$' \
     '^lkx: Hardware Probe exited \(0\)$' \
+    '^lkx: Blocksmith exited \(0\)$' \
     '^desktop: close Log$' \
     '^shell: shut down$' \
     '^power: switching off \(ACPI S5\)$' \
@@ -660,7 +686,7 @@ check "ATA internal disk: found, FAT32 read-only, NTFS left alone, never written
 n=$((NAPPS + 3))
 path
 for i in $((NAPPS - 1)) "$NAPPS" $((NAPPS + 1)); do
-    go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$(grid_x "$i" "$n")" "$GRID_Y"; click; add sleep:1
+    go "$SHOWAPPS_X" "$DOCK_Y"; click; go $(grid_xy "$i" "$n"); click; add sleep:1
 done
 add sleep:11; go "$FILES_X" "$DOCK_Y"; click; add sleep:1
 KEYS="$P" KEYS_DONE='^user: files: open' boot_until build/test-apps/litekernx.img "$done_re" 40
@@ -678,6 +704,8 @@ check "apps: a crash, bad calls and a hang each end only the app" \
     '^user: badcalls: window into kernel memory -14$' \
     '^user: badcalls: header with 99 buttons -22$' \
     '^user: badcalls: font into kernel memory -14$' \
+    '^user: badcalls: write from kernel memory -14$' \
+    '^user: badcalls: write too big -14$' \
     '^lkx: Badcalls exited \(7\)$' \
     '^user: no response for 10 s at eip=0x8' \
     '^lkx: Hang stopped responding and was stopped$' \

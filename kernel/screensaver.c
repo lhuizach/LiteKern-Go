@@ -7,6 +7,7 @@
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
 #include "kernel/timing.h"
+#include "kernel/wake.h"
 #include "defaults.h"
 
 #define RIBBONS 4
@@ -64,7 +65,6 @@ static struct {
     int cx, cy, ax1, ax2, ay1, ay2;
     uint32_t frames;
     uint64_t busy;          /* TSC ticks spent drawing frames */
-    device_t *rtc;
 } ss;
 
 static struct ribbon ribbons[RIBBONS];
@@ -328,8 +328,7 @@ static void frame(void)
 
 static void set_rate(uint32_t hz)
 {
-    if (ss.rtc)
-        dev_ioctl(ss.rtc, RTC_SET_RATE, &hz);
+    wake_rate(WAKE_SCREENSAVER, hz);
 }
 
 void screensaver_start(void)
@@ -337,9 +336,6 @@ void screensaver_start(void)
     if (ss.active || !screen_ready() || !desktop_started())
         return;
     struct gfx_surface *s = screen_surface();
-    ss.rtc = device_find("rtc0");
-    if (ss.rtc && ss.rtc->state != DEVICE_BOUND)
-        ss.rtc = 0;
     make_tables();
     ss.cx = s->w / 2;
     ss.cy = s->h / 2;

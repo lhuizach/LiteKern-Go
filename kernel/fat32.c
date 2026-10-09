@@ -116,8 +116,9 @@ static int zero_cluster(struct fat_volume *v, uint32_t c)
     return 0;
 }
 
-/* A free cluster, zeroed and marked as the end of a chain; 0 if none. */
-static uint32_t alloc_cluster(struct fat_volume *v)
+/* A free cluster, marked as the end of a chain (zeroed too if `zero`: a
+ * file's data overwrites it anyway); 0 if none. */
+static uint32_t take_cluster(struct fat_volume *v, int zero)
 {
     uint32_t start = valid_cluster(v, v->next_free) ? v->next_free : 2;
     for (uint32_t n = 0, c = start; n < v->clusters; n++, c = valid_cluster(v, c + 1) ? c + 1 : 2) {
@@ -126,7 +127,7 @@ static uint32_t alloc_cluster(struct fat_volume *v)
             return 0;
         if (e != 0)
             continue;
-        if (fat_set(v, c, EOC_MARK) || zero_cluster(v, c))
+        if (fat_set(v, c, EOC_MARK) || (zero && zero_cluster(v, c)))
             return 0;
         if (v->free_count != 0xffffffffu && v->free_count)
             v->free_count--;
@@ -134,6 +135,11 @@ static uint32_t alloc_cluster(struct fat_volume *v)
         return c;
     }
     return 0;
+}
+
+static uint32_t alloc_cluster(struct fat_volume *v)
+{
+    return take_cluster(v, 1);
 }
 
 static int free_chain(struct fat_volume *v, uint32_t c)
@@ -775,6 +781,75 @@ int fat_create(struct fat_volume *v, uint32_t dir, const char *name, int is_dir,
         return err;
     }
     return write_fsinfo(v);
+}
+
+int fat_write(struct fat_volume *v, struct fat_entry *e, const void *buf, uint32_t len)
+{
+    if (v->read_only)
+        return -EROFS;
+    if (e->is_dir)
+        return -EINVAL;
+    uint32_t clus_bytes = v->sec_per_clus * SECTOR;
+    uint32_t need = (len + clus_bytes - 1) / clus_bytes;
+    if (v->free_count != 0xffffffffu && need > v->free_count)
+        return -ENOSPC;
+
+    /* The new contents go into a chain of their own; the entry only
+     * points at it once it's all written, so a failure keeps the old file. */
+    uint8_t s[SECTOR];
+    uint32_t first = 0, prev = 0, done = 0;
+    int err = 0;
+    for (uint32_t k = 0; k < need && !err; k++) {
+        uint32_t c = take_cluster(v, 0);
+        if (!c) {
+            err = -ENOSPC;
+            break;
+        }
+        if (prev)
+            err = fat_set(v, prev, c);
+        else
+            first = c;
+        prev = c;
+        for (uint32_t i = 0; i < v->sec_per_clus && !err; i++) {
+            uint32_t n = len - done < SECTOR ? len - done : SECTOR;
+            memset(s, 0, SECTOR);
+            memcpy(s, (const uint8_t *)buf + done, n);
+            err = wr(v, cluster_sector(v, c) + i, s);
+            done += n;
+        }
+    }
+    uint8_t sfn[SLOT];
+    if (!err)
+        err = slot_io(v, e->dir, e->slot, sfn, 0);
+    if (err) {
+        if (first)
+            free_chain(v, first);
+        write_fsinfo(v);
+        return err;
+    }
+    uint32_t old = e->cluster;
+    uint16_t date = sfn[24] | sfn[25] << 8, time = sfn[22] | sfn[23] << 8;
+    if (v->now)
+        v->now(v->ctx, &date, &time);
+    put16(sfn + 22, time);
+    put16(sfn + 24, date);
+    put16(sfn + 18, date);
+    set_cluster(sfn, first);
+    put32(sfn + 28, len);
+    if ((err = slot_io(v, e->dir, e->slot, sfn, 1))) {
+        if (first)
+            free_chain(v, first);
+        write_fsinfo(v);
+        return err;
+    }
+    e->cluster = first;
+    e->size = len;
+    e->date = date;
+    e->time = time;
+    if (old)
+        err = free_chain(v, old);
+    int err2 = write_fsinfo(v);
+    return err ? err : err2;
 }
 
 int fat_rename(struct fat_volume *v, struct fat_entry *e, const char *new_name)

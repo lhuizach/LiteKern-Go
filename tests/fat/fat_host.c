@@ -124,6 +124,27 @@ int main(int argc, char **argv)
     check(ok && count == 40, "a folder grows past its first cluster (40 long names)");
     check(fat_find(&v, pics.cluster, "holiday photo 39.png", 0) == 0, "entries in the new clusters are found");
 
+    /* Writing (whole files). */
+    static char big[3000], back[3000];
+    for (int i = 0; i < (int)sizeof(big); i++)
+        big[i] = (char)('a' + i % 26);
+    struct fat_entry mainc;
+    uint64_t free1 = fat_free_bytes(&v);
+    check(fat_find(&v, projects.cluster, "main.c", &mainc) == 0 &&
+              fat_write(&v, &mainc, big, sizeof(big)) == 0 && mainc.size == sizeof(big),
+          "writes a file over several clusters");
+    check(fat_free_bytes(&v) == free1 - 6 * 512, "it took six clusters");
+    check(fat_find(&v, projects.cluster, "main.c", &mainc) == 0 && mainc.size == sizeof(big) &&
+              fat_read(&v, &mainc, 0, back, sizeof(back)) == (int)sizeof(big) &&
+              !memcmp(big, back, sizeof(big)), "reads back what it wrote");
+    check(fat_write(&v, &mainc, "int main;\n", 10) == 0 && fat_free_bytes(&v) == free1 - 512 &&
+              fat_find(&v, projects.cluster, "main.c", &mainc) == 0 && mainc.size == 10 &&
+              fat_read(&v, &mainc, 0, back, sizeof(back)) == 10 && !memcmp(back, "int main;\n", 10),
+          "rewriting it shorter frees the old clusters");
+    check(fat_write(&v, &notes, 0, 0) == 0 && notes.size == 0 && notes.cluster == 0,
+          "writes an empty file");
+    check(fat_write(&v, &projects, "x", 1) == -EINVAL, "won't write over a folder");
+
     /* Renaming. */
     check(fat_rename(&v, &hello, "Hello World.txt") == 0 && !strcmp(hello.name, "Hello World.txt"),
           "renames: a change of case only");

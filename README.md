@@ -47,6 +47,7 @@ It boots in about a second to a clean, modern desktop with a dock, an app menu, 
 - **Apps:**
   - **Files** browses the USB stick, makes folders and files, renames and deletes them, and opens text files.
   - **Calculator** does exact decimal sums.
+  - **Blocksmith** lets you build programs by snapping blocks together, then runs them: drawings, animations, and games you play with the keys.
   - **Settings** switches between dark and light, six accent colours and five backgrounds.
   - **Log** shows what the system is doing.
 - **Stays up:** if an app crashes or freezes, only that app closes.

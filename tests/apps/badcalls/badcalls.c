@@ -21,6 +21,9 @@ int main(void)
     k86_logf("badcalls: window into kernel memory %d", k86_call(SYS_WINDOW_OPEN, KERNEL_PTR, 0, 0, 0));
     k86_logf("badcalls: header with 99 buttons %d", k86_header(&h));
     k86_logf("badcalls: font into kernel memory %d", k86_call(SYS_FONT, KERNEL_PTR, 0, 0, 0));
+    k86_logf("badcalls: write from kernel memory %d",
+             k86_write(0, "/", "x.txt", (const void *)KERNEL_PTR, 16));
+    k86_logf("badcalls: write too big %d", k86_write(0, "/", "x.txt", "x", 2 * 1024 * 1024));
     k86_log("badcalls: done");
     return 7;
 }

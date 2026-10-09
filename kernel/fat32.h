@@ -72,6 +72,11 @@ int fat_read(struct fat_volume *v, const struct fat_entry *e, uint32_t offset, v
 int fat_create(struct fat_volume *v, uint32_t dir, const char *name, int is_dir,
                struct fat_entry *out);
 
+/* Replace a file's contents with len bytes from buf (0: empty it). The new
+ * data is written to free clusters first and the entry switched over last,
+ * so if anything fails the old contents are still there. Updates e. */
+int fat_write(struct fat_volume *v, struct fat_entry *e, const void *buf, uint32_t len);
+
 /* Rename within the same folder (a change of case alone is allowed). */
 int fat_rename(struct fat_volume *v, struct fat_entry *e, const char *new_name);
 
