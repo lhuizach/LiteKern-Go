@@ -21,7 +21,7 @@ Goal: the things removed from `docs/NON-GOALS.md` on 2026-09-29 that are too big
 ## 3. USB
 - [ ] UHCI/EHCI host controller driver
 - [ ] USB mass storage, so the OS can read and write the stick it booted from
-- [ ] Persistent settings: save the Phase 3 §5 theme choices. Needs a filesystem decision first (the disk driver and filesystem are still a v1.0 non-goal)
+- [x] Persistent settings: save the Phase 3 §5 theme choices — **done early (2026-10-09, the user's request), without a USB driver:** the stick is written through the BIOS (FAT32, Phase 2 §5a). `/LiteKern/settings.txt` and a packed custom wallpaper (`kernel/settings.h`, `kernel/deflate.c`)
 - [ ] USB keyboard/mouse (HID) only if a real need turns up; the built-in ones are PS/2
 
 ## 4. Networking
@@ -30,9 +30,41 @@ Goal: the things removed from `docs/NON-GOALS.md` on 2026-09-29 that are too big
 - [ ] Socket syscalls for KERN86 apps, added only as an app needs them
 - [ ] Wi-Fi (`168c:002a`) last, if at all: it needs firmware, 802.11 and WPA, and is by far the biggest item in this phase
 
-## 5. Multiple users
-- [ ] User accounts, login screen, and per-user settings (needs §3's writable storage)
-- [ ] File permissions, if a filesystem exists by then
+## 5. Multiple users and the lock screen (planned 2026-10-09, the user's request; brought forward)
+Needed §3's writable storage, which came early: settings already save to the boot stick (`kernel/settings.h`, 2026-10-09). Four stages, each finished and tested before the next. Decided with the user:
+- **Passwords are optional**, per user. Without one, the lock screen unlocks with a click or a key
+- **Login at start only when it's needed:** when there's more than one user, or the one user has a password. One user without a password goes straight to the desktop, as now
+- **Users don't see each other's files, unless they're an admin.** The first user (made at first start) is the admin; admins see every user's folder in Files and add or remove users. FAT32 has no permissions, so this is Files hiding the folders, not real protection: said plainly in the docs and in Settings
+- **Honest limit:** the stick isn't encrypted. A password stops someone using the EeePC, not someone reading the stick in another computer
+- **No fast user switching** at first: two people's apps open at once doesn't fit the EeePC's memory and the 8-window limit. Log Out closes your apps
+
+**Stage 1: the lock screen** (ships alone first, and gets used on the EeePC before Stage 2 starts)
+- [ ] In the kernel's shell, like the screen saver, so no app can get round it: apps keep running behind it but get no input, and their windows are never drawn on it
+- [ ] Big clock: the time in large digits (a new clock face, digits and colon only, about 96 px light, rasterised at build time like the UI font), the date under it, updated each minute; 12/24-hour; seconds optional
+- [ ] Its wallpaper, dimmed so the clock reads: the desktop's, any preset, or a picture of your own (Files' Set Wallpaper gains "for the lock screen")
+- [ ] The power menu stays on it: Shut Down, Restart
+- [ ] Locking: Lock in the power menu, Super+L, and optionally when the screen saver ends. Unlocking (no users yet): a click or a key
+- [ ] Saved with the other settings; QEMU tests: lock, unlock, the clock rolling over, input not reaching apps
+
+**Stage 2: users and passwords**
+- [ ] First start: a setup screen (name, optional password, avatar: a picture or a letter tile). That user is the admin
+- [ ] The login screen: the users to pick from, the password field, the big clock and the power menu
+- [ ] Passwords never stored as typed: salted and hashed (SHA-256, many rounds) in `/LiteKern/users.txt`. A wrong one shakes the field and waits a moment before the next try; a Caps Lock warning
+- [ ] System calls for users (list, check a password, add, change), checked by the kernel: changing an account needs its password, adding or removing users needs an admin's, so a misbehaving app can't take one over
+- [ ] Tests: setup, a wrong password then the right one, the delay
+
+**Stage 3: per-user everything**
+- [ ] Each user's own style, accent, desktop and lock wallpapers, screen saver, Blocksmith projects: `/LiteKern/users/<name>/`. Today's settings file becomes the first user's
+- [ ] Home folders, `/Users/<name>/` (Documents, Pictures); Files opens there and hides other users' folders, unless you're an admin
+- [ ] Log Out (power menu): closes your apps, back to the login screen
+- [ ] Tests: a second user's settings and folders kept apart; an admin sees both
+
+**Stage 4: Settings pages**
+- [ ] Users: add (admin), rename, change the password (asks for the old one), change the avatar, remove (admin; asks what to do with their files)
+- [ ] Lock screen: its wallpaper, the clock format, lock when the screen saver ends
+- [ ] Power: the screen saver time, lock after N minutes idle. Lid close (lock or nothing) once the lid's state can be read (the probe finds the lid, `PNP0C0D`, but doesn't read it yet), and the battery on the lock screen once §1's battery work lands: until then those rows say "not available yet"
+
+- [ ] File permissions, if a filesystem that has them exists by then
 
 ## 6. Localisation
 - [ ] Keyboard layouts other than US (still a non-goal in `docs/NON-GOALS.md` until this section starts)
