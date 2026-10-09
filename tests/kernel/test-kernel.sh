@@ -661,6 +661,61 @@ check "users: someone without a password logs straight in" \
     '^lock: logged in as Ann$' \
     '!PANIC|lock: password for Ann'
 
+# Homes and privacy (kernel/settings.h): Ann's Files opens in /Users/Ann;
+# Backspace twice is the root, where she (not an admin) can't see LiteKern.
+path; add sleep:0.6 right sleep:0.3 ret sleep:2; go "$FILES_X" "$DOCK_Y"; click
+add sleep:1.5 backspace sleep:0.5 backspace sleep:1
+KEYS="$P" KEYS_DONE='^nothing' boot_until build/test-users/disk.img '^lock: login screen' 30
+check "users: a home folder of your own; a standard user doesn't see the system's files" \
+    '^settings: Ann has none of their own yet$' \
+    '^settings: loaded: dark, accent blue, wallpaper crossing' \
+    '^user: files: open home /Users/Ann$' \
+    '^fs: User hidden from Ann$' \
+    '^fs: LiteKern hidden from Ann$' \
+    '!PANIC|user: files: .* failed'
+
+# Ann's own look: Light, no wallpaper (saved for her); then the power menu's
+# Log Out (its fourth item, y 142-176) closes her apps and shows the login
+# screen, and User, with none of his own, gets the build's look back.
+path; add sleep:0.6 right sleep:0.3 ret sleep:2; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click
+add sleep:1.5; go "$light_x" 278; click; add sleep:0.5; go "$none_x" 557; click; add sleep:1.5
+go 600 200; go 998 15; add sleep:0.5; click; add sleep:0.4; go 930 159; click
+add sleep:4 ret sleep:0.5 a p p l e ret sleep:2.5
+KEYS="$P" KEYS_DONE='^nothing' SCREEN="corner=" boot_until build/test-users/disk.img '^lock: login screen' 30
+check "users: settings of your own; Log Out closes your apps for the next person" \
+    '^settings: saved for Ann$' \
+    '^shell: log out$' \
+    '^lkx: Settings exited \(0\)$' \
+    '^lock: password for User$' \
+    '^settings: User has none of their own yet$' \
+    '^lock: logged in as User$' \
+    "^screen: corner $DESKTOP$" \
+    '!PANIC'
+
+# After a restart Ann logs in to hers (the light style's plain c8ccd6).
+KEYS="sleep:0.6 right sleep:0.3 ret sleep:2.5" KEYS_DONE='^nothing' SCREEN="corner=" \
+    boot_until build/test-users/disk.img '^lock: login screen' 30
+check "users: your settings are yours after a restart" \
+    '^settings: loaded for Ann: light, accent blue, wallpaper none' \
+    '^screen: corner c8ccd6$' \
+    '!PANIC'
+
+# User (an admin) removes Ann in Settings -> Users (Ann's row y 324, Remove
+# x 734), Remove, Delete Files, his password; then his Files opens in
+# /Users/User and he can see LiteKern at the root. (Settings is open: Files
+# moves to x 412 in the dock.)
+path; add sleep:0.6 ret sleep:0.4 a p p l e ret sleep:2.5; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click
+add sleep:1.5; go 196 147; click; add sleep:1; go 400 324; click; add sleep:0.5; go 734 632; click
+add sleep:0.6 ret sleep:0.6 ret sleep:0.5 a p p l e ret sleep:2; go 400 400; go 412 728; add sleep:0.3; click
+add sleep:1.5 backspace sleep:0.5 backspace sleep:1
+KEYS="$P" KEYS_DONE='^nothing' boot_until build/test-users/disk.img '^lock: login screen' 40
+check "users: an admin removes someone and their files; an admin sees everything" \
+    '^users: removed Ann and their files$' \
+    "^settings: Ann.s files deleted$" \
+    '^users: saved \(1\)$' \
+    '^user: files: open home /Users/User$' \
+    '!PANIC|user: files: .* failed|hidden from User'
+
 # The lock screen (kernel/lockscreen.h). Super+L locks over Calculator; the
 # first key (5) only unlocks it, so Calculator never gets it, and the sum
 # typed after does reach it. Then the power menu's Lock (its third item, y

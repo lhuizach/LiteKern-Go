@@ -14,7 +14,8 @@
 #include "kernel/string.h"
 #include "sdk/kern86.h"
 
-#define DIR       "/Blocksmith"
+static char DIR[K86_PATH_MAX];          /* <your home folder>/Blocksmith */
+static char home[K86_PATH_MAX];
 #define EXT       ".blocks"
 #define FILE_MAX  (64 * 1024)
 
@@ -25,8 +26,22 @@ static char file[FILE_MAX];
 
 /* --- the volume ------------------------------------------------------------------------------- */
 
+/* Projects go in your home folder ("/Users/Ann/Blocksmith"), or at the
+ * root with no accounts ("/Blocksmith"). */
+static void find_dir(void)
+{
+    if (DIR[0])
+        return;
+    if (k86_home(home) < 0 || home[0] != '/')
+        home[0] = '/', home[1] = '\0';
+    int n = (int)strlen(home);
+    str_copy(DIR, home, K86_PATH_MAX);
+    str_copy(DIR + n, n > 1 ? "/Blocksmith" : "Blocksmith", K86_PATH_MAX - n);
+}
+
 static int volume(const char **why)
 {
+    find_dir();
     static struct k86_volume v[8];
     int n = k86_volumes(v, 8);
     for (int i = 0; i < n && i < 8; i++)
@@ -217,7 +232,7 @@ int project_save(const char *name, const char **why)
         *why = "The project is too big to save.";
         return -ENOSPC;
     }
-    int err = k86_create(vol, "/", "Blocksmith", 1);
+    int err = k86_create(vol, home, "Blocksmith", 1);
     if (err && err != -EEXIST) {
         *why = "Couldn't make the Blocksmith folder.";
         return err;

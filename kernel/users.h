@@ -59,7 +59,7 @@ int users_add(const char *name, const char *password, int admin);
 int users_set_password(int i, const char *password);    /* "": none */
 int users_rename(int i, const char *name);
 int users_set_admin(int i, int admin);
-int users_remove(int i);
+int users_remove(int i, int delete_files);     /* their home folder too, if asked */
 
 /* NULL if a name can be used, else why not, for the user. */
 const char *users_bad_name(const char *name);

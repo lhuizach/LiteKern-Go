@@ -230,8 +230,10 @@ int users_current(void)
 void users_set_current(int i)
 {
     current = i >= 0 && i < count ? i : -1;
-    if (current >= 0)
+    if (current >= 0) {
         kprintf("users: %s logged in\n", users[current].name);
+        settings_user_changed(users[current].name);     /* their settings and home folder */
+    }
 }
 
 int users_need_login(void)
@@ -311,9 +313,12 @@ int users_rename(int i, const char *name)
     if (other >= 0 && other != i)
         return -EEXIST;
     kprintf("users: %s renamed %s\n", users[i].name, name);
+    char old[USER_NAME_MAX];
+    memcpy(old, users[i].name, sizeof(old));
     memset(users[i].name, 0, sizeof(users[i].name));
     memcpy(users[i].name, name, strlen(name) + 1);
     save();
+    settings_user_renamed(old, name);       /* their folders follow */
     return 0;
 }
 
@@ -337,13 +342,14 @@ int users_set_admin(int i, int admin)
     return 0;
 }
 
-int users_remove(int i)
+int users_remove(int i, int delete_files)
 {
     if (i < 0 || i >= count)
         return -EINVAL;
     if (i == current || (users[i].admin && admins() == 1))
         return -EBUSY;
-    kprintf("users: removed %s\n", users[i].name);
+    kprintf("users: removed %s%s\n", users[i].name, delete_files ? " and their files" : "");
+    settings_user_removed(users[i].name, delete_files);
     memmove(&users[i], &users[i + 1], sizeof(users[0]) * (size_t)(count - i - 1));
     count--;
     if (current > i)

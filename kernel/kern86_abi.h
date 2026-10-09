@@ -69,6 +69,8 @@
                                  * a password, `auth` must be it. 0, -EPERM, -EACCES (a wrong
                                  * auth), -EINVAL, -EEXIST, -ENOSPC, -EBUSY (the last admin, or
                                  * you), saved at once */
+#define SYS_HOME            29  /* ebx: char[K86_PATH_MAX] out: the logged-in user's home folder
+                                 * ("/Users/Ann"; "/" with no accounts). Returns its volume */
 #define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
                                  * (K86_PROBE_*). Lists the sensors and controls the kernel
                                  * can see on this machine; only ever reads. Returns the
@@ -212,7 +214,7 @@ struct k86_users {
 #define K86_USER_PASSWORD   2   /* user: index; password: the new one ("": none) */
 #define K86_USER_RENAME     3   /* user, name */
 #define K86_USER_ADMIN      4   /* user, admin: 1 or 0 */
-#define K86_USER_REMOVE     5   /* user */
+#define K86_USER_REMOVE     5   /* user; admin: 1 = delete their home folder too */
 struct k86_user_change {
     int32_t op;
     int32_t user;

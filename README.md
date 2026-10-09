@@ -51,7 +51,7 @@ It boots in about a second to a clean, modern desktop with a dock, an app menu, 
   - **Settings** switches between dark and light, six accent colours and five backgrounds. Your choices, and a picture you made the wallpaper, are kept for the next time you switch on.
   - **Log** shows what the system is doing.
 - **A lock screen:** a big clock and the date over its own wallpaper, sliding down like a curtain. Lock it from the power menu or with Super+L, or have it lock when the screen saver ends.
-- **Users:** up to eight people, each with an optional password, added in Settings → Users. With more than one, or a password, LiteKern X starts at a login screen.
+- **Users:** up to eight people, each with an optional password, added in Settings → Users. With more than one, or a password, LiteKern X starts at a login screen. Then everyone has their own look and their own home folder (`/Users/<name>`); only admins can see other people's files, and Log Out in the power menu hands the EeePC to the next person.
 - **Stays up:** if an app crashes or freezes, only that app closes.
 - **Shut down and restart** from the power menu.
 

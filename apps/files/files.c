@@ -863,6 +863,18 @@ int main(void)
     nvolumes = k86_volumes(volumes, MAX_VOLUMES);
     if (nvolumes == 1 && volumes[0].supported)
         open_volume(0);                     /* only one disk: straight in */
+    /* With accounts, your home folder ("/Users/Ann"): that's where your files are. */
+    char home[K86_PATH_MAX];
+    int hv = k86_home(home);
+    if (hv >= 0 && hv < nvolumes && volumes[hv].supported && strcmp(home, "/")) {
+        vol = hv;
+        path[0] = '\0';
+        append(path, home, path + sizeof(path));
+        depth = 0;
+        for (const char *p = home; *p; p++)
+            depth += *p == '/';
+        k86_logf("files: open home %s", home);
+    }
     refresh(0);
 
     for (;;) {

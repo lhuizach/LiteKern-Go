@@ -160,6 +160,14 @@ static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stri
                      (uint32_t)where);
 }
 
+/* The logged-in user's home folder into path (K86_PATH_MAX): "/Users/Ann",
+ * or "/" with no accounts. Returns its volume (for k86_list etc.), or a
+ * negative errno. */
+static inline int k86_home(char *path)
+{
+    return k86_call(SYS_HOME, (uint32_t)path, 0, 0, 0);
+}
+
 /* The users (kernel/users.h): list them; change them (checked and saved by the kernel). */
 static inline int k86_users(struct k86_users *out)
 {

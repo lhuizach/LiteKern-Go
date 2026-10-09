@@ -53,14 +53,15 @@ Needed §3's writable storage, which came early: settings already save to the bo
 - [x] System calls for users (list, check a password, add, change), checked by the kernel: changing an account needs its password, adding or removing users needs an admin's, so a misbehaving app can't take one over
 - [x] Tests: Settings adding a user and a password, the login screen, a wrong password then the right one, a password unlocking the lock screen, no password logging straight in; on the host, SHA-256's vectors and every stored hash worked out again by Python's hashlib (`tests/users/`)
 
-**Stage 3: per-user everything**
-- [ ] Each user's own style, accent, desktop and lock wallpapers, screen saver, Blocksmith projects: `/LiteKern/users/<name>/`. Today's settings file becomes the first user's
-- [ ] Home folders, `/Users/<name>/` (Documents, Pictures); Files opens there and hides other users' folders, unless you're an admin
-- [ ] Log Out (power menu): closes your apps, back to the login screen
-- [ ] Tests: a second user's settings and folders kept apart; an admin sees both
+**Stage 3: per-user everything** — **done in QEMU (2026-10-09)**: `kernel/settings.c` (each user's folder, homes, who may see what), checked in `kernel/sys_app.c`; `k86_home()` for apps. Only with accounts (more than one user, or a password): one user without a password works exactly as before. Also the user's request: the lock screen always shows the users to pick from (moved down, under the big clock), and picking someone else logs you out and them in
+- [x] Each user's own style, accent, desktop and lock wallpapers, screen saver: `/LiteKern/users/<name>/`. **Changed from the plan:** today's settings file isn't moved into the first user's; it stays everyone's starting point (someone with none of their own gets it, else the build's), so a new user never gets the last person's look. The login screen looks as whoever logged in last (`/LiteKern/last-user.txt`)
+- [x] Home folders, `/Users/<name>/` (Documents, Pictures), made at their first login; Files opens there and Blocksmith keeps projects in `<home>/Blocksmith`. Someone who isn't an admin doesn't see `/LiteKern` or other people's homes at all (left out of listings, and refused by path)
+- [x] Log Out (power menu, only with accounts): closes your apps, back to the login screen
+- [x] Removing a user asks Keep Files / Delete Files (pulled forward from stage 4)
+- [x] Tests: Ann's home and the root without LiteKern; her own look kept apart from User's and after a restart; Log Out; an admin removing her and her files, and seeing everything
 
 **Stage 4: Settings pages**
-- [ ] Users: add (admin), rename, change the password (asks for the old one), change the avatar, remove (admin; asks what to do with their files)
+- [ ] Users: change the avatar (add, rename, passwords and remove came with stages 2 and 3)
 - [ ] Lock screen: its wallpaper, the clock format, lock when the screen saver ends
 - [ ] Power: the screen saver time, lock after N minutes idle. Lid close (lock or nothing) once the lid's state can be read (the probe finds the lid, `PNP0C0D`, but doesn't read it yet), and the battery on the lock screen once §1's battery work lands: until then those rows say "not available yet"
 

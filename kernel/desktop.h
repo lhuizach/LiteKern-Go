@@ -43,6 +43,9 @@ void desktop_cover(int on);
 /* Uncover, and compose the whole desktop into the screen's back buffer
  * without showing it (the lock screen's unlock animation reveals it). */
 void desktop_render_quiet(void);
+/* Log out: every window asked to close, its app given up to 3 s to end
+ * (and save). Returns how many windows are still open. */
+int desktop_log_out(void);
 
 /* The theme or wallpaper changed: redraw everything. */
 void desktop_refresh(void);

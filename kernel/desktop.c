@@ -42,7 +42,8 @@
 #define MENU_W 180
 #define MENU_ITEM_H 34
 #define MENU_PAD 6
-#define MENU_ITEMS 3        /* Restart, Shut Down, Lock: Lock last, so the others stay put */
+#define MENU_ITEMS 4        /* Restart, Shut Down, Lock, Log Out: new ones last, so the others stay put */
+#define menu_items() (users_need_login() ? 4 : 3)   /* Log Out: only with accounts */
 #define WHITE 0xffffff
 /* The shell (top bar, its menus, the dock) stays dark in both styles, like GNOME Shell. */
 #define SHELL_FG      0xffffff
@@ -495,10 +496,10 @@ static struct gfx_rect dock_icon_rect(int i)
 
 /* --- hit testing ---------------------------------------------------------------------- */
 
-enum hit_kind { H_NONE, H_HOME, H_POWER, H_RESTART, H_SHUTDOWN, H_LOCK, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
+enum hit_kind { H_NONE, H_HOME, H_POWER, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_BAR };
 
-static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK };
+static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT };
 
 struct hit {
     enum hit_kind kind;
@@ -527,7 +528,7 @@ static struct gfx_rect power_rect(void)
 static struct gfx_rect menu_rect(void)
 {
     return (struct gfx_rect){ S()->w - T()->spacing - MENU_W, T()->topbar_h + 4, MENU_W,
-                              MENU_ITEMS * MENU_ITEM_H + 2 * MENU_PAD };
+                              menu_items() * MENU_ITEM_H + 2 * MENU_PAD };
 }
 
 static struct gfx_rect menu_item_rect(int k)
@@ -564,7 +565,7 @@ static struct gfx_rect tile_icon_rect(int i)
 static struct hit hit_at(int x, int y)
 {
     if (menu_open) {
-        for (int k = 0; k < MENU_ITEMS; k++)
+        for (int k = 0; k < menu_items(); k++)
             if (inside(menu_item_rect(k), x, y))
                 return (struct hit){ menu_kinds[k], 0 };
         if (inside(menu_rect(), x, y))
@@ -597,7 +598,8 @@ static void damage_hit(struct hit h)
     case H_POWER:    shell_damage(power_rect()); break;
     case H_RESTART:
     case H_SHUTDOWN:
-    case H_LOCK:     shell_damage(menu_rect()); break;
+    case H_LOCK:
+    case H_LOGOUT:   shell_damage(menu_rect()); break;
     case H_DOCK:
     case H_APPS:     shell_damage(dock_band()); break;
     case H_TILE:     shell_damage(tile_rect(h.app)); break;
@@ -734,8 +736,8 @@ static void draw_menu(void)
     if (!visible(m))
         return;
     gfx_fill_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 12, SHELL_POPOVER);
-    static const char *const labels[MENU_ITEMS] = { "Restart", "Shut Down", "Lock" };
-    for (int k = 0; k < MENU_ITEMS; k++) {
+    static const char *const labels[MENU_ITEMS] = { "Restart", "Shut Down", "Lock", "Log Out" };
+    for (int k = 0; k < menu_items(); k++) {
         struct gfx_rect r = menu_item_rect(k);
         int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
         uint32_t bg = disabled ? SHELL_POPOVER : hit_bg((struct hit){ menu_kinds[k], 0 }, SHELL_POPOVER);
@@ -880,8 +882,8 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
                      const char *name)
 {
     struct gfx_surface *s = S();
-    if (!anim_save || !n)
-        return;
+    if (!anim_save || !n || covered)
+        return;                         /* covered (the lock screen, the screen saver): unseen */
     ms *= ANIM_SLOW;
     int drawn = 0;
     shell_flush();                          /* the picture as it is without them */
@@ -1174,6 +1176,14 @@ static void activate(struct hit h)
     case H_POWER:
         menu_set(!menu_open);
         break;
+    case H_LOGOUT:
+        menu_set(0);
+        shell_flush();
+        kprintf("shell: log out\n");
+        desktop_log_out();                  /* every app closed (they save as they go) */
+        users_set_current(-1);
+        lockscreen_login();                 /* someone logs in next */
+        break;
     case H_LOCK:
         menu_set(0);
         shell_flush();
@@ -1269,6 +1279,20 @@ void desktop_cover(int on)
     shell_flush();
 }
 
+int desktop_log_out(void)
+{
+    for (int i = wm_count() - 1; i >= 0; i--)
+        wm_request_close(wm_at(i));
+    uint32_t t0 = uptime_ms();
+    while (wm_count() && uptime_ms() - t0 < 3000) {
+        lkx_schedule();                     /* the apps see their close, save, and end */
+        desktop_handle_events();            /* the built-in ones (Log) close here */
+    }
+    if (wm_count())
+        kprintf("desktop: log out: %d window%s didn't close\n", wm_count(), wm_count() == 1 ? "" : "s");
+    return wm_count();
+}
+
 void desktop_render_quiet(void)
 {
     covered = 0;
@@ -1342,7 +1366,7 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         wm_pointer_gone();      /* the shell has the pointer */
 
     if (down) {
-        if (menu_open && h.kind != H_RESTART && h.kind != H_SHUTDOWN && h.kind != H_LOCK &&
+        if (menu_open && h.kind != H_RESTART && h.kind != H_SHUTDOWN && h.kind != H_LOCK && h.kind != H_LOGOUT &&
             h.kind != H_POWER && h.kind != H_BAR) {
             menu_set(0);        /* a click outside closes the menu */
         } else if (h.kind == H_NONE) {

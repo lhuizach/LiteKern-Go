@@ -36,6 +36,10 @@ int settings_read_file(const char *name, void *buf, uint32_t len)
     return disk_len;
 }
 
+void settings_user_changed(const char *name) { printf("log: (settings for %s)\n", name); }
+void settings_user_renamed(const char *a, const char *b) { printf("log: (folders %s -> %s)\n", a, b); }
+void settings_user_removed(const char *name, int files) { printf("log: (folders of %s gone%s)\n", name, files ? ", files too" : ""); }
+
 void kprintf(const char *fmt, ...)
 {
     va_list ap;
@@ -110,7 +114,7 @@ int main(void)
     check(users_rename(1, "Annie") == 0 && users_find("Annie") == 1 && users_find("Ann") < 0, "rename");
     check(users_set_admin(0, 0) == 0 && users_set_admin(2, 0) == -EBUSY, "the last admin stays one");
     check(users_set_admin(0, 1) == 0, "make an admin again");
-    check(users_remove(0) == -EBUSY, "you can't remove yourself");
+    check(users_remove(0, 0) == -EBUSY, "you can't remove yourself");
     check(users_need_login(), "with three users, a login is needed");
 
     /* What it saved, read again (a restart). */
@@ -123,7 +127,7 @@ int main(void)
           "...with their passwords (and none)");
     check(users_get(0)->admin && !users_get(1)->admin && users_get(2)->admin, "...and who's an admin");
     users_set_current(2);
-    check(users_remove(1) == 0 && users_count() == 2 && users_current() == 1, "remove one (who's logged in moves down)");
+    check(users_remove(1, 1) == 0 && users_count() == 2 && users_current() == 1, "remove one (who's logged in moves down)");
 
     /* A damaged file: the bad lines are skipped, not trusted. */
     const char *bad = "user admin zz0000 00 - Bad hex\nuser root 3584e4 00000000000000000000000000000000 - Wrong role\n"

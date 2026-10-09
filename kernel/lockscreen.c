@@ -32,7 +32,7 @@
 #define SLIDE_MS    320                 /* the curtain sliding down (locking) or up (unlocking) */
 #define SHADOW      28                  /* the soft shadow along its bottom edge */
 #define MAX_FRAME_MS 60                 /* slower than this: go straight to the end */
-#define AVATAR_R    44                  /* the prompt's avatar */
+#define AVATAR_R    36                  /* the prompt's avatar */
 #define PICK_R      38                  /* the picker's */
 #define PICK_GAP    150                 /* between the picker's avatars */
 #define FIELD_W     280
@@ -220,29 +220,29 @@ static struct gfx_rect item_rect(int k)
     return (struct gfx_rect){ m.x + MENU_PAD, m.y + MENU_PAD + k * ITEM_H, MENU_W - 2 * MENU_PAD, ITEM_H };
 }
 
+/* The big clock is always there: a little higher when the users or the
+ * password prompt are under it. */
 static int clock_y(void)
 {
-    return S()->h * 22 / 100;
+    return S()->h * (ls.view == V_CLOCK ? 22 : 12) / 100;
 }
 
 static struct gfx_rect clock_rect(void)
 {
-    if (ls.view != V_CLOCK)                 /* the small clock at the top */
-        return (struct gfx_rect){ 0, 30, S()->w, text_height(TEXT_HEADING) + 8 };
     const struct text_face *f = clock_font();
     int h = f->ascent + f->descent + 16 + text_height(TEXT_HEADING);
     return (struct gfx_rect){ 0, clock_y(), S()->w, h };
 }
 
-/* The middle, where the prompt or the picker is: everything they draw. */
+/* Under the clock, where the prompt or the users are: everything they draw. */
 static struct gfx_rect middle_rect(void)
 {
-    return (struct gfx_rect){ 0, S()->h * 22 / 100, S()->w, S()->h * 58 / 100 };
+    return (struct gfx_rect){ 0, S()->h * 42 / 100, S()->w, S()->h * 48 / 100 };
 }
 
 static int prompt_cy(void)                  /* the prompt's avatar centre */
 {
-    return S()->h * 36 / 100;
+    return S()->h * 52 / 100;
 }
 
 static struct gfx_rect field_rect(void)
@@ -257,9 +257,9 @@ static int pick_x(int i)                    /* the picker's i-th avatar centre *
     return S()->w / 2 + (2 * i - (n - 1)) * PICK_GAP / 2;
 }
 
-static int pick_cy(void)
+static int pick_cy(void)                    /* the users' avatars: under the clock */
 {
-    return S()->h * 42 / 100;
+    return S()->h * 58 / 100;
 }
 
 static int hit_at(int x, int y)
@@ -315,17 +315,6 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
         return;
     time_text(&ls.shown, hm, ampm);
     date_text(&ls.shown, date);
-    if (ls.view != V_CLOCK) {               /* small, at the top, while the prompt shows */
-        char line[64], *p = put(line, date);
-        p = put(p, "   ");
-        p = put(p, hm);
-        if (ampm[0]) {
-            p = put(p, " ");
-            put(p, ampm);
-        }
-        centred(s, ox, oy, 34, line, TEXT_HEADING, WHITE);
-        return;
-    }
     const struct text_face *f = clock_font();
     int tw = text_width_face(hm, f), aw = ampm[0] ? text_width(ampm, TEXT_HEADING) + 10 : 0;
     int x = (S()->w - tw - aw) / 2, y = clock_y();
@@ -365,7 +354,6 @@ static void draw_prompt(struct gfx_surface *s, int ox, int oy)
 
 static void draw_pick(struct gfx_surface *s, int ox, int oy)
 {
-    centred(s, ox, oy, pick_cy() - PICK_R - 56, "Who's using LiteKern X?", TEXT_HEADING, WHITE);
     for (int i = 0; i < users_count(); i++) {
         const struct user *u = users_get(i);
         int cx = pick_x(i), lit = i == ls.pick || ls.hover == H_AVATAR + i;
@@ -386,7 +374,9 @@ static void draw_into(struct gfx_surface *s, int ox, int oy)
         draw_prompt(s, ox, oy);
     else if (ls.view == V_PICK)
         draw_pick(s, ox, oy);
-    const char *hint = ls.view == V_PICK ? "Choose with the arrow keys and Enter, or click"
+    const char *hint = ls.view == V_PICK ? (ls.login ? "Choose who you are: the arrow keys and Enter, or click"
+                                                     : "Choose who you are: the arrow keys and Enter, or click. "
+                                                       "Choosing someone else logs you out")
                      : ls.view == V_PROMPT ? (ls.login && users_count() > 1 ? "Enter to log in, Esc to choose someone else"
                                               : "Enter to unlock, Esc to go back")
                      : "Click or press a key to unlock";
@@ -547,9 +537,10 @@ static int start(int animate_from_desktop)
 
 void lockscreen_lock(void)
 {
-    ls.view = V_CLOCK;
     ls.login = 0;
     ls.who = users_current();
+    ls.pick = ls.who > 0 ? ls.who : 0;
+    ls.view = users_count() > 1 ? V_PICK : V_CLOCK;   /* everyone, under the clock */
     if (!start(1))
         kprintf("lock: locked (wallpaper %s)\n", ls.set.wallpaper);
 }
@@ -578,6 +569,13 @@ static void unlock(void)
         users_set_current(ls.who);
         kprintf("lock: logged in as %s\n", users_get(ls.who)->name);
         ls.login = 0;
+    } else if (ls.who != users_current()) {
+        /* Someone else: the one logged in is logged out first (their apps
+         * closed), as there's room for one at a time (kernel/users.h). */
+        kprintf("lock: switching from %s to %s\n", users_get(users_current())->name, users_get(ls.who)->name);
+        desktop_log_out();
+        users_set_current(ls.who);
+        kprintf("lock: logged in as %s\n", users_get(ls.who)->name);
     } else {
         kprintf("lock: unlocked\n");
     }
@@ -660,8 +658,8 @@ void lockscreen_tick(void)
 {
     if (!ls.active)
         return;
-    if (ls.view == V_PROMPT && !ls.login && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
-        show(V_CLOCK);                      /* left alone: back to the clock */
+    if (ls.view == V_PROMPT && (!ls.login || users_count() > 1) && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
+        show(users_count() > 1 ? V_PICK : V_CLOCK);     /* left alone: back where it started */
     if (ls.message && ls.wait_until && (int32_t)(ls.wait_until - uptime_ms()) <= 0) {
         ls.wait_until = 0;                  /* the wait's over: say so */
         ls.message = "Wrong password. Try again.";
@@ -689,10 +687,7 @@ static void prompt_key(const struct key_event *k)
     int caps = (k->mods & MOD_CAPSLOCK) != 0, redraw = caps != ls.caps;
     ls.caps = caps;
     if (k->key == KEY_ESC) {
-        if (ls.login)
-            show(users_count() > 1 ? V_PICK : V_PROMPT);
-        else
-            show(V_CLOCK);
+        show(users_count() > 1 ? V_PICK : ls.login ? V_PROMPT : V_CLOCK);
         return;
     }
     if (k->key == KEY_ENTER) {
@@ -748,6 +743,11 @@ void lockscreen_key(const struct key_event *k)
             ls.pick++;
         else if (k->key == KEY_ENTER || k->key == KEY_SPACE) {
             choose(ls.pick);
+            return;
+        } else if (k->ascii > ' ' && k->ascii <= '~') {
+            choose(ls.pick);                /* typing straight away: their password */
+            if (ls.active && ls.view == V_PROMPT)
+                prompt_key(k);
             return;
         } else
             return;

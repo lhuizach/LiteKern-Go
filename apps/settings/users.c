@@ -23,7 +23,7 @@ static char status[96];
 static int status_bad, list_y;
 
 /* A change in progress: its op, and the dialog steps still to go. */
-enum step { S_NONE, S_NAME, S_NEW, S_AGAIN, S_AUTH, S_CONFIRM };
+enum step { S_NONE, S_NAME, S_NEW, S_AGAIN, S_AUTH, S_CONFIRM, S_FILES };
 static struct {
     int active;
     struct k86_user_change ch;
@@ -167,6 +167,15 @@ static void show_step(const char *error)
         copy(body, "Type your own password to make this change.", sizeof(body));
         action = "Done";
         break;
+    case S_FILES:
+        title = "Their Files?";
+        copy(body, "Delete /Users/", sizeof(body));
+        copy(body + strlen(body), who, sizeof(body) - strlen(body));
+        copy(body + strlen(body), " too, or keep it for an administrator to open?", sizeof(body) - strlen(body));
+        action = "Delete Files";
+        style = WG_BUTTON_DESTRUCTIVE;
+        entry = 0;
+        break;
     case S_CONFIRM:
         title = "Remove User?";
         copy(body, who, sizeof(body));
@@ -178,9 +187,11 @@ static void show_step(const char *error)
     default:
         return;
     }
-    if (flow.at == flow.nsteps - 1 && s != S_CONFIRM)
+    if (flow.at == flow.nsteps - 1 && s != S_CONFIRM && s != S_FILES)
         action = "Done";
     wg_dialog_init(&dialog, title, body, action, style, entry);
+    if (s == S_FILES)
+        dialog.buttons[0].label = "Keep Files";   /* not a cancel here: the removal goes on */
     dialog.entry.secret = secret;
     if (s == S_NAME && flow.ch.op == K86_USER_RENAME)
         wg_entry_set(&dialog.entry, us.user[flow.ch.user].name);
@@ -217,6 +228,7 @@ static void start(int op)
         break;
     case K86_USER_REMOVE:
         flow.steps[flow.nsteps++] = S_CONFIRM;
+        flow.steps[flow.nsteps++] = S_FILES;
         break;
     }
     if (has_pw() && !(op == K86_USER_PASSWORD && self))
@@ -289,6 +301,9 @@ static void step_done(void)
     case S_AUTH:
         copy(flow.ch.auth, text, sizeof(flow.ch.auth));
         break;
+    case S_FILES:
+        flow.ch.admin = 1;                  /* "Delete Files" */
+        break;
     default:
         break;
     }
@@ -297,6 +312,21 @@ static void step_done(void)
         return;
     }
     submit();
+}
+
+/* The dialog's first button: Cancel, except when it's Keep Files. */
+static void first_button(void)
+{
+    if (flow.active && flow.steps[flow.at] == S_FILES) {
+        flow.ch.admin = 0;
+        if (++flow.at < flow.nsteps)
+            show_step(0);
+        else
+            submit();
+        return;
+    }
+    memset(&flow, 0, sizeof(flow));
+    users_page_draw();
 }
 
 static void cancel(void)
@@ -323,7 +353,7 @@ void users_page_pointer(const struct k86_event *ev)
     if (flow.active) {
         int ch = wg_dialog_pointer(&dialog, &p);
         if (ch == 0)
-            cancel();
+            first_button();
         else if (ch > 0)
             step_done();
         else if (dialog.dirty) {
@@ -351,8 +381,10 @@ void users_page_key(const struct key_event *k)
 {
     if (flow.active) {
         int ch = wg_dialog_key(&dialog, k);
-        if (ch == 0)
-            cancel();
+        if (ch == 0 && k->key == KEY_ESC)
+            cancel();                       /* Esc always cancels */
+        else if (ch == 0)
+            first_button();
         else if (ch > 0)
             step_done();
         else if (dialog.dirty) {

@@ -123,6 +123,21 @@ static int volumes(uint32_t out, uint32_t max)
     return storage_count();
 }
 
+static char resolved[K86_PATH_MAX];     /* the folder resolve() last found, as the app wrote it */
+
+/* Is `name`, in the folder resolve() just found, one whoever's logged in
+ * mustn't see (kernel/settings.h: /LiteKern, someone else's home)? */
+static int private_entry(const char *name)
+{
+    char full[K86_PATH_MAX + K86_NAME_MAX + 2];
+    int n = (int)strlen(resolved);
+    memcpy(full, resolved, (size_t)n);
+    if (!n || full[n - 1] != '/')
+        full[n++] = '/';
+    memcpy(full + n, name, strlen(name) + 1);
+    return settings_private(full);
+}
+
 /* The volume, and the cluster of the folder at `upath` ("/", "/Documents"). */
 static int resolve(uint32_t vol, uint32_t upath, struct fat_volume **v, uint32_t *dir)
 {
@@ -135,6 +150,9 @@ static int resolve(uint32_t vol, uint32_t upath, struct fat_volume **v, uint32_t
         return err;
     if (path[0] != '/')
         return -EINVAL;
+    if (settings_private(path))
+        return -EACCES;                     /* someone else's, or the system's (kernel/settings.h) */
+    memcpy(resolved, path, sizeof(resolved));
     *v = &s->fat;
     *dir = fat_root(&s->fat);
     for (char *p = path + 1; *p;) {
@@ -168,6 +186,10 @@ struct lister {
 static int list_fn(void *ctx, const struct fat_entry *e)
 {
     struct lister *l = ctx;
+    if (private_entry(e->name)) {
+        kprintf("fs: %s hidden from %s\n", e->name, users_get(users_current())->name);
+        return 0;                           /* not theirs to see: left out */
+    }
     if (l->n < l->max) {
         struct k86_dirent *d = &l->out[l->n];
         memset(d, 0, sizeof(*d));
@@ -205,6 +227,8 @@ static int fs_change(uint32_t nr, uint32_t vol, uint32_t upath, uint32_t uname, 
         err = user_string(name, uname, sizeof(name));
     if (err)
         return err;
+    if (private_entry(name))
+        return -EACCES;
     if (nr == SYS_FS_CREATE)
         return fat_create(v, dir, name, arg != 0, 0);
     struct fat_entry e;
@@ -214,6 +238,8 @@ static int fs_change(uint32_t nr, uint32_t vol, uint32_t upath, uint32_t uname, 
         return fat_delete(v, &e);
     if ((err = user_string(other, arg, sizeof(other))))
         return err;
+    if (private_entry(other))
+        return -EACCES;
     return fat_rename(v, &e, other);
 }
 
@@ -357,6 +383,14 @@ static int lock_settings(uint32_t u, uint32_t set)
 
 /* --- users (kernel/users.h) ----------------------------------------------------------------- */
 
+static int home_out(uint32_t out)
+{
+    if (user_check(out, K86_PATH_MAX, 1))
+        return -EFAULT;
+    settings_home((char *)out, K86_PATH_MAX);
+    return settings_boot_volume();
+}
+
 static int users_out(uint32_t out)
 {
     if (user_check(out, sizeof(struct k86_users), 1))
@@ -398,7 +432,7 @@ static int user_change(uint32_t uc)
         case K86_USER_PASSWORD: err = users_set_password(c.user, c.password); break;
         case K86_USER_RENAME:   err = users_rename(c.user, c.name); break;
         case K86_USER_ADMIN:    err = users_set_admin(c.user, c.admin); break;
-        case K86_USER_REMOVE:   err = users_remove(c.user); break;
+        case K86_USER_REMOVE:   err = users_remove(c.user, c.admin); break;
         default:                err = -EINVAL; break;
         }
     }
@@ -420,6 +454,8 @@ static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, u
     int err = resolve(vol, upath, &v, &dir);
     if (!err)
         err = user_string(name, uname, sizeof(name));
+    if (!err && private_entry(name))
+        err = -EACCES;
     if (err)
         return err;
     struct fat_entry e;
@@ -441,6 +477,8 @@ static int fs_write(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, 
     int err = resolve(vol, upath, &v, &dir);
     if (!err)
         err = user_string(name, uname, sizeof(name));
+    if (!err && private_entry(name))
+        err = -EACCES;
     if (err)
         return err;
     struct fat_entry e;
@@ -503,6 +541,7 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_LOCK:           kprintf("shell: lock (an app)\n"); lockscreen_lock(); return 0;
     case SYS_LOCK_SETTINGS:  return lock_settings(a1, a2);
     case SYS_USERS:          return users_out(a1);
+    case SYS_HOME:           return home_out(a1);
     case SYS_USER_CHANGE:    return user_change(a1);
     case SYS_EC_READ:        return ec_read(a1);
     default:                 return -ENOSYS;
