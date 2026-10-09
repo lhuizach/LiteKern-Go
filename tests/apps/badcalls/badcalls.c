@@ -24,6 +24,10 @@ int main(void)
     k86_logf("badcalls: write from kernel memory %d",
              k86_write(0, "/", "x.txt", (const void *)KERNEL_PTR, 16));
     k86_logf("badcalls: write too big %d", k86_write(0, "/", "x.txt", "x", 2 * 1024 * 1024));
+    k86_logf("badcalls: too much memory %d", k86_memory(K86_HEAP_MAX + 1));
+    k86_logf("badcalls: wallpaper from kernel memory %d",
+             k86_wallpaper_image((const uint32_t *)KERNEL_PTR, 64, 64, 64));
+    k86_logf("badcalls: wallpaper too big %d", k86_wallpaper_image((const uint32_t *)KERNEL_PTR, 5000, 10, 5000));
     k86_log("badcalls: done");
     return 7;
 }

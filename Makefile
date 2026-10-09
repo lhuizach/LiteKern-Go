@@ -67,7 +67,7 @@ APP_CFLAGS   := -m32 -march=i686 -mtune=bonnell -std=gnu11 -O2 -ffreestanding -f
                 -mgeneral-regs-only -Wall -Wextra -Werror -I.
 SDK_OBJS     := $(BUILD)/sdk/crt0.asm.o $(BUILD)/sdk/sdk.o $(BUILD)/sdk/gfx.o \
                 $(BUILD)/sdk/widget.o $(BUILD)/sdk/theme.o $(BUILD)/sdk/string.o \
-                $(BUILD)/sdk/text.o $(BUILD)/sdk/uifont.o
+                $(BUILD)/sdk/text.o $(BUILD)/sdk/uifont.o $(BUILD)/sdk/inflate.o
 APP_LKX      := $(foreach p,$(APP_PATHS),$(BUILD)/$(p)/$(notdir $(p)).lkx)
 RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/kerns.json \
                 apps/$(notdir $(p))/$(notdir $(p)).lkx=$(BUILD)/$(p)/$(notdir $(p)).lkx) \
@@ -77,7 +77,7 @@ RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/ker
 # kernels by tests/kernel/user_programs.asm.
 USER_TEST_BINS := $(patsubst %.asm,$(BUILD)/%.user.bin,$(wildcard tests/kernel/user/*.asm))
 
-.PHONY: all run debug test test-boot test-fat test-kernel smoke smoke-gui check-tools clean \
+.PHONY: all run debug test test-boot test-fat test-image test-kernel smoke smoke-gui check-tools clean \
         vbox-create vbox vbox-test usb
 
 all: $(IMAGE)
@@ -272,11 +272,17 @@ debug: $(IMAGE)
 
 # --- tests ------------------------------------------------------------------
 
-test: smoke test-boot test-fat test-kernel
+test: smoke test-boot test-fat test-image test-kernel
 
 # The FAT32 driver, built for Linux and checked with fsck.fat and mtools.
 test-fat:
 	@bash tests/fat/test-fat.sh
+	@echo
+
+# The picture decoders (apps/files/image.c), built for Linux and compared
+# with Pillow's decodes of the same files.
+test-image:
+	@bash tests/image/test-image.sh
 	@echo
 
 test-boot:

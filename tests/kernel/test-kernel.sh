@@ -566,6 +566,24 @@ check "Calculator: exact decimals; overflow and division by zero are errors" \
     '^user: calculator: 1 / 3 = 0\.333333$' \
     '!PANIC'
 
+# Pictures in Files: a JPEG copied into Pictures (on a scratch copy of the
+# image) opens with Enter, decoded in the app; Set Wallpaper (the header
+# button, right of the title) gives it to the kernel, which scales it to
+# fill the screen. The decoders themselves are tested in tests/image/.
+mkdir -p build/test-pictures
+cp build/litekernx.img build/test-pictures/disk.img
+MTOOLS_SKIP_CHECK=1 mcopy -i build/test-pictures/disk.img@@$((8192 * 512)) \
+    tests/image/fixtures/progressive-420.jpg ::/Pictures/photo.jpg || exit 1
+KEYS="move:$((FILES_X - 512)),344 press:1 release sleep:1.5 home down ret sleep:0.8 home ret sleep:1.5 \
+move:$((704 - FILES_X)),$((173 - 728)) press:1 release sleep:1" \
+KEYS_DONE='^user: files: wallpaper ' boot_until build/test-pictures/disk.img "$done_re" 30
+check "Files: pictures open (a progressive JPEG), and one can be the wallpaper" \
+    '^user: files: open folder Pictures$' \
+    '^user: files: picture photo\.jpg 157x93 JPEG, decoded in [0-9]+ ms$' \
+    '^wallpaper: Custom, 157x93 picture, scaled to 1024x768 in [0-9]+ ms$' \
+    '^user: files: wallpaper photo\.jpg$' \
+    '!PANIC|files: can.t open picture'
+
 # Blocksmith: F5 runs the starter project (its "print" logs), a click on the
 # stage runs "when stage clicked", Esc stops, and Ctrl+S saves it to
 # /Blocksmith/Test.blocks (SYS_FS_WRITE) after asking for a name. On a
@@ -706,6 +724,9 @@ check "apps: a crash, bad calls and a hang each end only the app" \
     '^user: badcalls: font into kernel memory -14$' \
     '^user: badcalls: write from kernel memory -14$' \
     '^user: badcalls: write too big -14$' \
+    '^user: badcalls: too much memory -22$' \
+    '^user: badcalls: wallpaper from kernel memory -14$' \
+    '^user: badcalls: wallpaper too big -22$' \
     '^lkx: Badcalls exited \(7\)$' \
     '^user: no response for 10 s at eip=0x8' \
     '^lkx: Hang stopped responding and was stopped$' \

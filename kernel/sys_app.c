@@ -296,12 +296,27 @@ static int wallpaper_thumbnail(uint32_t uname, uint32_t out, int w, int h)
     return err ? err : wallpaper_thumb(name, (uint32_t *)out, w, h);
 }
 
+/* A picture from the app as the wallpaper. */
+static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t stride)
+{
+    if (!w || !h || w > 4096 || h > 4096 || stride < w || stride > 4096)
+        return -EINVAL;
+    if (user_check(px, ((h - 1) * stride + w) * 4, 0))
+        return -EFAULT;
+    int err = wallpaper_set_image((const uint32_t *)px, (int)w, (int)h, (int)stride);
+    if (err)
+        return err;
+    desktop_refresh();
+    wm_theme_changed();                     /* Settings shows the change */
+    return 0;
+}
+
 static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, uint32_t len)
 {
     struct fat_volume *v;
     uint32_t dir;
     char name[K86_NAME_MAX];
-    if (len > 1024 * 1024 || user_check(buf, len, 1))
+    if (len > 32 * 1024 * 1024 || user_check(buf, len, 1))
         return -EFAULT;
     int err = resolve(vol, upath, &v, &dir);
     if (!err)
@@ -384,6 +399,8 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_SCREENSAVER_SET: return screensaver_set(a1, a2);
     case SYS_HW_PROBE:       return hw_probe(a1, a2, a3);
     case SYS_TIMER_SET:      return lkx_set_timer(a1);
+    case SYS_MEMORY:         return lkx_set_memory(a1);
+    case SYS_WALLPAPER_IMAGE: return wallpaper_image_user(a1, a2, a3, a4);
     case SYS_EC_READ:        return ec_read(a1);
     default:                 return -ENOSYS;
     }

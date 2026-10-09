@@ -107,6 +107,22 @@ int vmm_map_user(uint32_t virt, uint32_t phys, int flags)
     return 0;
 }
 
+void vmm_unmap_user(uint32_t virt)
+{
+    if (!is_user_page(virt))
+        return;
+    uint32_t pde = cur_pd[PD_INDEX(virt)];
+    if (!(pde & PTE_PRESENT) || (pde & PDE_4MIB))
+        return;
+    uint32_t *pt = (uint32_t *)(pde & ~0xfffu), pte = pt[PT_INDEX(virt)];
+    if (!(pte & PTE_PRESENT))
+        return;
+    pt[PT_INDEX(virt)] = 0;
+    invlpg(virt);
+    if (!(pte & PTE_SHARED))
+        pmm_free(pte & ~0xfffu);
+}
+
 uint32_t vmm_lookup(uint32_t virt)
 {
     uint32_t pde = cur_pd[PD_INDEX(virt)];

@@ -143,6 +143,21 @@ static inline int k86_read(int vol, const char *dir, const char *name, void *buf
     return k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
 }
 
+/* Memory beyond the 1 MiB image, for big jobs: make the block at K86_HEAP
+ * `bytes` long (up to K86_HEAP_MAX). Growing adds zeroed pages, shrinking
+ * frees them; the app's own pointer is (void *)K86_HEAP. 0, or -ENOMEM. */
+static inline int k86_memory(uint32_t bytes)
+{
+    return k86_call(SYS_MEMORY, bytes, 0, 0, 0);
+}
+
+/* Show a picture (0x00RRGGBB, w x h, rows `stride` pixels apart) as the
+ * wallpaper, scaled to fill the screen. */
+static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stride)
+{
+    return k86_call(SYS_WALLPAPER_IMAGE, (uint32_t)px, (uint32_t)w, (uint32_t)h, (uint32_t)stride);
+}
+
 /* Replace a file's contents with len bytes (creating it if needed). */
 static inline int k86_write(int vol, const char *dir, const char *name, const void *buf, uint32_t len)
 {

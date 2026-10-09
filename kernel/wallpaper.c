@@ -19,6 +19,7 @@ struct __attribute__((packed)) header {
 static struct gfx_surface image;    /* screen-sized, or px = 0 for the plain colour */
 static int shown;                   /* image holds a wallpaper (else: the plain colour) */
 static char current[32];            /* its name, without "-light" */
+static int custom;                  /* it's a picture an app gave (WALLPAPER_CUSTOM) */
 
 static uint8_t paeth(uint8_t a, uint8_t b, uint8_t c)
 {
@@ -115,8 +116,10 @@ int wallpaper_set(const char *name)
     uint32_t raw, raw_bytes, t0 = uptime_ms();
     if (!image.px)
         return -ENODEV;
+    if (!strcmp(name, WALLPAPER_CUSTOM))
+        return custom ? 0 : -ENOENT;        /* already showing; it has no file to load */
     if (!name[0]) {             /* none: the theme's plain colour */
-        shown = 0;
+        shown = custom = 0;
         current[0] = '\0';
         kprintf("wallpaper: none (plain colour)\n");
         return 0;
@@ -157,6 +160,7 @@ int wallpaper_set(const char *name)
     }
     free_frames(raw, raw_bytes);
     shown = 1;
+    custom = 0;
     if (current != name) {
         for (n = 0; name[n] && n < (int)sizeof(current) - 1; n++)
             current[n] = name[n];
@@ -169,7 +173,58 @@ int wallpaper_set(const char *name)
 
 int wallpaper_refresh(void)
 {
+    if (custom)
+        return 0;                           /* the same in both styles */
     return current[0] ? wallpaper_set(current) : -ENOENT;
+}
+
+int wallpaper_set_image(const uint32_t *px, int w, int h, int stride)
+{
+    if (!image.px)
+        return -ENODEV;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096 || stride < w)
+        return -EINVAL;
+    uint32_t t0 = uptime_ms();
+    /* Fill the screen, cutting off what's outside the middle: the part of
+     * the picture used is the screen's shape (sw x sh of it, at sx0, sy0). */
+    int dw = image.w, dh = image.h, sw = w, sh = h;
+    if ((int64_t)w * dh > (int64_t)h * dw)
+        sw = (int)((int64_t)h * dw / dh);
+    else
+        sh = (int)((int64_t)w * dh / dw);
+    if (sw < 1)
+        sw = 1;
+    if (sh < 1)
+        sh = 1;
+    int sx0 = (w - sw) / 2, sy0 = (h - sh) / 2;
+    /* Each screen pixel is the average of the picture's pixels under it
+     * (one pixel, when the picture is the smaller). */
+    for (int y = 0; y < dh; y++) {
+        int y0 = sy0 + (int)((int64_t)y * sh / dh), y1 = sy0 + (int)((int64_t)(y + 1) * sh / dh);
+        if (y1 <= y0)
+            y1 = y0 + 1;
+        for (int x = 0; x < dw; x++) {
+            int x0 = sx0 + (int)((int64_t)x * sw / dw), x1 = sx0 + (int)((int64_t)(x + 1) * sw / dw);
+            if (x1 <= x0)
+                x1 = x0 + 1;
+            uint32_t r = 0, g = 0, b = 0, n = 0;
+            for (int yy = y0; yy < y1; yy++) {
+                const uint32_t *row = px + (uint32_t)yy * (uint32_t)stride;
+                for (int xx = x0; xx < x1; xx++, n++) {
+                    uint32_t c = row[xx];
+                    r += c >> 16 & 0xff;
+                    g += c >> 8 & 0xff;
+                    b += c & 0xff;
+                }
+            }
+            image.px[y * image.stride + x] = (r / n) << 16 | (g / n) << 8 | (b / n);
+        }
+    }
+    shown = custom = 1;
+    memcpy(current, WALLPAPER_CUSTOM, sizeof(WALLPAPER_CUSTOM));
+    kprintf("wallpaper: %s, %dx%d picture, scaled to %dx%d in %u ms\n", current, w, h, dw, dh,
+            uptime_ms() - t0);
+    return 0;
 }
 
 const char *wallpaper_current(void)

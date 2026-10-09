@@ -71,10 +71,11 @@ int main(void)
 - `apps/files/files.c`: lists, dialogs, text entry, paths, a scrolling text viewer.
 - `apps/calculator/calculator.c`: a grid of buttons, the keyboard, and whole-number maths, because there's no floating point in apps.
 - `apps/settings/settings.c`: hand-drawn previews, appearance calls, theme events.
+- `apps/files/picture.c`, `image.c`: reading a big file into `k86_memory()`, decoding PNG/JPEG/BMP, and `k86_wallpaper_image()`, which makes a picture the wallpaper (the kernel scales it to fill the screen).
 - `apps/blocksmith/`: a bigger app in several files: dragging, menus, the timer (an interpreter that takes turns), saving files (see [BLOCKSMITH.md](BLOCKSMITH.md)).
 
 ## Limits
 - Up to 8 windows at once, one per app. Apps take turns: one runs while the others wait for events, so an app must go back to `k86_wait_event()` quickly; nothing else runs while it works.
-- Up to 1 MiB of code and data, a 16 KiB stack, and no `malloc`: use static arrays.
+- Up to 1 MiB of code and data and a 16 KiB stack, and no `malloc`: use static arrays. For a big job (a photo to decode), `k86_memory(bytes)` makes the block at `K86_HEAP` that long, up to 128 MiB: growing adds zeroed pages, shrinking (or ending) gives them back. Hand it out yourself, as `apps/files/picture.c` does.
 - No floating point (apps are built with `-mgeneral-regs-only`). Use fixed-point whole numbers, as Calculator does.
 - An app wakes for input, and for `K86_EVENT_TIMER` if it asked with `k86_timer_set(ms)`: up to 64 times a second (the kernel speeds up its only timer, the RTC, while an app wants that; `kernel/wake.h`). Turn it off (`k86_timer_set(0)`) when nothing is moving, to save the battery. Either way, an app must return to `k86_wait_event()` within 10 s.

@@ -8,7 +8,9 @@
  *
  * Text files (up to 64 KB) open in a simple viewer: wrapped lines, the arrow
  * keys and Page Up/Down to scroll, Backspace, Esc or the back button to
- * return. Other files say they can't be shown yet.
+ * return. Pictures (PNG, JPEG, BMP: picture.c) open fitted to the window,
+ * Left/Right going to the folder's previous/next one, and Set Wallpaper
+ * makes one the desktop's. Other files say they can't be shown yet.
  *
  * Everything goes through sdk/kern86.h: the window is a canvas it draws with
  * the kernel's widgets, and the disks are reached by path. Actions are
@@ -20,12 +22,14 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
+#include "apps/files/picture.h"
 
 #define MAX_ITEMS 256
 #define MAX_VOLUMES 8
 #define LIST_MAX_W 720
 #define BAR_GAP 16
 #define BACK_ID 1
+#define WALLPAPER_ID 2
 
 struct item {
     struct k86_dirent e;
@@ -61,7 +65,7 @@ static char dialog_text[128];
 /* The text viewer (Phase 3 §3). */
 #define VIEW_MAX (64 * 1024)
 #define VIEW_LINES 8192
-static int viewing;
+static int viewing;                     /* 1: a text file; 2: a picture */
 static char view_name[K86_NAME_MAX];
 static char view_text[VIEW_MAX + 1];
 static int view_len;
@@ -353,6 +357,12 @@ static void show_header(void)
         h.buttons[0].icon = 1;              /* back */
         h.buttons[0].id = BACK_ID;
     }
+    if (viewing == 2) {
+        h.buttons[h.nbuttons].side = 1;
+        h.buttons[h.nbuttons].id = WALLPAPER_ID;
+        append(h.buttons[h.nbuttons].label, "Set Wallpaper", h.buttons[h.nbuttons].label + 16);
+        h.nbuttons++;
+    }
     k86_header(&h);
 }
 
@@ -455,9 +465,68 @@ static void view_scroll(int to)
     }
 }
 
-/* Open a file: text up to VIEW_MAX is shown; anything else says why not. */
+static struct gfx_rect view_rect(void)
+{
+    return (struct gfx_rect){ list.r.x, list.r.y, list.r.w, canvas.h - list.r.y - 16 };
+}
+
+static void draw_picture(void)
+{
+    struct gfx_rect r = view_rect();
+    gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, theme_get()->window_bg);
+    k86_present(0, 0, canvas.w, canvas.h);
+    picture_draw(&canvas, (struct gfx_rect){ 16, 16, canvas.w - 32, r.y + r.h - 16 });
+}
+
+static void open_picture(const struct k86_dirent *e)
+{
+    const char *why = 0;
+    set_status("Opening the picture" TEXT_ELLIPSIS, 0);
+    draw_status();
+    if (picture_open(vol, path, e, &why)) {
+        set_status(why, 1);
+        draw_status();
+        return;
+    }
+    view_name[0] = '\0';
+    append(view_name, e->name, view_name + sizeof(view_name));
+    viewing = 2;
+    status[0] = '\0';
+    show_header();
+    draw_picture();
+}
+
+/* The folder's next (step 1) or previous (-1) picture after the one shown. */
+static void next_picture(int step)
+{
+    int at = -1;
+    for (int i = 0; i < nitems; i++)
+        if (!strcmp(items[i].e.name, view_name))
+            at = i;
+    for (int i = at + step; at >= 0 && i >= 0 && i < nitems; i += step)
+        if (!items[i].e.is_dir && picture_named(items[i].e.name)) {
+            list.selected = i;
+            open_picture(&items[i].e);
+            return;
+        }
+}
+
+static void set_wallpaper(void)
+{
+    const char *why = 0;
+    int ok = !picture_wallpaper(&why);
+    set_status(ok ? "It's the wallpaper now." : why, !ok);
+    draw_status();
+}
+
+/* Open a file: pictures and text up to VIEW_MAX are shown; anything else
+ * says why not. */
 static void open_file(const struct k86_dirent *e)
 {
+    if (picture_named(e->name)) {
+        open_picture(e);
+        return;
+    }
     if (e->size > VIEW_MAX) {
         k86_logf("files: %s is too big to show (%u bytes)", e->name, e->size);
         set_status("Files can show text files up to 64 KB.", 1);
@@ -488,7 +557,7 @@ static void open_file(const struct k86_dirent *e)
     view_len = n;
     view_name[0] = '\0';
     append(view_name, e->name, view_name + sizeof(view_name));
-    view_card = (struct gfx_rect){ list.r.x, list.r.y, list.r.w, canvas.h - list.r.y - 16 };
+    view_card = view_rect();
     view_wrap();
     view_top = 0;
     viewing = 1;
@@ -499,6 +568,18 @@ static void open_file(const struct k86_dirent *e)
 
 static void view_key(const struct key_event *k)
 {
+    if (viewing == 2) {
+        if (k->key == KEY_RIGHT || k->key == KEY_DOWN || k->key == KEY_PAGEDOWN || k->key == KEY_SPACE)
+            next_picture(1);
+        else if (k->key == KEY_LEFT || k->key == KEY_UP || k->key == KEY_PAGEUP)
+            next_picture(-1);
+        else if (k->key == KEY_BACKSPACE || k->key == KEY_ESC) {
+            viewing = 0;
+            picture_close();
+            refresh(view_name);
+        }
+        return;
+    }
     int page = view_rows() - 1;
     switch (k->key) {
     case KEY_UP:       view_scroll(view_top - 1); break;
@@ -551,6 +632,8 @@ static void go_back(void)
 {
     char from[K86_NAME_MAX];
     if (viewing) {
+        if (viewing == 2)
+            picture_close();
         viewing = 0;
         refresh(view_name);
         return;
@@ -745,9 +828,11 @@ static void resized(int w, int h)
     canvas.w = w;
     canvas.h = h;
     layout();
-    if (viewing) {
+    if (viewing == 2) {
+        draw_picture();
+    } else if (viewing) {
         int top = view_top;
-        view_card = (struct gfx_rect){ list.r.x, list.r.y, list.r.w, canvas.h - list.r.y - 16 };
+        view_card = view_rect();
         view_wrap();
         int max = view_lines - view_rows();
         view_top = top < max ? top : max > 0 ? max : 0;
@@ -781,8 +866,20 @@ int main(void)
         switch (ev.type) {
         case K86_EVENT_KEY:     key(&ev.key); break;
         case K86_EVENT_POINTER: pointer(&ev); break;
-        case K86_EVENT_HEADER:  if (ev.id == BACK_ID) go_back(); break;
-        case K86_EVENT_THEME:   if (viewing) draw_view(); else draw_all(); break;
+        case K86_EVENT_HEADER:
+            if (ev.id == BACK_ID)
+                go_back();
+            else if (ev.id == WALLPAPER_ID && viewing == 2)
+                set_wallpaper();
+            break;
+        case K86_EVENT_THEME:
+            if (viewing == 2)
+                draw_picture();
+            else if (viewing)
+                draw_view();
+            else
+                draw_all();
+            break;
         case K86_EVENT_RESIZE:  resized(ev.x, ev.y); break;
         case K86_EVENT_CLOSE:   return 0;
         default:                break;

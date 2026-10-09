@@ -34,6 +34,10 @@ void vmm_init(const struct boot_info *bi);
  * (no frame for a page table). */
 int vmm_map_user(uint32_t virt, uint32_t phys, int flags);
 
+/* Unmap one user page of the current space, freeing its frame (unless
+ * PTE_SHARED). Nothing happens if it isn't mapped. */
+void vmm_unmap_user(uint32_t virt);
+
 /* The page-table entry for `virt` (0 if unmapped). 4 MiB pages report their
  * directory entry. */
 uint32_t vmm_lookup(uint32_t virt);

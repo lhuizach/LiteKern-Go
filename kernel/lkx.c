@@ -170,6 +170,7 @@ struct proc {
     uint32_t free_before;   /* memory before it started (the stability tests) */
     uint32_t timer_ms;      /* SYS_TIMER_SET: 0 = off */
     uint32_t timer_due;     /* uptime_ms() of the next K86_EVENT_TIMER */
+    uint32_t heap_pages;    /* SYS_MEMORY: pages mapped at K86_HEAP */
 };
 
 static int timer_due(const struct proc *p)
@@ -339,6 +340,35 @@ int lkx_set_timer(uint32_t ms)
     p->timer_ms = ms;
     p->timer_due = uptime_ms() + ms;
     timers_changed();
+    return 0;
+}
+
+/* Memory for big jobs (an image to decode). The pages go with the app's
+ * address space when it ends; a margin is always left for the kernel. */
+#define MEMORY_RESERVE_PAGES (32u * 256)    /* 32 MiB */
+
+int lkx_set_memory(uint32_t bytes)
+{
+    struct proc *p = running_proc;
+    if (!p || bytes > K86_HEAP_MAX)
+        return -EINVAL;
+    uint32_t want = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (want > p->heap_pages && want - p->heap_pages + MEMORY_RESERVE_PAGES > pmm_free_frames())
+        return -ENOMEM;
+    while (p->heap_pages > want) {
+        p->heap_pages--;
+        vmm_unmap_user(K86_HEAP + p->heap_pages * PAGE_SIZE);
+    }
+    while (p->heap_pages < want) {
+        uint32_t frame = pmm_alloc();
+        if (!frame)
+            return -ENOMEM;
+        if (vmm_map_user(K86_HEAP + p->heap_pages * PAGE_SIZE, frame, PTE_WRITE)) {
+            pmm_free(frame);
+            return -ENOMEM;
+        }
+        p->heap_pages++;
+    }
     return 0;
 }
 

@@ -34,6 +34,8 @@ struct wm_window *lkx_window(void);
 void lkx_wait_event(struct int_frame *f);
 /* SYS_TIMER_SET for the running app: a K86_EVENT_TIMER every `ms` (0: off). */
 int lkx_set_timer(uint32_t ms);
+/* SYS_MEMORY for the running app: its memory at K86_HEAP becomes `bytes`. */
+int lkx_set_memory(uint32_t bytes);
 /* Is the app running? */
 int lkx_running(const struct app *a);
 

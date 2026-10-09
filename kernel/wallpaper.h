@@ -22,6 +22,12 @@ int wallpaper_init(const char *name);
  * style changed (for its -light variant). */
 int wallpaper_set(const char *name);
 int wallpaper_refresh(void);
+
+/* Show a picture an app gave (0x00RRGGBB, w x h, up to 4096 x 4096), scaled
+ * to fill the screen with its middle kept. It's then the wallpaper
+ * WALLPAPER_CUSTOM until another is chosen. 0, -EINVAL or -ENODEV. */
+#define WALLPAPER_CUSTOM "Custom"
+int wallpaper_set_image(const uint32_t *px, int w, int h, int stride);
 const char *wallpaper_current(void);       /* "" for the plain colour */
 
 /* The wallpapers there are (light variants not listed separately). */

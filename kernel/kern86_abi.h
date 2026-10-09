@@ -37,7 +37,8 @@
                                  * gets K86_EVENT_THEME */
 #define SYS_WALLPAPER_THUMB 16  /* ebx: name, ecx: uint32_t * out, edx: w, esi: h (<= 256 x 160) */
 #define SYS_FS_READ         17  /* ebx: volume, ecx: folder path, edx: name, esi: buffer,
-                                 * edi: length. Reads from the start; returns the bytes read */
+                                 * edi: length (<= 32 MiB). Reads from the start; returns the
+                                 * bytes read */
 #define SYS_SCREENSAVER_SET 18  /* ebx: seconds without input before the screen saver
                                  * starts (0 = never, at most 3600); or ecx = 1: show it
                                  * now (a preview; any input ends it) */
@@ -50,6 +51,13 @@
                                  * edi: length (<= 1 MiB). Replaces the file's contents,
                                  * creating it if it isn't there; the old contents stay if
                                  * it fails */
+#define SYS_MEMORY          23  /* ebx: how many bytes the app's memory at K86_HEAP should be
+                                 * (rounded up to pages; at most K86_HEAP_MAX). Grows with
+                                 * zeroed pages or shrinks, freeing them. 0, -ENOMEM or -EINVAL */
+#define SYS_WALLPAPER_IMAGE 24  /* ebx: const uint32_t * 0x00RRGGBB pixels, ecx: width, edx:
+                                 * height (each 1..4096), esi: stride in pixels. The desktop
+                                 * shows it, scaled to fill the screen (the middle kept), as
+                                 * the wallpaper "Custom" */
 #define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
                                  * (K86_PROBE_*). Lists the sensors and controls the kernel
                                  * can see on this machine; only ever reads. Returns the
@@ -58,6 +66,8 @@
 /* --- memory -------------------------------------------------------------------- */
 #define K86_APP_BASE        0x80000000u     /* where an app's image is loaded */
 #define K86_CANVAS          0xa0000000u     /* where SYS_WINDOW_OPEN maps the canvas */
+#define K86_HEAP            0x90000000u     /* SYS_MEMORY's memory starts here... */
+#define K86_HEAP_MAX        (128u * 1024 * 1024)   /* ...and can be this big */
 #define K86_FONT_BYTES      (256 * 16)
 #define K86_PATH_MAX        256             /* "/Documents/Work", NUL included */
 #define K86_NAME_MAX        64
