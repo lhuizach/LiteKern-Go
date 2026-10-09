@@ -65,35 +65,78 @@ static uint32_t cluster_sector(const struct fat_volume *v, uint32_t c)
     return v->data_start + (c - 2) * v->sec_per_clus;
 }
 
+/* One sector of the FAT, cached, and written back (to every copy) only when
+ * another sector is needed or an operation ends (write_fsinfo). A long
+ * chain of clusters (a big file) then costs one write per 128 clusters,
+ * not two reads and two writes each. */
+static struct {
+    struct fat_volume *v;
+    uint32_t sector;            /* within the first FAT */
+    int valid, dirty;
+    uint8_t s[SECTOR];
+} fc;
+
+static int fat_flush(struct fat_volume *v)
+{
+    if (!fc.valid || fc.v != v || !fc.dirty)
+        return 0;
+    for (uint32_t i = 0; i < v->nfats; i++) {
+        int err = wr(v, v->reserved + i * v->fat_size + fc.sector, fc.s);
+        if (err)
+            return err;
+    }
+    fc.dirty = 0;
+    return 0;
+}
+
+/* The cached FAT sector holding cluster c's entry, or 0 on a read error. */
+static uint8_t *fat_sector(struct fat_volume *v, uint32_t c)
+{
+    uint32_t sector = c * 4 / SECTOR;
+    if (fc.valid && fc.v == v && fc.sector == sector)
+        return fc.s;
+    if (fc.valid && fat_flush(fc.v))
+        return 0;
+    fc.valid = 0;
+    if (rd(v, v->reserved + sector, fc.s))
+        return 0;
+    fc.v = v;
+    fc.sector = sector;
+    fc.valid = 1;
+    fc.dirty = 0;
+    return fc.s;
+}
+
 /* The FAT entry for cluster c, or 0xffffffff on a read error. */
 static uint32_t fat_get(struct fat_volume *v, uint32_t c)
 {
-    uint8_t s[SECTOR];
-    if (rd(v, v->reserved + c * 4 / SECTOR, s))
+    uint8_t *s = fat_sector(v, c);
+    if (!s)
         return 0xffffffffu;
     return le32(s + c * 4 % SECTOR) & FAT_MASK;
 }
 
-/* Set it in every copy of the FAT, keeping the top 4 reserved bits. */
+/* Set it (every copy, when it's written back), keeping the top 4 reserved bits. */
 static int fat_set(struct fat_volume *v, uint32_t c, uint32_t value)
 {
-    uint8_t s[SECTOR];
-    for (uint32_t i = 0; i < v->nfats; i++) {
-        uint32_t sector = v->reserved + i * v->fat_size + c * 4 / SECTOR;
-        int err = rd(v, sector, s);
-        if (err)
-            return err;
-        uint8_t *p = s + c * 4 % SECTOR;
-        put32(p, (le32(p) & ~FAT_MASK) | (value & FAT_MASK));
-        if ((err = wr(v, sector, s)))
-            return err;
-    }
+    if (v->read_only)
+        return -EROFS;
+    uint8_t *s = fat_sector(v, c);
+    if (!s)
+        return -EIO;
+    uint8_t *p = s + c * 4 % SECTOR;
+    put32(p, (le32(p) & ~FAT_MASK) | (value & FAT_MASK));
+    fc.dirty = 1;
     return 0;
 }
 
+/* The end of a change: the cached FAT sector, then FSInfo, written out. */
 static int write_fsinfo(struct fat_volume *v)
 {
     uint8_t s[SECTOR];
+    int ferr = fat_flush(v);
+    if (ferr)
+        return ferr;
     if (!v->fsinfo)
         return 0;
     int err = rd(v, v->fsinfo, s);
@@ -163,6 +206,8 @@ static int free_chain(struct fat_volume *v, uint32_t c)
 int fat_mount(struct fat_volume *v)
 {
     uint8_t s[SECTOR];
+    if (fc.v == v)
+        fc.valid = 0;                       /* nothing cached from before */
     if (!v->read)
         return -EINVAL;
     if (!v->write)                          /* no way to write: read-only */
@@ -219,6 +264,7 @@ uint32_t fat_root(const struct fat_volume *v)
 
 uint64_t fat_free_bytes(struct fat_volume *v)
 {
+    fat_flush(v);                           /* it reads the FAT directly */
     if (v->free_count == 0xffffffffu) {     /* count them, once */
         uint8_t s[SECTOR];
         uint32_t n = 0;
@@ -427,6 +473,32 @@ int fat_read(struct fat_volume *v, const struct fat_entry *e, uint32_t offset, v
         c = fat_get(v, c);
     uint32_t pos = offset % clus_bytes;
     while (done < len && valid_cluster(v, c)) {
+        if (pos % SECTOR == 0 && len - done >= SECTOR) {
+            /* Whole sectors: straight into buf, as many in one call as lie
+             * next to each other on disk (up to 64 KiB). */
+            uint32_t start = cluster_sector(v, c) + pos / SECTOR, want = (len - done) / SECTOR, n = 0;
+            if (want > 128)
+                want = 128;
+            while (n < want) {
+                uint32_t k = (clus_bytes - pos) / SECTOR;
+                if (k > want - n)
+                    k = want - n;
+                n += k;
+                pos += k * SECTOR;
+                if (pos < clus_bytes)
+                    break;
+                uint32_t next = fat_get(v, c);
+                pos = 0;
+                int joined = n < want && next == c + 1 && valid_cluster(v, next);
+                c = next;
+                if (!joined)
+                    break;
+            }
+            if (v->read(v->ctx, v->part_lba + start, n, (uint8_t *)buf + done))
+                return -EIO;
+            done += n * SECTOR;
+            continue;
+        }
         int err = rd(v, cluster_sector(v, c) + pos / SECTOR, s);
         if (err)
             return err;
@@ -783,6 +855,38 @@ int fat_create(struct fat_volume *v, uint32_t dir, const char *name, int is_dir,
     return write_fsinfo(v);
 }
 
+/* Write the file's next bytes (from *done) into n clusters from c, which are
+ * next to each other on disk: whole sectors straight from buf, the last
+ * part-sector padded with zeros. */
+static int write_run(struct fat_volume *v, uint32_t c, uint32_t n, const void *buf, uint32_t len,
+                     uint32_t *done)
+{
+    uint32_t sector = cluster_sector(v, c), left = n * v->sec_per_clus;
+    while (left && *done < len) {
+        uint32_t whole = (len - *done) / SECTOR;
+        if (whole) {
+            uint32_t k = whole < left ? whole : left;
+            if (k > 128)
+                k = 128;                    /* 64 KiB a call */
+            if (v->write(v->ctx, v->part_lba + sector, k, (const uint8_t *)buf + *done))
+                return -EIO;
+            sector += k;
+            left -= k;
+            *done += k * SECTOR;
+        } else {
+            uint8_t s[SECTOR];
+            memset(s, 0, SECTOR);
+            memcpy(s, (const uint8_t *)buf + *done, len - *done);
+            int err = wr(v, sector, s);
+            if (err)
+                return err;
+            *done = len;
+            left--;
+        }
+    }
+    return 0;
+}
+
 int fat_write(struct fat_volume *v, struct fat_entry *e, const void *buf, uint32_t len)
 {
     if (v->read_only)
@@ -796,8 +900,7 @@ int fat_write(struct fat_volume *v, struct fat_entry *e, const void *buf, uint32
 
     /* The new contents go into a chain of their own; the entry only
      * points at it once it's all written, so a failure keeps the old file. */
-    uint8_t s[SECTOR];
-    uint32_t first = 0, prev = 0, done = 0;
+    uint32_t first = 0, prev = 0, done = 0, run = 0, run_n = 0;
     int err = 0;
     for (uint32_t k = 0; k < need && !err; k++) {
         uint32_t c = take_cluster(v, 0);
@@ -810,14 +913,17 @@ int fat_write(struct fat_volume *v, struct fat_entry *e, const void *buf, uint32
         else
             first = c;
         prev = c;
-        for (uint32_t i = 0; i < v->sec_per_clus && !err; i++) {
-            uint32_t n = len - done < SECTOR ? len - done : SECTOR;
-            memset(s, 0, SECTOR);
-            memcpy(s, (const uint8_t *)buf + done, n);
-            err = wr(v, cluster_sector(v, c) + i, s);
-            done += n;
+        if (run_n && c == run + run_n) {
+            run_n++;                        /* next to the last: one write for them all */
+            continue;
         }
+        if (run_n && !err)
+            err = write_run(v, run, run_n, buf, len, &done);
+        run = c;
+        run_n = 1;
     }
+    if (run_n && !err)
+        err = write_run(v, run, run_n, buf, len, &done);
     uint8_t sfn[SLOT];
     if (!err)
         err = slot_io(v, e->dir, e->slot, sfn, 0);

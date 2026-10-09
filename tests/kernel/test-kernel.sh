@@ -468,21 +468,36 @@ check "windows: over a maximised window, the bottom edge brings the dock back" \
 # apps/settings/settings.c in its 944x552 window (content from 41,170): the
 # Light card (y 218-338), Right = the next accent, the "None" background
 # (y 510-604), first in the row of wallpapers. The window must turn light at
-# once (window_bg fafafb), and the kernel logs each change.
+# once (window_bg fafafb), and the kernel logs each change. Settings are
+# saved to the disk (kernel/settings.h), so this runs on a scratch copy.
+mkdir -p build/test-settings
+cp build/litekernx.img build/test-settings/disk.img
+cp build/litekernx.img build/test-settings/saver.img
 nwall=$(ls assets/wallpapers/*.png | grep -vc -- '-light\.png$')
 row_w=$(( (nwall + 1) * 160 + nwall * 24 )); [ "$row_w" -lt 424 ] && row_w=424
 sx0=$(( 41 + (942 - row_w) / 2 )); light_x=$((sx0 + 324)); none_x=$((sx0 + 80))
 path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5
 go "$light_x" 278; click; add sleep:0.5 right sleep:0.3; go "$none_x" 557; click; add sleep:0.5
 KEYS="$P" KEYS_DONE='^appearance: light, accent teal, wallpaper none' SCREEN="has=fafafb@60,300,240,600" \
-    boot_until build/litekernx.img "$done_re" 30
+    boot_until build/test-settings/disk.img "$done_re" 30
 check "Settings: style, accent and background change at once" \
+    '^settings: none saved yet: the build.s defaults$' \
     '^user: settings: open$' \
     '^appearance: light, accent blue, wallpaper crossing$' \
     '^wallpaper: crossing, 1024x600, [0-9]+ KB packed' \
     '^appearance: light, accent teal, wallpaper crossing$' \
     '^appearance: light, accent teal, wallpaper none$' \
+    '^settings: saved$' \
     '^screen: has fafafb in 60,300,240,600: yes$' \
+    '!PANIC|settings: couldn.t'
+
+# ...and they're still so after a restart: the same disk starts light,
+# teal, with no wallpaper (the light style's plain desktop colour, c8ccd6).
+SCREEN="corner=" boot_until build/test-settings/disk.img "$done_re" 20
+check "settings: kept across a restart" \
+    '^settings: loaded: light, accent teal, wallpaper none, screen saver 300 s$' \
+    '^wallpaper: none \(plain colour\)$' \
+    '^screen: corner c8ccd6$' \
     '!PANIC'
 
 # Settings' Screen Saver choices, to the right of the style cards (from x
@@ -490,7 +505,7 @@ check "Settings: style, accent and background change at once" \
 # shows it at once, and moving the pointer ends it.
 path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5
 go 728 236; click; add sleep:0.5; go 596 324; click; add sleep:1.5; go 600 400; add sleep:0.5
-KEYS="$P" KEYS_DONE='^screensaver: off' boot_until build/litekernx.img "$done_re" 30
+KEYS="$P" KEYS_DONE='^screensaver: off' boot_until build/test-settings/saver.img "$done_re" 30
 check "Settings: the screen saver's idle time, and a preview" \
     '^user: settings: screen saver 1 min$' \
     '^appearance: screen saver after 60 s$' \
@@ -582,7 +597,17 @@ check "Files: pictures open (a progressive JPEG), and one can be the wallpaper" 
     '^user: files: picture photo\.jpg 157x93 JPEG, decoded in [0-9]+ ms$' \
     '^wallpaper: Custom, 157x93 picture, scaled to 1024x768 in [0-9]+ ms$' \
     '^user: files: wallpaper photo\.jpg$' \
-    '!PANIC|files: can.t open picture'
+    '^settings: custom wallpaper saved, [0-9]+ KB, packed in [0-9]+ ms, written in [0-9]+ ms$' \
+    '!PANIC|files: can.t open picture|settings: couldn.t'
+
+# ...and it's still the wallpaper after a restart: read from the disk,
+# unpacked and checked (kernel/settings.h).
+boot_until build/test-pictures/disk.img "$done_re" 20
+check "settings: a picture wallpaper is kept across a restart" \
+    '^settings: loaded: dark, accent blue, wallpaper Custom, screen saver 300 s$' \
+    '^settings: custom wallpaper, [0-9]+ KB, read in [0-9]+ ms, unpacked in [0-9]+ ms$' \
+    '^wallpaper: Custom, 1024x768 picture, scaled to 1024x768 in [0-9]+ ms$' \
+    '!PANIC|couldn.t be read|is corrupt'
 
 # Blocksmith: F5 runs the starter project (its "print" logs), a click on the
 # stage runs "when stage clicked", Esc stops, and Ctrl+S saves it to

@@ -20,7 +20,7 @@ The toolchain is the host's `gcc -m32 -ffreestanding`, GNU `ld` and `nasm`, all 
 | `wsl make debug` | Like `run`, paused, with a gdb stub on `:1234`; interrupts and resets logged to `build/qemu-debug.log` |
 | `wsl make smoke` / `smoke-gui` | Boots a tiny test image, to check the VM itself works |
 
-Build-time choices (settings aren't saved across restarts yet):
+Build-time choices: the defaults, until the user changes them in Settings. What they choose is saved on the stick, in `/LiteKern/settings.txt` (and `/LiteKern/wallpaper.lkxw` for a picture wallpaper; `kernel/settings.h`), and wins from then on. Rebuilding the image starts it afresh. Delete the `LiteKern` folder on the stick to go back to the defaults:
 ```
 wsl make STYLE=light ACCENT=teal WALLPAPER=dusk SPLASH=log
 ```

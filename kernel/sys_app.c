@@ -10,6 +10,7 @@
 #include "kernel/kern86_abi.h"
 #include "kernel/printk.h"
 #include "kernel/screensaver.h"
+#include "kernel/settings.h"
 #include "kernel/storage.h"
 #include "kernel/string.h"
 #include "kernel/theme.h"
@@ -262,6 +263,7 @@ static int screensaver_set(uint32_t seconds, uint32_t preview)
         kprintf("appearance: screen saver after %u s\n", seconds);
     else
         kprintf("appearance: screen saver off\n");
+    settings_save();
     return 0;
 }
 
@@ -282,6 +284,7 @@ static int appearance_set(int style, int accent, uint32_t uname)
             wallpaper_current()[0] ? wallpaper_current() : "none");
     desktop_refresh();
     wm_theme_changed();
+    settings_save();
     return err;
 }
 
@@ -308,6 +311,7 @@ static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t st
         return err;
     desktop_refresh();
     wm_theme_changed();                     /* Settings shows the change */
+    settings_save_wallpaper();              /* kept for the next start */
     return 0;
 }
 

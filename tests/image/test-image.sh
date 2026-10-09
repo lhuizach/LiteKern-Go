@@ -68,3 +68,28 @@ print()
 print("image: all tests passed" if not failures else f"image: {failures} failed")
 sys.exit(1 if failures else 0)
 EOF
+status=$?
+
+# The compressor that saves a custom wallpaper (kernel/deflate.c): every
+# input must come back the same through the kernel's inflate, and through
+# Python's zlib (so it's real DEFLATE, not just self-consistent).
+gcc -std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -I. \
+    kernel/deflate.c kernel/inflate.c tests/image/deflate_host.c -o build/test-image/deflate_host || exit 1
+mkdir -p build/test-image/deflate
+ASAN_OPTIONS=detect_leaks=0 build/test-image/deflate_host build/test-image/deflate \
+    build/test-image/baseline-420.jpg.rgba build/test-image/rgba.png.rgba || status=1
+python3 - <<'PY' || status=1
+import glob, sys, zlib
+bad = 0
+for d in sorted(glob.glob("build/test-image/deflate/*.deflate")):
+    raw = open(d[:-8] + ".raw", "rb").read()
+    try:
+        ok = zlib.decompress(open(d, "rb").read(), -15) == raw
+    except zlib.error as e:
+        ok = False
+    print(("PASS  " if ok else "FAIL  ") + "zlib reads " + d.split("/")[-1])
+    bad += not ok
+sys.exit(1 if bad else 0)
+PY
+[ $status -eq 0 ] && echo "image: decoders and compressor all passed" || echo "image: FAILED"
+exit $status

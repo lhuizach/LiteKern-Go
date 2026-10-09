@@ -1,5 +1,6 @@
 #include "kernel/wallpaper.h"
 #include "kernel/errno.h"
+#include "kernel/deflate.h"
 #include "kernel/inflate.h"
 #include "kernel/pmm.h"
 #include "kernel/ramdisk.h"
@@ -61,19 +62,13 @@ static void free_frames(uint32_t phys, uint32_t bytes)
         pmm_free(phys + off);
 }
 
-/* Unpack wallpapers/<name>.lkxw into a fresh buffer of unfiltered rows
- * (1 filter byte + 3 * w bytes each). The caller frees it (free_frames). */
-static int unpack(const char *name, struct header *hd, uint32_t *raw, uint32_t *raw_bytes)
+/* Unpack an .lkxw file into a fresh buffer of unfiltered rows (1 filter
+ * byte + 3 * w bytes each), checked. The caller frees it (free_frames). */
+static int unpack_data(const void *data, uint32_t size, const char *name, struct header *hd, uint32_t *raw,
+                       uint32_t *raw_bytes)
 {
-    char path[64] = "wallpapers/";
-    int n = (int)strlen(path);
-    for (int i = 0; name[i] && n < (int)sizeof(path) - 6; i++)
-        path[n++] = name[i];
-    memcpy(path + n, ".lkxw", 6);
-    const void *data;
-    uint32_t size;
-    if (ramdisk_find(path, &data, &size))
-        return -ENOENT;
+    if (size < sizeof(*hd))
+        return -EINVAL;
     memcpy(hd, data, sizeof(*hd));
     if (size < sizeof(*hd) || memcmp(hd->magic, "LKXW", 4) || hd->packed_len > size - sizeof(*hd) ||
         !hd->w || !hd->h || hd->raw_len != (uint32_t)hd->h * (1 + 3u * hd->w))
@@ -92,6 +87,21 @@ static int unpack(const char *name, struct header *hd, uint32_t *raw, uint32_t *
         return -EINVAL;
     }
     return 0;
+}
+
+/* The same for wallpapers/<name>.lkxw in the ramdisk. */
+static int unpack(const char *name, struct header *hd, uint32_t *raw, uint32_t *raw_bytes)
+{
+    char path[64] = "wallpapers/";
+    int n = (int)strlen(path);
+    for (int i = 0; name[i] && n < (int)sizeof(path) - 6; i++)
+        path[n++] = name[i];
+    memcpy(path + n, ".lkxw", 6);
+    const void *data;
+    uint32_t size;
+    if (ramdisk_find(path, &data, &size))
+        return -ENOENT;
+    return unpack_data(data, size, name, hd, raw, raw_bytes);
 }
 
 int wallpaper_init(const char *name)
@@ -301,6 +311,115 @@ void wallpaper_draw(struct gfx_surface *dst, int ox, int oy, uint32_t dim)
     gfx_blit(dst, 0, 0, &image, ox, oy, dst->w, dst->h);
     if (dim)
         gfx_darken(dst, 0, 0, dst->w, dst->h, dim);
+}
+
+/* --- the custom wallpaper, packed (kernel/settings.h keeps it) ------------------------ */
+
+static uint32_t filter_cost(const uint8_t *d, int n)
+{
+    uint32_t sum = 0;
+    for (int i = 0; i < n; i++)
+        sum += d[i] < 128 ? d[i] : 256u - d[i];
+    return sum;
+}
+
+int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len)
+{
+    if (!custom || !shown)
+        return -ENOENT;
+    int w = image.w, h = image.h, stride = 1 + 3 * w;
+    uint32_t raw_len = (uint32_t)h * (uint32_t)stride;
+    uint32_t raw_bytes = (raw_len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint32_t cap = sizeof(struct header) + raw_len + raw_len / 64 + 1024;
+    uint32_t out_bytes = (cap + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1), work_bytes = DEFLATE_WORK;
+    uint32_t raw = pmm_alloc_contiguous(raw_bytes / PAGE_SIZE);
+    uint32_t out = raw ? pmm_alloc_contiguous(out_bytes / PAGE_SIZE) : 0;
+    uint32_t work = out ? pmm_alloc_contiguous(work_bytes / PAGE_SIZE) : 0;
+    if (!work) {
+        if (raw)
+            free_frames(raw, raw_bytes);
+        if (out)
+            free_frames(out, out_bytes);
+        return -ENOMEM;
+    }
+    /* Each row with the PNG filter that suits it best (as tools/wallpaper-pack.py). */
+    static uint8_t cur[3 * 4096], above[3 * 4096], cand[5][3 * 4096];
+    struct header hd = { { 'L', 'K', 'X', 'W' }, (uint16_t)w, (uint16_t)h, raw_len, 0, 0x811c9dc5u, 0, 0, 0, 0 };
+    for (int y = 0; y < h; y++) {
+        const uint32_t *px = image.px + y * image.stride;
+        for (int x = 0; x < w; x++) {
+            cur[3 * x] = (uint8_t)(px[x] >> 16);
+            cur[3 * x + 1] = (uint8_t)(px[x] >> 8);
+            cur[3 * x + 2] = (uint8_t)px[x];
+        }
+        for (int i = 0; i < 3 * w; i++) {
+            int a = i >= 3 ? cur[i - 3] : 0, b = y ? above[i] : 0, c = y && i >= 3 ? above[i - 3] : 0;
+            cand[0][i] = cur[i];
+            cand[1][i] = (uint8_t)(cur[i] - a);
+            cand[2][i] = (uint8_t)(cur[i] - b);
+            cand[3][i] = (uint8_t)(cur[i] - ((a + b) >> 1));
+            cand[4][i] = (uint8_t)(cur[i] - paeth((uint8_t)a, (uint8_t)b, (uint8_t)c));
+            hd.fnv = (hd.fnv ^ cur[i]) * 0x01000193u;
+        }
+        int best = 0;
+        uint32_t best_cost = filter_cost(cand[0], 3 * w);
+        for (int f = 1; f < 5; f++) {
+            uint32_t cost = filter_cost(cand[f], 3 * w);
+            if (cost < best_cost)
+                best = f, best_cost = cost;
+        }
+        uint8_t *row = (uint8_t *)raw + y * stride;
+        row[0] = (uint8_t)best;
+        memcpy(row + 1, cand[best], (size_t)(3 * w));
+        memcpy(above, cur, (size_t)(3 * w));
+    }
+    hd.top = hd.left = image.px[0];
+    hd.bottom = hd.right = image.px[(h - 1) * image.stride + w - 1];
+    int packed = deflate_raw((const uint8_t *)raw, raw_len, (uint8_t *)out + sizeof(hd),
+                             cap - sizeof(hd), (void *)work);
+    free_frames(raw, raw_bytes);
+    free_frames(work, work_bytes);
+    if (packed < 0) {
+        free_frames(out, out_bytes);
+        return packed;
+    }
+    hd.packed_len = (uint32_t)packed;
+    memcpy((void *)out, &hd, sizeof(hd));
+    *phys = out;
+    *bytes = out_bytes;
+    *len = sizeof(hd) + (uint32_t)packed;
+    return 0;
+}
+
+void wallpaper_pack_free(uint32_t phys, uint32_t bytes)
+{
+    free_frames(phys, bytes);
+}
+
+int wallpaper_set_packed(const void *data, uint32_t size)
+{
+    struct header hd;
+    uint32_t raw, raw_bytes;
+    int err = unpack_data(data, size, WALLPAPER_CUSTOM, &hd, &raw, &raw_bytes);
+    if (err)
+        return err;
+    uint32_t px_bytes = ((uint32_t)hd.w * hd.h * 4 + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint32_t px = pmm_alloc_contiguous(px_bytes / PAGE_SIZE);
+    if (!px) {
+        free_frames(raw, raw_bytes);
+        return -ENOMEM;
+    }
+    int stride = 1 + 3 * hd.w;
+    for (int y = 0; y < hd.h; y++) {
+        const uint8_t *p = (const uint8_t *)raw + y * stride + 1;
+        uint32_t *o = (uint32_t *)px + y * hd.w;
+        for (int x = 0; x < hd.w; x++, p += 3)
+            o[x] = (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+    }
+    free_frames(raw, raw_bytes);
+    err = wallpaper_set_image((const uint32_t *)px, hd.w, hd.h, hd.w);
+    free_frames(px, px_bytes);
+    return err;
 }
 
 uint32_t wallpaper_corner(void)

@@ -97,6 +97,7 @@ If Files or the log shows a `boot0: BIOS read ... failed (AH=0x..)` line, photo 
 | Settings | Dark ↔ Light, the accent colours and the four wallpapers all change at once, and stay changed when you go back to the desktop |
 | Calculator and Files | Work with the touchpad and the keyboard. In Files, double-click `Welcome to LiteKern X.txt` to read it |
 | Pictures | Copy a phone photo (JPEG) and a PNG into the stick's `Pictures` folder from Windows. In Files, double-click one: it shows the right way up, within about 5 seconds. Left/Right go to the next one. **Set Wallpaper**, then close Files: the photo fills the desktop. The Log app's `files: picture ... decoded in N ms` line: **photo it** |
+| Settings kept | In Settings choose Light, another accent and another background, then Shut Down and switch on again: it starts as you left it. Make a photo the wallpaper (Files), restart: it's still there. The Log app's `settings: custom wallpaper, N KB, read in N ms` line: **photo it** (the stick read at every start) |
 | Blocksmith | Run makes the ball bounce smoothly (not in jumps once a second). Dragging a block keeps up with the touchpad. Save, close, reopen and Open the project: it comes back the same |
 | Windows | Two apps open at once; dragging a window by its title bar keeps up with the touchpad; minimise, maximise and the dock's dots behave as in the videos |
 | Shut Down | The power menu's Shut Down switches the EeePC off by itself (the Log app's `acpi:` line says what it found; photo it if it doesn't) |

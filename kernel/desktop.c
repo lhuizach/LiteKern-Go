@@ -14,6 +14,7 @@
 #include "kernel/printk.h"
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
+#include "kernel/settings.h"
 #include "kernel/string.h"
 #include "kernel/theme.h"
 #include "kernel/wallpaper.h"
@@ -1215,7 +1216,14 @@ void desktop_start(void)
     }
     if (!screen_ready())
         return;
-    wallpaper_init(DEFAULT_WALLPAPER);
+    /* The wallpaper chosen last time (kernel/settings.h), else the build's. */
+    const char *wp = settings_wallpaper(DEFAULT_WALLPAPER);
+    if (!strcmp(wp, WALLPAPER_CUSTOM)) {
+        if (wallpaper_init("") == 0 && settings_load_wallpaper())
+            wallpaper_set(DEFAULT_WALLPAPER);
+    } else if (wallpaper_init(wp) && strcmp(wp, DEFAULT_WALLPAPER)) {
+        wallpaper_set(DEFAULT_WALLPAPER);   /* that one's gone: the build's */
+    }
     splash_progress(90);
     if (splash_active()) {
         splash_end();

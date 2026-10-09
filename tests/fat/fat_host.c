@@ -141,6 +141,19 @@ int main(int argc, char **argv)
               fat_find(&v, projects.cluster, "main.c", &mainc) == 0 && mainc.size == 10 &&
               fat_read(&v, &mainc, 0, back, sizeof(back)) == 10 && !memcmp(back, "int main;\n", 10),
           "rewriting it shorter frees the old clusters");
+    /* A big one (a saved wallpaper is about this): 3 MiB and a bit. */
+    static uint8_t huge[3 * 1024 * 1024 + 77], huge_back[sizeof(huge)];
+    for (uint32_t i = 0; i < sizeof(huge); i++)
+        huge[i] = (uint8_t)(i * 2654435761u >> 13);
+    struct fat_entry bigf;
+    uint64_t free2 = fat_free_bytes(&v);
+    check(fat_create(&v, projects.cluster, "wallpaper.lkxp", 0, &bigf) == 0 &&
+              fat_write(&v, &bigf, huge, sizeof(huge)) == 0 &&
+              fat_find(&v, projects.cluster, "wallpaper.lkxp", &bigf) == 0 && bigf.size == sizeof(huge) &&
+              fat_read(&v, &bigf, 0, huge_back, sizeof(huge_back)) == (int)sizeof(huge) &&
+              !memcmp(huge, huge_back, sizeof(huge)),
+          "writes and reads back 3 MiB");
+    check(fat_free_bytes(&v) == free2 - (sizeof(huge) + 511) / 512 * 512, "it took just the clusters it needs");
     check(fat_write(&v, &notes, 0, 0) == 0 && notes.size == 0 && notes.cluster == 0,
           "writes an empty file");
     check(fat_write(&v, &projects, "x", 1) == -EINVAL, "won't write over a folder");

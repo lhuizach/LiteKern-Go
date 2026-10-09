@@ -48,7 +48,7 @@ It boots in about a second to a clean, modern desktop with a dock, an app menu, 
   - **Files** browses the USB stick, makes folders and files, renames and deletes them, and opens text files and pictures (PNG, JPEG, BMP). Any picture can be your wallpaper.
   - **Calculator** does exact decimal sums.
   - **Blocksmith** lets you build programs by snapping blocks together, then runs them: drawings, animations, and games you play with the keys.
-  - **Settings** switches between dark and light, six accent colours and five backgrounds.
+  - **Settings** switches between dark and light, six accent colours and five backgrounds. Your choices, and a picture you made the wallpaper, are kept for the next time you switch on.
   - **Log** shows what the system is doing.
 - **Stays up:** if an app crashes or freezes, only that app closes.
 - **Shut down and restart** from the power menu.

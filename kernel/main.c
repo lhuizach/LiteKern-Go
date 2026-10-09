@@ -28,6 +28,7 @@
 #include "kernel/status.h"
 #include "kernel/theme.h"
 #include "defaults.h"
+#include "kernel/settings.h"
 #include "kernel/storage.h"
 #include "kernel/string.h"
 #include "kernel/timing.h"
@@ -350,6 +351,7 @@ void kmain(uint32_t magic, const struct boot_info *handoff)
     smbios_init();          /* the BIOS version, for the hardware probe (mapped now, likewise) */
     drivers_add_acpi_devices();     /* the embedded controller, read-only */
     storage_init();         /* the disks Files can open (reads each partition table) */
+    settings_load();        /* what Settings chose last time, from the boot disk */
     splash_progress(45);
     idle(bi);
 }
