@@ -120,10 +120,60 @@ int wallpaper_init(const char *name)
     return err;
 }
 
+/* A preset (wallpapers/<name>.lkxw, or "<name>-light" in the light style
+ * where there is one) drawn into dst: centred, the edge colours filling
+ * whatever it doesn't cover (a smaller dst shows its middle). */
+static int draw_preset(const char *name, struct gfx_surface *dst, struct header *hd)
+{
+    uint32_t raw, raw_bytes;
+    char variant[40];
+    int n = 0;
+    for (; name[n] && n < 30; n++)
+        variant[n] = name[n];
+    memcpy(variant + n, "-light", 7);
+    int err = -ENOENT;
+    if (theme_is_light())
+        err = unpack(variant, hd, &raw, &raw_bytes);
+    if (err)
+        err = unpack(name, hd, &raw, &raw_bytes);
+    if (err)
+        return err;
+    int ox = (dst->w - hd->w) / 2, oy = (dst->h - hd->h) / 2;
+    gfx_fill_rect(dst, 0, 0, dst->w, oy, hd->top);
+    gfx_fill_rect(dst, 0, oy + hd->h, dst->w, dst->h - oy - hd->h, hd->bottom);
+    gfx_fill_rect(dst, 0, 0, ox, dst->h, hd->left);
+    gfx_fill_rect(dst, ox + hd->w, 0, dst->w - ox - hd->w, dst->h, hd->right);
+    int stride = 1 + 3 * hd->w;
+    for (int y = 0; y < hd->h; y++) {
+        int sy = oy + y;
+        if (sy < 0 || sy >= dst->h)
+            continue;
+        const uint8_t *p = (const uint8_t *)raw + y * stride + 1;
+        for (int x = 0; x < hd->w; x++, p += 3) {
+            int sx = ox + x;
+            if (sx >= 0 && sx < dst->w)
+                dst->px[sy * dst->stride + sx] = (uint32_t)p[0] << 16 | p[1] << 8 | p[2];
+        }
+    }
+    free_frames(raw, raw_bytes);
+    return 0;
+}
+
+int wallpaper_render(const char *name, struct gfx_surface *dst)
+{
+    struct header hd;
+    if (!name[0]) {
+        gfx_fill_rect(dst, 0, 0, dst->w, dst->h, theme_get()->desktop_bg);
+        return 0;
+    }
+    return draw_preset(name, dst, &hd);
+}
+
 int wallpaper_set(const char *name)
 {
     struct header hd;
-    uint32_t raw, raw_bytes, t0 = uptime_ms();
+    uint32_t t0 = uptime_ms();
+    int n;
     if (!image.px)
         return -ENODEV;
     if (!strcmp(name, WALLPAPER_CUSTOM))
@@ -134,41 +184,9 @@ int wallpaper_set(const char *name)
         kprintf("wallpaper: none (plain colour)\n");
         return 0;
     }
-    /* The light style uses "<name>-light" where there is one. */
-    char variant[40];
-    int n = 0;
-    for (; name[n] && n < 30; n++)
-        variant[n] = name[n];
-    memcpy(variant + n, "-light", 7);
-    int err = -ENOENT;
-    if (theme_is_light())
-        err = unpack(variant, &hd, &raw, &raw_bytes);
-    if (err)
-        err = unpack(name, &hd, &raw, &raw_bytes);
+    int err = draw_preset(name, &image, &hd);
     if (err)
         return err;
-
-    /* Centre it; the edge colours fill whatever the image doesn't cover.
-     * (A screen smaller than the image shows its middle.) */
-    struct gfx_surface *scr = screen_surface();
-    int ox = (scr->w - hd.w) / 2, oy = (scr->h - hd.h) / 2;
-    gfx_fill_rect(&image, 0, 0, scr->w, oy, hd.top);
-    gfx_fill_rect(&image, 0, oy + hd.h, scr->w, scr->h - oy - hd.h, hd.bottom);
-    gfx_fill_rect(&image, 0, 0, ox, scr->h, hd.left);
-    gfx_fill_rect(&image, ox + hd.w, 0, scr->w - ox - hd.w, scr->h, hd.right);
-    int stride = 1 + 3 * hd.w;
-    for (int y = 0; y < hd.h; y++) {
-        int sy = oy + y;
-        if (sy < 0 || sy >= scr->h)
-            continue;
-        const uint8_t *p = (const uint8_t *)raw + y * stride + 1;
-        for (int x = 0; x < hd.w; x++, p += 3) {
-            int sx = ox + x;
-            if (sx >= 0 && sx < scr->w)
-                image.px[sy * image.stride + sx] = (uint32_t)p[0] << 16 | p[1] << 8 | p[2];
-        }
-    }
-    free_frames(raw, raw_bytes);
     shown = 1;
     custom = 0;
     if (current != name) {
@@ -188,16 +206,11 @@ int wallpaper_refresh(void)
     return current[0] ? wallpaper_set(current) : -ENOENT;
 }
 
-int wallpaper_set_image(const uint32_t *px, int w, int h, int stride)
+void wallpaper_scale_cover(const uint32_t *px, int w, int h, int stride, struct gfx_surface *dst)
 {
-    if (!image.px)
-        return -ENODEV;
-    if (w <= 0 || h <= 0 || w > 4096 || h > 4096 || stride < w)
-        return -EINVAL;
-    uint32_t t0 = uptime_ms();
-    /* Fill the screen, cutting off what's outside the middle: the part of
-     * the picture used is the screen's shape (sw x sh of it, at sx0, sy0). */
-    int dw = image.w, dh = image.h, sw = w, sh = h;
+    /* Fill dst, cutting off what's outside the middle: the part of the
+     * picture used is dst's shape (sw x sh of it, at sx0, sy0). */
+    int dw = dst->w, dh = dst->h, sw = w, sh = h;
     if ((int64_t)w * dh > (int64_t)h * dw)
         sw = (int)((int64_t)h * dw / dh);
     else
@@ -227,9 +240,20 @@ int wallpaper_set_image(const uint32_t *px, int w, int h, int stride)
                     b += c & 0xff;
                 }
             }
-            image.px[y * image.stride + x] = (r / n) << 16 | (g / n) << 8 | (b / n);
+            dst->px[y * dst->stride + x] = (r / n) << 16 | (g / n) << 8 | (b / n);
         }
     }
+}
+
+int wallpaper_set_image(const uint32_t *px, int w, int h, int stride)
+{
+    if (!image.px)
+        return -ENODEV;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096 || stride < w)
+        return -EINVAL;
+    uint32_t t0 = uptime_ms();
+    int dw = image.w, dh = image.h;
+    wallpaper_scale_cover(px, w, h, stride, &image);
     shown = custom = 1;
     memcpy(current, WALLPAPER_CUSTOM, sizeof(WALLPAPER_CUSTOM));
     kprintf("wallpaper: %s, %dx%d picture, scaled to %dx%d in %u ms\n", current, w, h, dw, dh,
@@ -327,7 +351,12 @@ int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len)
 {
     if (!custom || !shown)
         return -ENOENT;
-    int w = image.w, h = image.h, stride = 1 + 3 * w;
+    return wallpaper_pack_surface(&image, phys, bytes, len);
+}
+
+int wallpaper_pack_surface(const struct gfx_surface *src, uint32_t *phys, uint32_t *bytes, uint32_t *len)
+{
+    int w = src->w, h = src->h, stride = 1 + 3 * w;
     uint32_t raw_len = (uint32_t)h * (uint32_t)stride;
     uint32_t raw_bytes = (raw_len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     uint32_t cap = sizeof(struct header) + raw_len + raw_len / 64 + 1024;
@@ -346,7 +375,7 @@ int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len)
     static uint8_t cur[3 * 4096], above[3 * 4096], cand[5][3 * 4096];
     struct header hd = { { 'L', 'K', 'X', 'W' }, (uint16_t)w, (uint16_t)h, raw_len, 0, 0x811c9dc5u, 0, 0, 0, 0 };
     for (int y = 0; y < h; y++) {
-        const uint32_t *px = image.px + y * image.stride;
+        const uint32_t *px = src->px + y * src->stride;
         for (int x = 0; x < w; x++) {
             cur[3 * x] = (uint8_t)(px[x] >> 16);
             cur[3 * x + 1] = (uint8_t)(px[x] >> 8);
@@ -373,8 +402,8 @@ int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len)
         memcpy(row + 1, cand[best], (size_t)(3 * w));
         memcpy(above, cur, (size_t)(3 * w));
     }
-    hd.top = hd.left = image.px[0];
-    hd.bottom = hd.right = image.px[(h - 1) * image.stride + w - 1];
+    hd.top = hd.left = src->px[0];
+    hd.bottom = hd.right = src->px[(h - 1) * src->stride + w - 1];
     int packed = deflate_raw((const uint8_t *)raw, raw_len, (uint8_t *)out + sizeof(hd),
                              cap - sizeof(hd), (void *)work);
     free_frames(raw, raw_bytes);
@@ -396,7 +425,7 @@ void wallpaper_pack_free(uint32_t phys, uint32_t bytes)
     free_frames(phys, bytes);
 }
 
-int wallpaper_set_packed(const void *data, uint32_t size)
+int wallpaper_render_packed(const void *data, uint32_t size, struct gfx_surface *dst)
 {
     struct header hd;
     uint32_t raw, raw_bytes;
@@ -417,9 +446,23 @@ int wallpaper_set_packed(const void *data, uint32_t size)
             o[x] = (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
     }
     free_frames(raw, raw_bytes);
-    err = wallpaper_set_image((const uint32_t *)px, hd.w, hd.h, hd.w);
+    wallpaper_scale_cover((const uint32_t *)px, hd.w, hd.h, hd.w, dst);
     free_frames(px, px_bytes);
-    return err;
+    return 0;
+}
+
+int wallpaper_set_packed(const void *data, uint32_t size)
+{
+    if (!image.px)
+        return -ENODEV;
+    uint32_t t0 = uptime_ms();
+    int err = wallpaper_render_packed(data, size, &image);
+    if (err)
+        return err;
+    shown = custom = 1;
+    memcpy(current, WALLPAPER_CUSTOM, sizeof(WALLPAPER_CUSTOM));
+    kprintf("wallpaper: %s, %dx%d, unpacked in %u ms\n", current, image.w, image.h, uptime_ms() - t0);
+    return 0;
 }
 
 uint32_t wallpaper_corner(void)

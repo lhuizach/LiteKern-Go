@@ -8,8 +8,11 @@
 
 **Licence text:** `LICENCE-ubuntu-font.txt` in this folder (from the Ubuntu Sans repository). Before publishing (Phase 4), also mention the font in the release notes.
 
+`clock-font.png`/`.json` are the lock screen's big clock: the same font, 112 px bold, only digits, `:` and the letters of AM/PM (`--clock`). They're packed into the ramdisk (`fonts/clock.lkxf`) and read when the screen first locks.
+
 To regenerate, for example after changing a size in the tool's `FACES` (needs Pillow):
 ```
 python tools/font-rasterize.py "path/to/UbuntuSans[wdth,wght].ttf" assets/fonts
+python tools/font-rasterize.py --clock "path/to/UbuntuSans[wdth,wght].ttf" assets/fonts
 ```
 In WSL the font is at `/usr/share/fonts/truetype/ubuntu/`.

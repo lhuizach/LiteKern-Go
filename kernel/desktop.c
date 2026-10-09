@@ -14,6 +14,7 @@
 #include "kernel/printk.h"
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
+#include "kernel/lockscreen.h"
 #include "kernel/settings.h"
 #include "kernel/string.h"
 #include "kernel/theme.h"
@@ -40,6 +41,7 @@
 #define MENU_W 180
 #define MENU_ITEM_H 34
 #define MENU_PAD 6
+#define MENU_ITEMS 3        /* Restart, Shut Down, Lock: Lock last, so the others stay put */
 #define WHITE 0xffffff
 /* The shell (top bar, its menus, the dock) stays dark in both styles, like GNOME Shell. */
 #define SHELL_FG      0xffffff
@@ -492,8 +494,10 @@ static struct gfx_rect dock_icon_rect(int i)
 
 /* --- hit testing ---------------------------------------------------------------------- */
 
-enum hit_kind { H_NONE, H_HOME, H_POWER, H_RESTART, H_SHUTDOWN, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
+enum hit_kind { H_NONE, H_HOME, H_POWER, H_RESTART, H_SHUTDOWN, H_LOCK, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_BAR };
+
+static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK };
 
 struct hit {
     enum hit_kind kind;
@@ -522,7 +526,7 @@ static struct gfx_rect power_rect(void)
 static struct gfx_rect menu_rect(void)
 {
     return (struct gfx_rect){ S()->w - T()->spacing - MENU_W, T()->topbar_h + 4, MENU_W,
-                              2 * MENU_ITEM_H + 2 * MENU_PAD };
+                              MENU_ITEMS * MENU_ITEM_H + 2 * MENU_PAD };
 }
 
 static struct gfx_rect menu_item_rect(int k)
@@ -559,9 +563,9 @@ static struct gfx_rect tile_icon_rect(int i)
 static struct hit hit_at(int x, int y)
 {
     if (menu_open) {
-        for (int k = 0; k < 2; k++)
+        for (int k = 0; k < MENU_ITEMS; k++)
             if (inside(menu_item_rect(k), x, y))
-                return (struct hit){ k ? H_SHUTDOWN : H_RESTART, 0 };
+                return (struct hit){ menu_kinds[k], 0 };
         if (inside(menu_rect(), x, y))
             return (struct hit){ H_BAR, 0 };
     }
@@ -591,7 +595,8 @@ static void damage_hit(struct hit h)
     case H_HOME:     shell_damage(home_rect()); break;
     case H_POWER:    shell_damage(power_rect()); break;
     case H_RESTART:
-    case H_SHUTDOWN: shell_damage(menu_rect()); break;
+    case H_SHUTDOWN:
+    case H_LOCK:     shell_damage(menu_rect()); break;
     case H_DOCK:
     case H_APPS:     shell_damage(dock_band()); break;
     case H_TILE:     shell_damage(tile_rect(h.app)); break;
@@ -728,15 +733,14 @@ static void draw_menu(void)
     if (!visible(m))
         return;
     gfx_fill_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 12, SHELL_POPOVER);
-    for (int k = 0; k < 2; k++) {
+    static const char *const labels[MENU_ITEMS] = { "Restart", "Shut Down", "Lock" };
+    for (int k = 0; k < MENU_ITEMS; k++) {
         struct gfx_rect r = menu_item_rect(k);
-        int disabled = k == 1 && !power_can_off();  /* no ACPI found */
-        uint32_t bg = disabled ? SHELL_POPOVER
-                               : hit_bg((struct hit){ k ? H_SHUTDOWN : H_RESTART, 0 }, SHELL_POPOVER);
+        int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
+        uint32_t bg = disabled ? SHELL_POPOVER : hit_bg((struct hit){ menu_kinds[k], 0 }, SHELL_POPOVER);
         if (bg != SHELL_POPOVER)
             gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, 6, bg);
-        text_draw(VS, VX(r.x + 12), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2),
-                  k ? "Shut Down" : "Restart", TEXT_BODY,
+        text_draw(VS, VX(r.x + 12), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2), labels[k], TEXT_BODY,
                   disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG);
     }
 }
@@ -1169,6 +1173,12 @@ static void activate(struct hit h)
     case H_POWER:
         menu_set(!menu_open);
         break;
+    case H_LOCK:
+        menu_set(0);
+        shell_flush();
+        kprintf("shell: lock\n");
+        lockscreen_lock();
+        break;
     case H_RESTART:
         kprintf("shell: restart\n");
         fade_out();
@@ -1320,8 +1330,8 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         wm_pointer_gone();      /* the shell has the pointer */
 
     if (down) {
-        if (menu_open && h.kind != H_RESTART && h.kind != H_SHUTDOWN && h.kind != H_POWER &&
-            h.kind != H_BAR) {
+        if (menu_open && h.kind != H_RESTART && h.kind != H_SHUTDOWN && h.kind != H_LOCK &&
+            h.kind != H_POWER && h.kind != H_BAR) {
             menu_set(0);        /* a click outside closes the menu */
         } else if (h.kind == H_NONE) {
             if (grid_open)
@@ -1350,6 +1360,20 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
 
 int desktop_input_key(const struct key_event *k)
 {
+    /* Super+L locks, as in GNOME and Windows. */
+    static int super;
+    if (k->key == KEY_LSUPER || k->key == KEY_RSUPER) {
+        super = k->pressed;
+        return 0;
+    }
+    if (super && k->pressed && k->key == 0x026) {      /* L */
+        if (menu_open)
+            menu_set(0);
+        shell_flush();
+        kprintf("shell: lock (Super+L)\n");
+        lockscreen_lock();
+        return 1;
+    }
     if (!k->pressed || k->key != KEY_ESC)
         return 0;
     if (menu_open)

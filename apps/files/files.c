@@ -10,7 +10,7 @@
  * keys and Page Up/Down to scroll, Backspace, Esc or the back button to
  * return. Pictures (PNG, JPEG, BMP: picture.c) open fitted to the window,
  * Left/Right going to the folder's previous/next one, and Set Wallpaper
- * makes one the desktop's. Other files say they can't be shown yet.
+ * makes one the desktop's (Set Lock Screen, the lock screen's). Other files say they can't be shown yet.
  *
  * Everything goes through sdk/kern86.h: the window is a canvas it draws with
  * the kernel's widgets, and the disks are reached by path. Actions are
@@ -30,6 +30,7 @@
 #define BAR_GAP 16
 #define BACK_ID 1
 #define WALLPAPER_ID 2
+#define LOCK_ID 3
 
 struct item {
     struct k86_dirent e;
@@ -358,10 +359,14 @@ static void show_header(void)
         h.buttons[0].id = BACK_ID;
     }
     if (viewing == 2) {
-        h.buttons[h.nbuttons].side = 1;
-        h.buttons[h.nbuttons].id = WALLPAPER_ID;
-        append(h.buttons[h.nbuttons].label, "Set Wallpaper", h.buttons[h.nbuttons].label + 16);
-        h.nbuttons++;
+        static const struct { int id; const char *label; } pb[] = {
+            { WALLPAPER_ID, "Set Wallpaper" }, { LOCK_ID, "Set Lock Screen" } };   /* right to left */
+        for (int i = 0; i < 2; i++) {
+            h.buttons[h.nbuttons].side = 1;
+            h.buttons[h.nbuttons].id = pb[i].id;
+            append(h.buttons[h.nbuttons].label, pb[i].label, h.buttons[h.nbuttons].label + 16);
+            h.nbuttons++;
+        }
     }
     k86_header(&h);
 }
@@ -511,11 +516,12 @@ static void next_picture(int step)
         }
 }
 
-static void set_wallpaper(void)
+static void set_wallpaper(int where)
 {
     const char *why = 0;
-    int ok = !picture_wallpaper(&why);
-    set_status(ok ? "It's the wallpaper now." : why, !ok);
+    int ok = !picture_wallpaper(where, &why);
+    set_status(ok ? (where == K86_WALLPAPER_LOCK ? "It's on the lock screen now." : "It's the wallpaper now.") : why,
+               !ok);
     draw_status();
 }
 
@@ -870,7 +876,9 @@ int main(void)
             if (ev.id == BACK_ID)
                 go_back();
             else if (ev.id == WALLPAPER_ID && viewing == 2)
-                set_wallpaper();
+                set_wallpaper(K86_WALLPAPER_DESKTOP);
+            else if (ev.id == LOCK_ID && viewing == 2)
+                set_wallpaper(K86_WALLPAPER_LOCK);
             break;
         case K86_EVENT_THEME:
             if (viewing == 2)

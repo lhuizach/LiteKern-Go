@@ -72,6 +72,7 @@ int main(void)
 - `apps/calculator/calculator.c`: a grid of buttons, the keyboard, and whole-number maths, because there's no floating point in apps.
 - `apps/settings/settings.c`: hand-drawn previews, appearance calls, theme events.
 - `apps/files/picture.c`, `image.c`: reading a big file into `k86_memory()`, decoding PNG/JPEG/BMP, and `k86_wallpaper_image()`, which makes a picture the wallpaper (the kernel scales it to fill the screen).
+- `apps/settings/settings.c`: also the lock screen's choices (`k86_lock_settings()`) and `k86_lock()`.
 - `apps/blocksmith/`: a bigger app in several files: dragging, menus, the timer (an interpreter that takes turns), saving files (see [BLOCKSMITH.md](BLOCKSMITH.md)).
 
 ## Limits

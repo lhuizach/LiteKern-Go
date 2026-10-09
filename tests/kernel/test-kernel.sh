@@ -584,30 +584,77 @@ check "Calculator: exact decimals; overflow and division by zero are errors" \
 # Pictures in Files: a JPEG copied into Pictures (on a scratch copy of the
 # image) opens with Enter, decoded in the app; Set Wallpaper (the header
 # button, right of the title) gives it to the kernel, which scales it to
-# fill the screen. The decoders themselves are tested in tests/image/.
+# fill the screen; Set Lock Screen (left of it) gives it to the lock screen.
+# The decoders themselves are tested in tests/image/.
 mkdir -p build/test-pictures
 cp build/litekernx.img build/test-pictures/disk.img
 MTOOLS_SKIP_CHECK=1 mcopy -i build/test-pictures/disk.img@@$((8192 * 512)) \
     tests/image/fixtures/progressive-420.jpg ::/Pictures/photo.jpg || exit 1
 KEYS="move:$((FILES_X - 512)),344 press:1 release sleep:1.5 home down ret sleep:0.8 home ret sleep:1.5 \
-move:$((704 - FILES_X)),$((173 - 728)) press:1 release sleep:1" \
-KEYS_DONE='^user: files: wallpaper ' boot_until build/test-pictures/disk.img "$done_re" 30
+move:$((704 - FILES_X)),$((173 - 728)) press:1 release sleep:1 move:-138,0 press:1 release sleep:1" \
+KEYS_DONE='^user: files: lock screen picture ' boot_until build/test-pictures/disk.img "$done_re" 30
 check "Files: pictures open (a progressive JPEG), and one can be the wallpaper" \
     '^user: files: open folder Pictures$' \
     '^user: files: picture photo\.jpg 157x93 JPEG, decoded in [0-9]+ ms$' \
     '^wallpaper: Custom, 157x93 picture, scaled to 1024x768 in [0-9]+ ms$' \
     '^user: files: wallpaper photo\.jpg$' \
     '^settings: custom wallpaper saved, [0-9]+ KB, packed in [0-9]+ ms, written in [0-9]+ ms$' \
+    '^lock: its own picture, 157x93$' \
+    '^user: files: lock screen picture photo\.jpg$' \
+    '^settings: lock screen picture saved, [0-9]+ KB' \
     '!PANIC|files: can.t open picture|settings: couldn.t'
 
-# ...and it's still the wallpaper after a restart: read from the disk,
-# unpacked and checked (kernel/settings.h).
-boot_until build/test-pictures/disk.img "$done_re" 20
-check "settings: a picture wallpaper is kept across a restart" \
+# ...and it's still the wallpaper after a restart, and the lock screen's
+# picture too (Super+L shows it): read from the disk, unpacked and checked.
+KEYS="sleep:0.5 meta_l-l sleep:1" KEYS_DONE='^lock: locked' boot_until build/test-pictures/disk.img "$done_re" 20
+check "settings: picture wallpapers are kept across a restart (desktop and lock screen)" \
     '^settings: loaded: dark, accent blue, wallpaper Custom, screen saver 300 s$' \
+    '^settings: lock screen picture, [0-9]+ KB, read in [0-9]+ ms, unpacked in [0-9]+ ms$' \
+    '^settings: lock screen: wallpaper Custom, 24-hour clock, lock when the screen saver ends: no$' \
     '^settings: custom wallpaper, [0-9]+ KB, read in [0-9]+ ms, unpacked in [0-9]+ ms$' \
-    '^wallpaper: Custom, 1024x768 picture, scaled to 1024x768 in [0-9]+ ms$' \
+    '^wallpaper: Custom, 1024x768, unpacked in [0-9]+ ms$' \
+    '^lock: locked \(wallpaper Custom\)$' \
     '!PANIC|couldn.t be read|is corrupt'
+
+# The lock screen (kernel/lockscreen.h). Super+L locks over Calculator; the
+# first key (5) only unlocks it, so Calculator never gets it, and the sum
+# typed after does reach it. Then the power menu's Lock (its third item, y
+# 108-142) locks again, and a click unlocks.
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$CALC_TILE" "$GRID_Y"; click
+add sleep:1.5 meta_l-l sleep:0.8 5 sleep:0.5 1 shift-equal 2 ret sleep:0.5
+go 998 15; click; add sleep:0.3; go 930 125; click; add sleep:1; go 500 400; click; add sleep:0.5
+KEYS="$P" KEYS_DONE='^shell: lock$' SCREEN="corner=" boot_until build/litekernx.img "$done_re" 30
+check "lock screen: Super+L and the power menu lock it; the key or click that unlocks goes nowhere else" \
+    '^shell: lock \(Super\+L\)$' \
+    '^lock: locked \(wallpaper desktop\)$' \
+    '^user: calculator: 1 \+ 2 = 3$' \
+    '^shell: lock$' \
+    '!user: calculator: 51|PANIC'
+[ "$(grep -c '^lock: unlocked$' <<<"$out")" = 2 ] && out+=$'\n'"lock: unlocked twice" || out+=$'\n'"lock: NOT unlocked twice"
+check "lock screen: unlocked by a key, then by a click" '^lock: unlocked twice$'
+
+# Its choices in Settings (on a scratch disk: they're saved): the Background
+# row's Lock Screen switch (x 342, y 489), aurora (the third tile, x 435),
+# the 24-Hour Clock pill turned off (793, 410), then Lock Now (595, 410).
+# After a restart Super+L shows aurora with a 12-hour clock.
+mkdir -p build/test-settings
+cp build/litekernx.img build/test-settings/lock.img
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5
+go 342 489; click; add sleep:0.4; go 435 550; click; add sleep:0.4; go 793 410; click; add sleep:0.4
+go 595 410; click; add sleep:1
+KEYS="$P" KEYS_DONE='^lock: locked' boot_until build/test-settings/lock.img "$done_re" 30
+check "Settings: the lock screen's background and clock, and Lock Now" \
+    '^user: settings: lock screen background aurora$' \
+    '^appearance: lock screen: wallpaper aurora, 24-hour clock, lock on wake no$' \
+    '^appearance: lock screen: wallpaper aurora, 12-hour clock, lock on wake no$' \
+    '^user: settings: lock now$' \
+    '^lock: locked \(wallpaper aurora\)$' \
+    '!PANIC|settings: couldn.t'
+KEYS="sleep:0.5 meta_l-l sleep:1" KEYS_DONE='^lock: locked' boot_until build/test-settings/lock.img "$done_re" 20
+check "settings: the lock screen's choices are kept across a restart" \
+    '^settings: lock screen: wallpaper aurora, 12-hour clock, lock when the screen saver ends: no$' \
+    '^lock: locked \(wallpaper aurora\)$' \
+    '!PANIC'
 
 # Blocksmith: F5 runs the starter project (its "print" logs), a click on the
 # stage runs "when stage clicked", Esc stops, and Ctrl+S saves it to
@@ -840,6 +887,23 @@ check "screen saver: a key brings the desktop back, and is only a wake-up" \
     '^screensaver: off after [0-9]+ s: [1-9][0-9]* frames \([0-9]+ fps\), drawing took [0-9]+\.[0-9]% of the time$' \
     "^screen: corner $DESKTOP$" \
     "!kbd: key 0x01e" \
+    '!PANIC'
+
+# With lock-on-wake set, the key that ends the screen saver brings the lock
+# screen, not the desktop: a copy of the normal disk with a settings.txt
+# asking for that and a 2 s screen saver (the files settings.c reads).
+mkdir -p build/test-lockwake
+cp build/litekernx.img build/test-lockwake/disk.img
+printf 'screensaver 2\nlock-on-wake yes\n' > build/test-lockwake/settings.txt
+MTOOLS_SKIP_CHECK=1 mmd -i build/test-lockwake/disk.img@@$((8192 * 512)) ::/LiteKern || exit 1
+MTOOLS_SKIP_CHECK=1 mcopy -i build/test-lockwake/disk.img@@$((8192 * 512)) build/test-lockwake/settings.txt \
+    ::/LiteKern/settings.txt || exit 1
+KEYS="a sleep:1" KEYS_DONE='^lock: locked' boot_until build/test-lockwake/disk.img "$saver_on_re" 20
+check "lock screen: it locks when the screen saver ends, if asked" \
+    '^settings: loaded: dark, accent blue, wallpaper \(the build.s\), screen saver 2 s$' \
+    '^settings: lock screen: wallpaper desktop, 24-hour clock, lock when the screen saver ends: yes$' \
+    '^screensaver: off after ' \
+    '^lock: locked \(wallpaper desktop\)$' \
     '!PANIC'
 
 boot_until build/test-fault/litekernx.img "$done_re" 20

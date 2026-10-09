@@ -152,10 +152,23 @@ static inline int k86_memory(uint32_t bytes)
 }
 
 /* Show a picture (0x00RRGGBB, w x h, rows `stride` pixels apart) as the
- * wallpaper, scaled to fill the screen. */
-static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stride)
+ * wallpaper, scaled to fill the screen: where is K86_WALLPAPER_DESKTOP,
+ * K86_WALLPAPER_LOCK, or both. */
+static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stride, int where)
 {
-    return k86_call(SYS_WALLPAPER_IMAGE, (uint32_t)px, (uint32_t)w, (uint32_t)h, (uint32_t)stride);
+    return k86_call5(SYS_WALLPAPER_IMAGE, (uint32_t)px, (uint32_t)w, (uint32_t)h, (uint32_t)stride,
+                     (uint32_t)where);
+}
+
+/* The lock screen: lock now; read or change its choices (saved). */
+static inline int k86_lock(void)
+{
+    return k86_call(SYS_LOCK, 0, 0, 0, 0);
+}
+
+static inline int k86_lock_settings(struct k86_lock *l, int set)
+{
+    return k86_call(SYS_LOCK_SETTINGS, (uint32_t)l, (uint32_t)set, 0, 0);
 }
 
 /* Replace a file's contents with len bytes (creating it if needed). */

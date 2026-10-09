@@ -55,9 +55,13 @@
                                  * (rounded up to pages; at most K86_HEAP_MAX). Grows with
                                  * zeroed pages or shrinks, freeing them. 0, -ENOMEM or -EINVAL */
 #define SYS_WALLPAPER_IMAGE 24  /* ebx: const uint32_t * 0x00RRGGBB pixels, ecx: width, edx:
-                                 * height (each 1..4096), esi: stride in pixels. The desktop
-                                 * shows it, scaled to fill the screen (the middle kept), as
-                                 * the wallpaper "Custom" */
+                                 * height (each 1..4096), esi: stride in pixels, edi: where
+                                 * (K86_WALLPAPER_*; 0 = the desktop). Shown scaled to fill
+                                 * the screen (the middle kept), as the wallpaper "Custom";
+                                 * kept for the next start */
+#define SYS_LOCK            25  /* lock the screen now (kernel/lockscreen.h) */
+#define SYS_LOCK_SETTINGS   26  /* ebx: struct k86_lock *, ecx: 0 = read it, 1 = change to it
+                                 * (saved). An unknown wallpaper means the desktop's */
 #define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
                                  * (K86_PROBE_*). Lists the sensors and controls the kernel
                                  * can see on this machine; only ever reads. Returns the
@@ -171,6 +175,17 @@ struct k86_probe_item {
     char name[28];
     char value[56];
     char note[80];
+};
+
+#define K86_WALLPAPER_DESKTOP 1  /* SYS_WALLPAPER_IMAGE: for the desktop */
+#define K86_WALLPAPER_LOCK    2  /* ... for the lock screen (both: 3) */
+
+struct k86_lock {
+    char wallpaper[32];         /* "desktop", "none", a wallpaper's name, or "Custom" (its own
+                                 * picture: SYS_WALLPAPER_IMAGE with K86_WALLPAPER_LOCK) */
+    int32_t clock24;            /* 1: 14:05; 0: 2:05 PM */
+    int32_t on_wake;            /* lock when the screen saver ends */
+    int32_t has_picture;        /* read only: it has a picture of its own to show */
 };
 
 struct k86_dirent {

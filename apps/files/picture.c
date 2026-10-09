@@ -235,7 +235,7 @@ void picture_draw(struct gfx_surface *c, struct gfx_rect r)
 
 /* --- the wallpaper ------------------------------------------------------------------------------ */
 
-int picture_wallpaper(const char **why)
+int picture_wallpaper(int where, const char **why)
 {
     if (!pic.px) {
         *why = "There's no picture open.";
@@ -265,12 +265,12 @@ int picture_wallpaper(const char **why)
         uint32_t c = out[i], a = c >> 24;
         out[i] = ((c >> 16 & 255) * a / 255) << 16 | ((c >> 8 & 255) * a / 255) << 8 | (c & 255) * a / 255;
     }
-    int err = k86_wallpaper_image(out, w, h, w);
+    int err = k86_wallpaper_image(out, w, h, w, where);
     used -= (uint32_t)(((uint32_t)w * (uint32_t)h * 4 + 15) & ~15u);    /* the copy's done with */
     if (err) {
         *why = "The wallpaper couldn't be changed.";
         return -1;
     }
-    k86_logf("files: wallpaper %s", name);
+    k86_logf("files: %s %s", where == K86_WALLPAPER_LOCK ? "lock screen picture" : "wallpaper", name);
     return 0;
 }

@@ -1,6 +1,7 @@
 /* LiteKern X — settings that last across restarts (see kernel/settings.h). */
 #include "kernel/settings.h"
 #include "kernel/errno.h"
+#include "kernel/lockscreen.h"
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/screensaver.h"
@@ -13,6 +14,7 @@
 #define FOLDER      "LiteKern"
 #define TEXT_FILE   "settings.txt"
 #define PIXEL_FILE  "wallpaper.lkxw"
+#define LOCK_FILE   "lock.lkxw"
 #define TEXT_MAX    512
 
 static int loaded;                  /* settings.txt was there */
@@ -118,6 +120,7 @@ void settings_load(void)
     text[n] = '\0';
     int style = -1, accent = -1;
     uint32_t saver = 0xffffffffu;
+    struct lock_settings lock = *lockscreen_settings();
     for (char *line = text; *line;) {
         char *end = line;
         while (*end && *end != '\n')
@@ -146,6 +149,15 @@ void settings_load(void)
             uint32_t s;
             if (!number(value, &s) && s <= 3600)
                 saver = s;
+        } else if (!strcmp(line, "lock-wallpaper")) {
+            int k = 0;
+            for (; value[k] && k < (int)sizeof(lock.wallpaper) - 1; k++)
+                lock.wallpaper[k] = value[k];
+            lock.wallpaper[k] = '\0';
+        } else if (!strcmp(line, "clock")) {
+            lock.clock24 = strcmp(value, "12") != 0;
+        } else if (!strcmp(line, "lock-on-wake")) {
+            lock.on_wake = !strcmp(value, "yes");
         }
         line = next;
     }
@@ -153,9 +165,15 @@ void settings_load(void)
     theme_set(style, accent);               /* -1: keeps the build's */
     if (saver != 0xffffffffu)
         screensaver_set_timeout(saver);
+    if (!strcmp(lock.wallpaper, LOCK_PICTURE) && settings_load_lock_picture())
+        memcpy(lock.wallpaper, "desktop", 8);   /* its picture is gone: the desktop's */
+    lockscreen_configure(&lock);
     kprintf("settings: loaded: %s, accent %s, wallpaper %s, screen saver %u s\n",
             theme_is_light() ? "light" : "dark", theme_accent(theme_accent_index(), 0),
             wallpaper[0] == 1 ? "none" : wallpaper[0] ? wallpaper : "(the build's)", screensaver_timeout());
+    kprintf("settings: lock screen: wallpaper %s, %s-hour clock, lock when the screen saver ends: %s\n",
+            lockscreen_settings()->wallpaper, lockscreen_settings()->clock24 ? "24" : "12",
+            lockscreen_settings()->on_wake ? "yes" : "no");
 }
 
 const char *settings_wallpaper(const char *fallback)
@@ -165,12 +183,13 @@ const char *settings_wallpaper(const char *fallback)
     return wallpaper[0] == 1 ? "" : wallpaper;
 }
 
-int settings_load_wallpaper(void)
+/* Read a packed picture (an .lkxw) and hand it to show(). */
+static int load_packed(const char *file, const char *what, int (*show)(const void *, uint32_t))
 {
     struct fat_volume *v;
     struct fat_entry e;
     uint32_t t0 = uptime_ms();
-    int err = find_file(PIXEL_FILE, &v, &e);
+    int err = find_file(file, &v, &e);
     if (err)
         return err;
     if (!e.size || e.size > 32 * 1024 * 1024)
@@ -180,15 +199,25 @@ int settings_load_wallpaper(void)
         return -ENOMEM;
     int n = fat_read(v, &e, 0, (void *)buf, e.size);
     uint32_t t1 = uptime_ms();
-    err = n < 0 ? n : (uint32_t)n != e.size ? -EIO : wallpaper_set_packed((const void *)buf, e.size);
+    err = n < 0 ? n : (uint32_t)n != e.size ? -EIO : show((const void *)buf, e.size);
     for (uint32_t i = 0; i < pages; i++)
         pmm_free(buf + i * PAGE_SIZE);
     if (err)
-        kprintf("settings: the custom wallpaper couldn't be read (%d)\n", err);
+        kprintf("settings: the %s couldn't be read (%d)\n", what, err);
     else
-        kprintf("settings: custom wallpaper, %u KB, read in %u ms, unpacked in %u ms\n", e.size / 1024,
-                t1 - t0, uptime_ms() - t1);
+        kprintf("settings: %s, %u KB, read in %u ms, unpacked in %u ms\n", what, e.size / 1024, t1 - t0,
+                uptime_ms() - t1);
     return err;
+}
+
+int settings_load_wallpaper(void)
+{
+    return load_packed(PIXEL_FILE, "custom wallpaper", wallpaper_set_packed);
+}
+
+int settings_load_lock_picture(void)
+{
+    return load_packed(LOCK_FILE, "lock screen picture", lockscreen_load_picture);
 }
 
 /* --- writing ------------------------------------------------------------------------------- */
@@ -197,10 +226,13 @@ void settings_save(void)
 {
     char text[TEXT_MAX];
     const char *wp = wallpaper_current();
+    const struct lock_settings *lock = lockscreen_settings();
     ksnprintf(text, sizeof(text),
-              "style %s\naccent %s\nwallpaper %s\nscreensaver %u\n",
+              "style %s\naccent %s\nwallpaper %s\nscreensaver %u\n"
+              "lock-wallpaper %s\nclock %s\nlock-on-wake %s\n",
               theme_is_light() ? "light" : "dark", theme_accent(theme_accent_index(), 0),
-              wp[0] ? wp : "none", screensaver_timeout());
+              wp[0] ? wp : "none", screensaver_timeout(), lock->wallpaper, lock->clock24 ? "24" : "12",
+              lock->on_wake ? "yes" : "no");
     int err = save_file(TEXT_FILE, text, (uint32_t)strlen(text));
     if (err && err != -ENODEV)
         kprintf("settings: couldn't save (%d)\n", err);
@@ -208,23 +240,34 @@ void settings_save(void)
         kprintf("settings: saved\n");
 }
 
-void settings_save_wallpaper(void)
+/* Pack a picture (pack()) and write it to file, then settings.txt. */
+static void save_packed(const char *file, const char *what, int (*pack)(uint32_t *, uint32_t *, uint32_t *))
 {
     uint32_t phys, bytes, len, t0 = uptime_ms();
-    int err = wallpaper_pack(&phys, &bytes, &len);
+    int err = pack(&phys, &bytes, &len);
     if (err) {
-        kprintf("settings: couldn't pack the custom wallpaper (%d)\n", err);
+        kprintf("settings: couldn't pack the %s (%d)\n", what, err);
         return;
     }
     uint32_t t1 = uptime_ms();
-    err = save_file(PIXEL_FILE, (const void *)phys, len);
+    err = save_file(file, (const void *)phys, len);
     wallpaper_pack_free(phys, bytes);
     if (err) {
         if (err != -ENODEV)
-            kprintf("settings: couldn't save the custom wallpaper (%d)\n", err);
+            kprintf("settings: couldn't save the %s (%d)\n", what, err);
         return;
     }
-    kprintf("settings: custom wallpaper saved, %u KB, packed in %u ms, written in %u ms\n", len / 1024,
-            t1 - t0, uptime_ms() - t1);
+    kprintf("settings: %s saved, %u KB, packed in %u ms, written in %u ms\n", what, len / 1024, t1 - t0,
+            uptime_ms() - t1);
     settings_save();
+}
+
+void settings_save_wallpaper(void)
+{
+    save_packed(PIXEL_FILE, "custom wallpaper", wallpaper_pack);
+}
+
+void settings_save_lock_picture(void)
+{
+    save_packed(LOCK_FILE, "lock screen picture", lockscreen_pack_picture);
 }

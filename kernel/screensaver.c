@@ -3,6 +3,7 @@
 #include "kernel/desktop.h"
 #include "kernel/driver.h"
 #include "kernel/io.h"
+#include "kernel/lockscreen.h"
 #include "kernel/printk.h"
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
@@ -381,7 +382,12 @@ static void stop(void)
     uint32_t permille = ms ? busy * 1000 / ms : 0;
     kprintf("screensaver: off after %u s: %u frames (%u fps), drawing took %u.%u%% of the time\n",
             ms / 1000, ss.frames, ms ? ss.frames * 1000 / ms : 0, permille / 10, permille % 10);
-    desktop_cover(0);                       /* redraws everything, pointer included */
+    if (lockscreen_active())
+        lockscreen_redraw();                /* it was over the lock screen: back to that */
+    else if (lockscreen_settings()->on_wake)
+        lockscreen_lock();                  /* covered still: the desktop never shows */
+    else
+        desktop_cover(0);                   /* redraws everything, pointer included */
 }
 
 int screensaver_active(void)

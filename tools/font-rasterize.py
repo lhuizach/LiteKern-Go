@@ -2,6 +2,7 @@
 """LiteKern X - rasterise the GUI font into an atlas (Phase 3 section 5).
 
 Usage: python tools/font-rasterize.py FONT.ttf assets/fonts
+       python tools/font-rasterize.py --clock FONT.ttf assets/fonts
 
 Needs Pillow (FreeType), so it's run by hand, not by the build: the output
 (ui-font.png, a grayscale atlas, and ui-font.json, its metrics) is
@@ -11,6 +12,11 @@ standard library. Rerun it only to change the font or the sizes below.
 The faces are the text styles the GUI uses (kernel/text.h). Glyphs are
 printable ASCII, hinted by FreeType for crispness at 1:1 on the EeePC's panel,
 with fractional advances kept (1/64 px) so spacing stays even.
+
+--clock makes the lock screen's big clock instead (clock-font.png/.json):
+one large bold face with only what a clock shows (digits, ':', AM/PM),
+the other characters left empty. It goes into the kernel only, not into
+every app as the UI font does.
 """
 import json
 import os
@@ -30,6 +36,8 @@ CHARS = [chr(c) for c in range(32, 127)]
 # 0x80, 0x81, ... (kernel/text.h's TEXT_MINUS etc.).
 EXTRA = ["−", "×", "÷", "…"]     # minus, times, divide, ellipsis
 CHARS += EXTRA
+CLOCK_FACE = ("clock", 112, 700)        # bold (the user asked, 2026-10-09)
+CLOCK_CHARS = set("0123456789: AMP")
 
 
 def face(path, size, weight):
@@ -48,18 +56,25 @@ def face(path, size, weight):
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit("usage: font-rasterize.py FONT.ttf OUT_DIR")
-    path, out = sys.argv[1], sys.argv[2]
+    args = [a for a in sys.argv[1:] if a != "--clock"]
+    clock = "--clock" in sys.argv
+    if len(args) != 2:
+        sys.exit("usage: font-rasterize.py [--clock] FONT.ttf OUT_DIR")
+    path, out = args
+    base = "clock-font" if clock else "ui-font"
     os.makedirs(out, exist_ok=True)
     meta = {"version": 1, "source": os.path.basename(path), "extra": EXTRA, "faces": []}
     rows = []                   # (face index, char, mask)
-    for name, size, weight in FACES:
+    for name, size, weight in [CLOCK_FACE] if clock else FACES:
         f = face(path, size, weight)
         ascent, descent = f.getmetrics()
         info = {"name": name, "size": size, "weight": weight, "ascent": ascent,
                 "descent": descent, "glyphs": []}
         for ch in CHARS:
+            if clock and ch not in CLOCK_CHARS:
+                info["glyphs"].append({"c": ord(ch), "w": 0, "h": 0, "xoff": 0, "yoff": 0, "adv64": 0})
+                rows.append((len(meta["faces"]), ch, None))
+                continue
             mask, (xoff, yoff) = f.getmask2(ch, mode="L")
             w, h = mask.size
             img = Image.frombytes("L", (w, h), bytes(mask)) if w and h else None
@@ -88,10 +103,10 @@ def main():
                 atlas.paste(img, (gx, gy))
             g["x"], g["y"] = gx, gy
             k += 1
-    atlas.save(os.path.join(out, "ui-font.png"))
-    with open(os.path.join(out, "ui-font.json"), "w", encoding="utf-8", newline="\n") as f:
+    atlas.save(os.path.join(out, base + ".png"))
+    with open(os.path.join(out, base + ".json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(meta, f, indent=1)
-    print(f"font-rasterize: {len(FACES)} faces, atlas {W}x{atlas.size[1]} -> {out}")
+    print(f"font-rasterize: {len(meta['faces'])} faces, atlas {W}x{atlas.size[1]} -> {out}/{base}.*")
 
 
 if __name__ == "__main__":

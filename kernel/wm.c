@@ -671,7 +671,8 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
                       bt->label, TEXT_BOLD, fg);
     }
 
-    /* The title, centred, cut short between the buttons if it must. */
+    /* The title: centred if it fits between the buttons; otherwise moved
+     * into the space there is, and cut short if it must, as GNOME does. */
     int lmax = h.x + t->spacing, rmin = rs[B_MIN].x;
     for (int b = 0; b < w->nbuttons; b++) {
         if (w->buttons[b].side == WM_LEFT && rs[b].x + rs[b].w > lmax)
@@ -679,12 +680,15 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
         if (w->buttons[b].side == WM_RIGHT && rs[b].x < rmin)
             rmin = rs[b].x;
     }
-    int half = (h.x + h.w / 2 - lmax < rmin - (h.x + h.w / 2) ? h.x + h.w / 2 - lmax
-                                                               : rmin - (h.x + h.w / 2)) - t->spacing;
+    int gl = lmax + t->spacing, gr = rmin - t->spacing, avail = gr - gl;
     int tw = text_width(w->title, TEXT_BOLD);
-    if (half > 0) {
-        int maxw = 2 * half, x = h.x + (h.w - (tw < maxw ? tw : maxw)) / 2;
-        text_draw_fit(s, x - ox, h.y + (h.h - text_height(TEXT_BOLD)) / 2 - oy, w->title, maxw,
+    if (avail > 0) {
+        int shown = tw < avail ? tw : avail, x = h.x + (h.w - shown) / 2;
+        if (x < gl)
+            x = gl;
+        if (x + shown > gr)
+            x = gr - shown;
+        text_draw_fit(s, x - ox, h.y + (h.h - text_height(TEXT_BOLD)) / 2 - oy, w->title, avail,
                       TEXT_BOLD, fg);
     }
 }

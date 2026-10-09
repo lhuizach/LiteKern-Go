@@ -19,8 +19,9 @@ int picture_open(int vol, const char *dir, const struct k86_dirent *e, const cha
  * and present that. */
 void picture_draw(struct gfx_surface *c, struct gfx_rect r);
 
-/* Make it the wallpaper. 0, or -1 with *why. */
-int picture_wallpaper(const char **why);
+/* Make it the wallpaper: where is K86_WALLPAPER_DESKTOP and/or
+ * K86_WALLPAPER_LOCK (the lock screen's). 0, or -1 with *why. */
+int picture_wallpaper(int where, const char **why);
 
 /* Let go of its memory. */
 void picture_close(void);

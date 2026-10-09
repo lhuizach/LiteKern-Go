@@ -7,6 +7,7 @@
 #include "kernel/hwprobe.h"
 #include "kernel/font.h"
 #include "kernel/lkx.h"
+#include "kernel/lockscreen.h"
 #include "kernel/kern86_abi.h"
 #include "kernel/printk.h"
 #include "kernel/screensaver.h"
@@ -299,19 +300,57 @@ static int wallpaper_thumbnail(uint32_t uname, uint32_t out, int w, int h)
     return err ? err : wallpaper_thumb(name, (uint32_t *)out, w, h);
 }
 
-/* A picture from the app as the wallpaper. */
-static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t stride)
+/* A picture from the app as the wallpaper: the desktop's, the lock screen's, or both. */
+static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t stride, uint32_t where)
 {
-    if (!w || !h || w > 4096 || h > 4096 || stride < w || stride > 4096)
+    if (!w || !h || w > 4096 || h > 4096 || stride < w || stride > 4096 ||
+        where > (K86_WALLPAPER_DESKTOP | K86_WALLPAPER_LOCK))
         return -EINVAL;
     if (user_check(px, ((h - 1) * stride + w) * 4, 0))
         return -EFAULT;
-    int err = wallpaper_set_image((const uint32_t *)px, (int)w, (int)h, (int)stride);
-    if (err)
-        return err;
-    desktop_refresh();
+    if (!where)
+        where = K86_WALLPAPER_DESKTOP;
+    if (where & K86_WALLPAPER_LOCK) {
+        int err = lockscreen_set_picture((const uint32_t *)px, (int)w, (int)h, (int)stride);
+        if (err)
+            return err;
+        settings_save_lock_picture();       /* kept for the next start */
+    }
+    if (where & K86_WALLPAPER_DESKTOP) {
+        int err = wallpaper_set_image((const uint32_t *)px, (int)w, (int)h, (int)stride);
+        if (err)
+            return err;
+        desktop_refresh();
+        settings_save_wallpaper();
+    }
     wm_theme_changed();                     /* Settings shows the change */
-    settings_save_wallpaper();              /* kept for the next start */
+    return 0;
+}
+
+static int lock_settings(uint32_t u, uint32_t set)
+{
+    if (user_check(u, sizeof(struct k86_lock), !set))
+        return -EFAULT;
+    struct k86_lock *k = (struct k86_lock *)u;
+    if (set) {
+        struct lock_settings s;
+        memcpy(s.wallpaper, k->wallpaper, sizeof(s.wallpaper));
+        s.wallpaper[sizeof(s.wallpaper) - 1] = '\0';
+        s.clock24 = k->clock24 != 0;
+        s.on_wake = k->on_wake != 0;
+        lockscreen_configure(&s);
+        const struct lock_settings *now = lockscreen_settings();
+        kprintf("appearance: lock screen: wallpaper %s, %s-hour clock, lock on wake %s\n", now->wallpaper,
+                now->clock24 ? "24" : "12", now->on_wake ? "yes" : "no");
+        settings_save();
+        return 0;
+    }
+    const struct lock_settings *now = lockscreen_settings();
+    memset(k, 0, sizeof(*k));
+    memcpy(k->wallpaper, now->wallpaper, sizeof(k->wallpaper));
+    k->clock24 = now->clock24;
+    k->on_wake = now->on_wake;
+    k->has_picture = lockscreen_has_picture();
     return 0;
 }
 
@@ -404,7 +443,9 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_HW_PROBE:       return hw_probe(a1, a2, a3);
     case SYS_TIMER_SET:      return lkx_set_timer(a1);
     case SYS_MEMORY:         return lkx_set_memory(a1);
-    case SYS_WALLPAPER_IMAGE: return wallpaper_image_user(a1, a2, a3, a4);
+    case SYS_WALLPAPER_IMAGE: return wallpaper_image_user(a1, a2, a3, a4, a5);
+    case SYS_LOCK:           kprintf("shell: lock (an app)\n"); lockscreen_lock(); return 0;
+    case SYS_LOCK_SETTINGS:  return lock_settings(a1, a2);
     case SYS_EC_READ:        return ec_read(a1);
     default:                 return -ENOSYS;
     }

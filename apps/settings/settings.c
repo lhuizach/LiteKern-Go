@@ -2,9 +2,11 @@
  *
  * Style (dark or light, shown as two little window previews), accent colour
  * (GNOME's presets), background (the wallpapers in the ramdisk, or none),
- * and when the screen saver starts (or a preview of it). A click applies it
- * at once: the kernel redraws the shell and sends every window
- * K86_EVENT_THEME. Not saved across a restart yet (Phase 5); the build-time
+ * when the screen saver starts (or a preview of it), and the lock screen:
+ * Lock Now, its clock, locking when the screen saver ends, and (the
+ * Background row's Lock Screen switch) its own background. A click applies
+ * it at once: the kernel redraws the shell, sends every window
+ * K86_EVENT_THEME, and saves it on the stick (kernel/settings.h); the
  * defaults come from `make STYLE= ACCENT= WALLPAPER= SCREENSAVER=`. */
 #include "kernel/string.h"
 #include "kernel/text.h"
@@ -22,6 +24,8 @@
 static struct k86_window win;
 static struct gfx_surface canvas;
 static struct k86_appearance app;
+static struct k86_lock lock;
+static int bg_lock;                     /* the Background row is for the lock screen */
 static uint32_t thumbs[K86_MAX_WALLPAPERS][THUMB_W * THUMB_H];
 static int have_thumb[K86_MAX_WALLPAPERS];
 
@@ -34,16 +38,17 @@ static const char *const saver_label[] = { "Off", "1 min", "2 min", "5 min", "10
 #define CHIP_GAP 12
 
 /* Clickable things: kind + index, and where they are. */
-enum kind { K_STYLE, K_ACCENT, K_WALLPAPER, K_NONE_WALLPAPER, K_SAVER, K_PREVIEW };
+enum kind { K_STYLE, K_ACCENT, K_WALLPAPER, K_NONE_WALLPAPER, K_SAVER, K_PREVIEW,
+            K_LOCK_NOW, K_CLOCK24, K_ON_WAKE, K_BG_TARGET, K_LOCK_DESKTOP, K_LOCK_PICTURE };
 struct spot {
     enum kind kind;
     int index;
     struct gfx_rect r;
 };
-static struct spot spots[2 + K86_MAX_ACCENTS + K86_MAX_WALLPAPERS + 1 + NSAVER + 1];
+static struct spot spots[2 + K86_MAX_ACCENTS + K86_MAX_WALLPAPERS + 3 + NSAVER + 1 + 3 + 2];
 static int nspots, hover = -1, pressed = -1;
 
-static int x0, x_saver, y_style, y_accent, y_background;
+static int x0, x_saver, y_style, y_accent, y_background, y_lock, tile_w, tile_h;
 
 static void add_spot(enum kind k, int i, struct gfx_rect r)
 {
@@ -70,10 +75,27 @@ static void layout(void)
     for (int i = 0; i < app.naccents; i++)
         add_spot(K_ACCENT, i, (struct gfx_rect){ x0 + i * (2 * DOT_R + 20), y_accent + lh + 10,
                                                  2 * DOT_R + 8, 2 * DOT_R + 8 });
-    add_spot(K_NONE_WALLPAPER, 0, (struct gfx_rect){ x0, y_background + lh + 10, THUMB_W, THUMB_H });
+    /* The background row: None and the wallpapers; for the lock screen also
+     * "Desktop's" first and its own picture last, the tiles smaller to fit. */
+    int n = 1 + app.nwallpapers + (bg_lock ? 1 + lock.has_picture : 0), gap = GAP;
+    tile_w = THUMB_W;
+    if (n * THUMB_W + (n - 1) * GAP > content_w) {
+        gap = 12;
+        tile_w = (content_w - (n - 1) * gap) / n;
+    }
+    tile_h = THUMB_H * tile_w / THUMB_W;
+    int ty = y_background + lh + 10, k = 0;
+    if (bg_lock)
+        add_spot(K_LOCK_DESKTOP, 0, (struct gfx_rect){ x0 + k++ * (tile_w + gap), ty, tile_w, tile_h });
+    add_spot(K_NONE_WALLPAPER, 0, (struct gfx_rect){ x0 + k++ * (tile_w + gap), ty, tile_w, tile_h });
     for (int i = 0; i < app.nwallpapers; i++)
-        add_spot(K_WALLPAPER, i, (struct gfx_rect){ x0 + (i + 1) * (THUMB_W + GAP),
-                                                    y_background + lh + 10, THUMB_W, THUMB_H });
+        add_spot(K_WALLPAPER, i, (struct gfx_rect){ x0 + k++ * (tile_w + gap), ty, tile_w, tile_h });
+    if (bg_lock && lock.has_picture)
+        add_spot(K_LOCK_PICTURE, 0, (struct gfx_rect){ x0 + k++ * (tile_w + gap), ty, tile_w, tile_h });
+    /* Desktop | Lock Screen, after the row's title. */
+    int bx = x0 + text_width("Background", TEXT_BOLD) + 20;
+    for (int i = 0; i < 2; i++)
+        add_spot(K_BG_TARGET, i, (struct gfx_rect){ bx + i * 116, y_background - 6, 112, 28 });
     /* The screen saver: to the right of the style cards, three choices a
      * row, then Preview. */
     x_saver = x0 + 2 * (CARD_W + GAP) + GAP;
@@ -82,6 +104,12 @@ static void layout(void)
         add_spot(K_SAVER, i, (struct gfx_rect){ x_saver + (i % 3) * (CHIP_W + CHIP_GAP),
                                                 sy + (i / 3) * (CHIP_H + 10), CHIP_W, CHIP_H });
     add_spot(K_PREVIEW, 0, (struct gfx_rect){ x_saver, sy + 2 * (CHIP_H + 10), CHIP_W, CHIP_H });
+    /* The lock screen, under them. */
+    y_lock = sy + 3 * (CHIP_H + 10) + 14;
+    int ly = y_lock + lh + 10;
+    add_spot(K_LOCK_NOW, 0, (struct gfx_rect){ x_saver, ly, CHIP_W, CHIP_H });
+    add_spot(K_CLOCK24, 0, (struct gfx_rect){ x_saver + CHIP_W + CHIP_GAP, ly, 2 * CHIP_W + CHIP_GAP, CHIP_H });
+    add_spot(K_ON_WAKE, 0, (struct gfx_rect){ x_saver, ly + CHIP_H + 10, 3 * CHIP_W + 2 * CHIP_GAP, CHIP_H });
     (void)t;
 }
 
@@ -112,6 +140,27 @@ static void style_preview(struct gfx_rect r, int light, int selected, int lit)
     for (int i = 0; i < 3; i++)
         gfx_fill_rect(&canvas, r.x + 26, r.y + 44 + i * 15, 50 - i * 10, 3, gfx_mix(fg, card, 140));
     gfx_fill_round_rect(&canvas, r.x + r.w - 66, r.y + r.h - 26, 50, 16, 4, t->accent_bg);
+}
+
+/* The desktop's wallpaper, if it's a preset: its index (for its thumbnail). */
+static int desktop_preset(void)
+{
+    for (int i = 0; i < app.nwallpapers; i++)
+        if (!strcmp(app.wallpaper, app.wallpapers[i]))
+            return i;
+    return -1;
+}
+
+static int tile_selected(const struct spot *s)
+{
+    if (!bg_lock)
+        return s->kind == K_NONE_WALLPAPER ? !app.wallpaper[0] : !strcmp(app.wallpaper, app.wallpapers[s->index]);
+    switch (s->kind) {
+    case K_LOCK_DESKTOP: return !strcmp(lock.wallpaper, "desktop");
+    case K_LOCK_PICTURE: return !strcmp(lock.wallpaper, "Custom");
+    case K_NONE_WALLPAPER: return !strcmp(lock.wallpaper, "none");
+    default: return !strcmp(lock.wallpaper, app.wallpapers[s->index]);
+    }
 }
 
 static void draw(void)
@@ -146,25 +195,49 @@ static void draw(void)
             break;
         }
         case K_NONE_WALLPAPER:
-        case K_WALLPAPER: {
-            int selected = s->kind == K_NONE_WALLPAPER ? !app.wallpaper[0]
-                         : !strcmp(app.wallpaper, app.wallpapers[s->index]);
+        case K_WALLPAPER:
+        case K_LOCK_DESKTOP:
+        case K_LOCK_PICTURE: {
+            int selected = tile_selected(s);
             if (selected)
                 ring(s->r, 8, t->accent_bg);
             else if (lit)
                 ring(s->r, 8, gfx_mix(t->ink, t->window_bg, 60));
-            if (s->kind == K_WALLPAPER && have_thumb[s->index]) {
-                struct gfx_surface thumb = { thumbs[s->index], THUMB_W, THUMB_H, THUMB_W };
-                gfx_blit(&canvas, s->r.x, s->r.y, &thumb, 0, 0, THUMB_W, THUMB_H);
-                gfx_round_corners(&canvas, s->r.x, s->r.y, THUMB_W, THUMB_H, 8, selected || lit
-                                  ? t->window_bg : t->window_bg);
+            int thumb_of = s->kind == K_WALLPAPER ? s->index : s->kind == K_LOCK_DESKTOP ? desktop_preset() : -1;
+            if (thumb_of >= 0 && have_thumb[thumb_of]) {
+                struct gfx_surface thumb = { thumbs[thumb_of], THUMB_W, THUMB_H, THUMB_W };
+                if (s->r.w == THUMB_W)
+                    gfx_blit(&canvas, s->r.x, s->r.y, &thumb, 0, 0, THUMB_W, THUMB_H);
+                else
+                    gfx_blit_scaled(&canvas, s->r, &thumb, (struct gfx_rect){ 0, 0, THUMB_W, THUMB_H }, 255, 0);
+                gfx_round_corners(&canvas, s->r.x, s->r.y, s->r.w, s->r.h, 8, t->window_bg);
             } else {
-                gfx_fill_round_rect(&canvas, s->r.x, s->r.y, THUMB_W, THUMB_H, 8,
-                                    t->light ? 0xc8ccd6 : 0x202634);
+                gfx_fill_round_rect(&canvas, s->r.x, s->r.y, s->r.w, s->r.h, 8,
+                                    s->kind == K_LOCK_PICTURE ? gfx_mix(t->accent_bg, 0x202634, 90)
+                                    : t->light ? 0xc8ccd6 : 0x202634);
             }
-            const char *label = s->kind == K_NONE_WALLPAPER ? "None" : app.wallpapers[s->index];
-            text_draw(&canvas, s->r.x + (THUMB_W - text_width(label, TEXT_BODY)) / 2,
-                      s->r.y + THUMB_H + 8, label, TEXT_BODY, selected ? t->fg : t->fg_dim);
+            const char *label = s->kind == K_NONE_WALLPAPER ? "None" : s->kind == K_LOCK_DESKTOP ? "Desktop's"
+                              : s->kind == K_LOCK_PICTURE ? "Picture" : app.wallpapers[s->index];
+            text_draw(&canvas, s->r.x + (s->r.w - text_width(label, TEXT_BODY)) / 2,
+                      s->r.y + s->r.h + 8, label, TEXT_BODY, selected ? t->fg : t->fg_dim);
+            break;
+        }
+        case K_BG_TARGET:
+        case K_LOCK_NOW:
+        case K_CLOCK24:
+        case K_ON_WAKE: {
+            int selected = s->kind == K_BG_TARGET ? bg_lock == s->index
+                         : s->kind == K_CLOCK24 ? lock.clock24 : s->kind == K_ON_WAKE ? lock.on_wake : 0;
+            uint32_t bg = selected ? t->accent_bg
+                        : i == pressed && i == hover ? t->button_active
+                        : lit ? t->button_hover : t->button_bg;
+            const char *label = s->kind == K_BG_TARGET ? (s->index ? "Lock Screen" : "Desktop")
+                              : s->kind == K_LOCK_NOW ? "Lock Now"
+                              : s->kind == K_CLOCK24 ? "24-Hour Clock" : "Lock When the Screen Saver Ends";
+            enum text_style st = s->kind == K_BG_TARGET ? TEXT_BODY : TEXT_BOLD;
+            gfx_fill_round_rect(&canvas, s->r.x, s->r.y, s->r.w, s->r.h, s->r.h / 2, bg);
+            text_draw(&canvas, s->r.x + (s->r.w - text_width(label, st)) / 2,
+                      s->r.y + (s->r.h - text_height(st)) / 2, label, st, selected ? t->accent_fg : t->fg);
             break;
         }
         case K_SAVER:
@@ -184,12 +257,13 @@ static void draw(void)
         }
     }
     text_draw(&canvas, x_saver, y_style, "Screen Saver", TEXT_BOLD, t->fg);
+    text_draw(&canvas, x_saver, y_lock, "Lock Screen", TEXT_BOLD, t->fg);
     text_draw(&canvas, x0, y_accent, "Accent Color", TEXT_BOLD, t->fg);
     text_draw(&canvas, x0, y_background, "Background", TEXT_BOLD, t->fg);
     /* At the bottom, but never over the wallpapers' names above it. */
-    const char *note = "Changes last until LiteKern X restarts.";
+    const char *note = "Changes are saved on the USB stick.";
     int note_y = canvas.h - text_height(TEXT_SMALL) - 14;
-    int below = y_background + lh + 10 + THUMB_H + 8 + text_height(TEXT_BODY) + 12;
+    int below = y_background + lh + 10 + tile_h + 8 + text_height(TEXT_BODY) + 12;
     text_draw(&canvas, (canvas.w - text_width(note, TEXT_SMALL)) / 2, note_y > below ? note_y : below,
               note, TEXT_SMALL, t->fg_dim);
     (void)lh;
@@ -206,8 +280,56 @@ static int spot_at(int x, int y)
     return -1;
 }
 
+static void set_lock_wallpaper(const char *w, const char *what)
+{
+    memset(lock.wallpaper, 0, sizeof(lock.wallpaper));
+    memcpy(lock.wallpaper, w, strlen(w) < sizeof(lock.wallpaper) ? strlen(w) : sizeof(lock.wallpaper) - 1);
+    k86_logf("settings: lock screen background %s", what);
+    k86_lock_settings(&lock, 1);
+    k86_lock_settings(&lock, 0);
+    draw();
+}
+
 static void choose(const struct spot *s)
 {
+    if (bg_lock && (s->kind == K_WALLPAPER || s->kind == K_NONE_WALLPAPER)) {
+        if (s->kind == K_WALLPAPER)
+            set_lock_wallpaper(app.wallpapers[s->index], app.wallpapers[s->index]);
+        else
+            set_lock_wallpaper("none", "none");
+        return;
+    }
+    switch (s->kind) {
+    case K_LOCK_DESKTOP:
+        set_lock_wallpaper("desktop", "the desktop's");
+        return;
+    case K_LOCK_PICTURE:
+        set_lock_wallpaper("Custom", "its picture");
+        return;
+    case K_BG_TARGET:
+        bg_lock = s->index;
+        k86_lock_settings(&lock, 0);
+        layout();
+        draw();
+        return;
+    case K_LOCK_NOW:
+        k86_log("settings: lock now");
+        k86_lock();
+        return;
+    case K_CLOCK24:
+    case K_ON_WAKE:
+        if (s->kind == K_CLOCK24)
+            lock.clock24 = !lock.clock24;
+        else
+            lock.on_wake = !lock.on_wake;
+        k86_logf("settings: lock screen %s %s", s->kind == K_CLOCK24 ? "24-hour clock" : "lock on wake",
+                 (s->kind == K_CLOCK24 ? lock.clock24 : lock.on_wake) ? "on" : "off");
+        k86_lock_settings(&lock, 1);
+        draw();
+        return;
+    default:
+        break;
+    }
     switch (s->kind) {
     case K_STYLE:
         k86_logf("settings: style %s", s->index ? "light" : "dark");
@@ -234,6 +356,8 @@ static void choose(const struct spot *s)
     case K_PREVIEW:
         k86_log("settings: screen saver preview");
         k86_screensaver_preview();
+        return;
+    default:
         return;
     }
     k86_appearance(&app);           /* the redraw comes with K86_EVENT_THEME */
@@ -281,6 +405,7 @@ int main(void)
     memcpy(h.title, "Appearance", 11);
     k86_header(&h);
     k86_appearance(&app);
+    k86_lock_settings(&lock, 0);
     for (int i = 0; i < app.nwallpapers; i++)
         have_thumb[i] = k86_wallpaper_thumb(app.wallpapers[i], thumbs[i], THUMB_W, THUMB_H) == 0;
     layout();
@@ -294,7 +419,7 @@ int main(void)
         switch (ev.type) {
         case K86_EVENT_POINTER: pointer(&ev); break;
         case K86_EVENT_KEY:     key(&ev.key); break;
-        case K86_EVENT_THEME:   draw(); break;
+        case K86_EVENT_THEME:   k86_lock_settings(&lock, 0); layout(); draw(); break;
         case K86_EVENT_RESIZE:  canvas.w = ev.x; canvas.h = ev.y; layout(); draw(); break;
         case K86_EVENT_CLOSE:   return 0;
         default:                break;

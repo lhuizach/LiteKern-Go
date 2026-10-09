@@ -71,7 +71,8 @@ SDK_OBJS     := $(BUILD)/sdk/crt0.asm.o $(BUILD)/sdk/sdk.o $(BUILD)/sdk/gfx.o \
 APP_LKX      := $(foreach p,$(APP_PATHS),$(BUILD)/$(p)/$(notdir $(p)).lkx)
 RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/kerns.json \
                 apps/$(notdir $(p))/$(notdir $(p)).lkx=$(BUILD)/$(p)/$(notdir $(p)).lkx) \
-                $(foreach w,$(WALLPAPER_LKXW) $(WALLPAPER_THUMBS),wallpapers/$(notdir $(w))=$(w))
+                $(foreach w,$(WALLPAPER_LKXW) $(WALLPAPER_THUMBS),wallpapers/$(notdir $(w))=$(w)) \
+                fonts/clock.lkxf=$(BUILD)/gen/fonts/clock.lkxf
 
 # Ring 3 test programs: flat binaries at USER_BASE, embedded into self-test
 # kernels by tests/kernel/user_programs.asm.
@@ -131,7 +132,7 @@ $(BUILD)/$(1)/$(notdir $(1)).lkx: $(patsubst $(1)/%.c,$(BUILD)/$(1)/%.o,$(wildca
 endef
 $(foreach p,$(APP_PATHS),$(eval $(call APP_RULE,$(p))))
 
-$(BUILD)/gen/ramdisk.bin: $(APP_LKX) $(WALLPAPER_LKXW) $(WALLPAPER_THUMBS) $(foreach p,$(APP_PATHS),$(p)/kerns.json) tools/mkramdisk.py
+$(BUILD)/gen/ramdisk.bin: $(APP_LKX) $(WALLPAPER_LKXW) $(WALLPAPER_THUMBS) $(BUILD)/gen/fonts/clock.lkxf $(foreach p,$(APP_PATHS),$(p)/kerns.json) tools/mkramdisk.py
 	@mkdir -p $(dir $@)
 	python3 tools/mkramdisk.py $@ $(RAMDISK_ARGS)
 $(BUILD)/kernel/bios_thunk_blob.asm.o: $(BUILD)/bios_thunk.bin
@@ -166,6 +167,12 @@ $(BUILD)/gen/uifont.c: assets/fonts/ui-font.json assets/fonts/ui-font.png tools/
 
 $(BUILD)/gen/uifont.o: $(BUILD)/gen/uifont.c kernel/text.h
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# The lock screen's big clock: one face, read from the ramdisk when it first
+# locks (it's 70 KB: too much for the kernel's 448 KiB).
+$(BUILD)/gen/fonts/clock.lkxf: assets/fonts/clock-font.json assets/fonts/clock-font.png tools/font2c.py tools/lkx_png.py
+	@mkdir -p $(dir $@)
+	python3 tools/font2c.py --bin $< $@
 
 $(BUILD)/sdk/uifont.o: $(BUILD)/gen/uifont.c kernel/text.h
 	@mkdir -p $(dir $@)

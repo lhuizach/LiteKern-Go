@@ -44,6 +44,12 @@ struct text_face {
 /* Generated (build/gen/uifont.c). */
 extern const struct text_face text_faces[TEXT_FACES];
 
+/* Draw / measure with a face of its own, such as the lock screen's clock
+ * (loaded from the ramdisk); its line box is face->ascent + face->descent tall. */
+int text_draw_face(struct gfx_surface *s, int x, int y, const char *str, const struct text_face *f,
+                   uint32_t colour);
+int text_width_face(const char *str, const struct text_face *f);
+
 /* Draw; returns the width drawn. */
 int text_draw(struct gfx_surface *s, int x, int y, const char *str, enum text_style st,
               uint32_t colour);

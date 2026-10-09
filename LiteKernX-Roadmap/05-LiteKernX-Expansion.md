@@ -38,13 +38,13 @@ Needed §3's writable storage, which came early: settings already save to the bo
 - **Honest limit:** the stick isn't encrypted. A password stops someone using the EeePC, not someone reading the stick in another computer
 - **No fast user switching** at first: two people's apps open at once doesn't fit the EeePC's memory and the 8-window limit. Log Out closes your apps
 
-**Stage 1: the lock screen** (ships alone first, and gets used on the EeePC before Stage 2 starts)
-- [ ] In the kernel's shell, like the screen saver, so no app can get round it: apps keep running behind it but get no input, and their windows are never drawn on it
-- [ ] Big clock: the time in large digits (a new clock face, digits and colon only, about 96 px light, rasterised at build time like the UI font), the date under it, updated each minute; 12/24-hour; seconds optional
-- [ ] Its wallpaper, dimmed so the clock reads: the desktop's, any preset, or a picture of your own (Files' Set Wallpaper gains "for the lock screen")
-- [ ] The power menu stays on it: Shut Down, Restart
-- [ ] Locking: Lock in the power menu, Super+L, and optionally when the screen saver ends. Unlocking (no users yet): a click or a key
-- [ ] Saved with the other settings; QEMU tests: lock, unlock, the clock rolling over, input not reaching apps
+**Stage 1: the lock screen** (ships alone first, and gets used on the EeePC before Stage 2 starts) — **done in QEMU (2026-10-09)**: `kernel/lockscreen.c`; the clock is 112 px Ubuntu Sans Bold from the ramdisk (`fonts/clock.lkxf`: in the kernel it went over stage 2's 448 KiB); Settings' Lock Screen section and the Background row's Desktop / Lock Screen switch; Files' Set Lock Screen. Still to do: use it on the EeePC
+- [x] In the kernel's shell, like the screen saver, so no app can get round it: apps keep running behind it but get no input, and their windows are never drawn on it
+- [x] Big clock: the time in large digits (a new clock face, digits and colon only, 112 px bold, rasterised at build time like the UI font), the date under it, updated each minute; 12/24-hour; seconds optional
+- [x] Its wallpaper, dimmed so the clock reads: the desktop's, any preset, or a picture of your own (Files' Set Wallpaper gains "for the lock screen")
+- [x] The power menu stays on it: Shut Down, Restart
+- [x] Locking: Lock in the power menu, Super+L, and optionally when the screen saver ends. Unlocking (no users yet): a click or a key
+- [x] Saved with the other settings; QEMU tests: lock, unlock, the clock rolling over, input not reaching apps
 
 **Stage 2: users and passwords**
 - [ ] First start: a setup screen (name, optional password, avatar: a picture or a letter tile). That user is the admin

@@ -37,6 +37,27 @@ static void draw_glyph(struct gfx_surface *s, int x, int y, const struct text_fa
     }
 }
 
+int text_draw_face(struct gfx_surface *s, int x, int y, const char *str, const struct text_face *f,
+                   uint32_t colour)
+{
+    int pen64 = x * 64;
+    for (int i = 0; str[i]; i++) {
+        const struct text_glyph *g = glyph(f, str[i]);
+        if (g->w)
+            draw_glyph(s, (pen64 + 32) >> 6, y, f, g, colour);
+        pen64 += g->adv64;
+    }
+    return ((pen64 + 32) >> 6) - x;
+}
+
+int text_width_face(const char *str, const struct text_face *f)
+{
+    int pen64 = 0;
+    for (int i = 0; str[i]; i++)
+        pen64 += glyph(f, str[i])->adv64;
+    return (pen64 + 32) >> 6;
+}
+
 int text_draw_n(struct gfx_surface *s, int x, int y, const char *str, int n, enum text_style st,
                 uint32_t colour)
 {

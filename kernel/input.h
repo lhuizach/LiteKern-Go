@@ -35,6 +35,8 @@
 #define KEY_PAGEDOWN    (KEY_EXTENDED | 0x051)
 #define KEY_INSERT      (KEY_EXTENDED | 0x052)
 #define KEY_DELETE      (KEY_EXTENDED | 0x053)
+#define KEY_LSUPER      (KEY_EXTENDED | 0x05b)  /* the Windows keys */
+#define KEY_RSUPER      (KEY_EXTENDED | 0x05c)
 
 /* kbd0 ioctl */
 #define KBD_GET_DROPPED 1       /* arg: uint32_t *, events lost to a full queue */

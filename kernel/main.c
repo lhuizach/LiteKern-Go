@@ -28,6 +28,7 @@
 #include "kernel/status.h"
 #include "kernel/theme.h"
 #include "defaults.h"
+#include "kernel/lockscreen.h"
 #include "kernel/settings.h"
 #include "kernel/storage.h"
 #include "kernel/string.h"
@@ -112,11 +113,36 @@ static struct {
     uint32_t last_log;
 } in;
 
+/* The lock screen has the input: the pointer still moves (and clicks are
+ * logged), but everything goes to it, nothing to the desktop or the apps. */
+static void locked_input(const struct key_event *keys, int nk, const struct mouse_event *moves, int nm)
+{
+    for (int i = 0; i < nk; i++) {
+        log_key(&keys[i]);
+        lockscreen_key(&keys[i]);
+    }
+    for (int i = 0; i < nm && lockscreen_active(); i++) {
+        in.x += moves[i].dx;
+        in.y += moves[i].dy;
+        in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
+        in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
+        if (i + 1 < nm && moves[i + 1].buttons == moves[i].buttons && moves[i].buttons == in.buttons)
+            continue;
+        cursor_move_to(in.x, in.y);
+        if (moves[i].buttons != in.buttons) {
+            in.buttons = moves[i].buttons;
+            log_pointer(in.x, in.y, in.buttons, 1);
+        }
+        lockscreen_pointer(in.x, in.y, moves[i].buttons);
+    }
+}
+
 void idle_step(int busy)
 {
     struct key_event keys[8];
     struct mouse_event moves[16];
     desktop_tick();         /* the clock: rtc0's IRQ 8 wakes the hlt once a second */
+    lockscreen_tick();      /* the lock screen's big clock, if it shows */
     screensaver_poll();     /* its next frame (rtc0 wakes the hlt 64 times a second then),
                              * or start it once the idle time is up */
     /* Check for events with interrupts off, so one arriving between the
@@ -135,6 +161,10 @@ void idle_step(int busy)
     /* Any key or touch while the screen saver shows only wakes the screen. */
     if ((nk > 0 || nm > 0) && screensaver_input())
         return;
+    if (lockscreen_active()) {
+        locked_input(keys, nk > 0 ? nk / (int)sizeof(keys[0]) : 0, moves, nm > 0 ? nm / (int)sizeof(moves[0]) : 0);
+        return;
+    }
 
     /* After each key and click, the apps (and kernel apps) answer before the
      * next one is handled: what a click does can depend on what the one
