@@ -13,6 +13,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
+#include "apps/settings/users.h"
 
 #define CARD_W 200
 #define CARD_H 120
@@ -26,6 +27,9 @@ static struct gfx_surface canvas;
 static struct k86_appearance app;
 static struct k86_lock lock;
 static int bg_lock;                     /* the Background row is for the lock screen */
+static int page;                        /* 0: Appearance, 1: Users (users.c) */
+#define PAGE_APPEARANCE 1               /* the header's buttons */
+#define PAGE_USERS 2
 static uint32_t thumbs[K86_MAX_WALLPAPERS][THUMB_W * THUMB_H];
 static int have_thumb[K86_MAX_WALLPAPERS];
 
@@ -395,15 +399,43 @@ static void key(const struct key_event *k)
         choose(&(struct spot){ K_STYLE, k->ascii == 'l', { 0, 0, 0, 0 } });
 }
 
+static void header(void)
+{
+    struct k86_header h;
+    memset(&h, 0, sizeof(h));
+    memcpy(h.title, page ? "Users" : "Appearance", page ? 6 : 11);
+    static const struct { int id; const char *label; } b[] = { { PAGE_APPEARANCE, "Appearance" },
+                                                               { PAGE_USERS, "Users" } };
+    for (int i = 0; i < 2; i++) {
+        h.buttons[i].side = 0;
+        h.buttons[i].id = b[i].id;
+        memcpy(h.buttons[i].label, b[i].label, strlen(b[i].label) + 1);
+    }
+    h.nbuttons = 2;
+    k86_header(&h);
+}
+
+static void show_page(int p)
+{
+    if (p == page)
+        return;
+    page = p;
+    k86_logf("settings: page %s", page ? "users" : "appearance");
+    header();
+    if (page)
+        users_page_open(&canvas);
+    else {
+        layout();
+        draw();
+    }
+}
+
 int main(void)
 {
     if (k86_window_open(&win))
         return 1;
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
-    struct k86_header h;
-    memset(&h, 0, sizeof(h));
-    memcpy(h.title, "Appearance", 11);
-    k86_header(&h);
+    header();
     k86_appearance(&app);
     k86_lock_settings(&lock, 0);
     for (int i = 0; i < app.nwallpapers; i++)
@@ -417,10 +449,40 @@ int main(void)
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {
-        case K86_EVENT_POINTER: pointer(&ev); break;
-        case K86_EVENT_KEY:     key(&ev.key); break;
-        case K86_EVENT_THEME:   k86_lock_settings(&lock, 0); layout(); draw(); break;
-        case K86_EVENT_RESIZE:  canvas.w = ev.x; canvas.h = ev.y; layout(); draw(); break;
+        case K86_EVENT_POINTER:
+            if (page)
+                users_page_pointer(&ev);
+            else
+                pointer(&ev);
+            break;
+        case K86_EVENT_KEY:
+            if (page)
+                users_page_key(&ev.key);
+            else
+                key(&ev.key);
+            break;
+        case K86_EVENT_HEADER:
+            show_page(ev.id == PAGE_USERS);
+            break;
+        case K86_EVENT_THEME:
+            k86_lock_settings(&lock, 0);
+            layout();
+            if (page)
+                users_page_draw();
+            else
+                draw();
+            break;
+        case K86_EVENT_RESIZE:
+            canvas.w = ev.x;
+            canvas.h = ev.y;
+            layout();
+            if (page) {
+                users_page_layout();
+                users_page_draw();
+            } else {
+                draw();
+            }
+            break;
         case K86_EVENT_CLOSE:   return 0;
         default:                break;
         }

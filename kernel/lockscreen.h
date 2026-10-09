@@ -4,7 +4,10 @@
  * power menu (Restart, Shut Down) at the top right. It's drawn by the
  * kernel's shell, like the screen saver: while it shows, apps keep running
  * but get no input, and their windows aren't drawn (the desktop is covered,
- * kernel/desktop.h). A click or a key unlocks it (stage 2 adds passwords).
+ * kernel/desktop.h). A click or a key unlocks it, or, if the user has a
+ * password (kernel/users.h), shows the password prompt. Logging in (at
+ * boot, when there's more than one user or a password) it starts with
+ * everyone to choose from instead of the clock.
  *
  * It locks from the power menu's Lock, Super+L, SYS_LOCK, or when the
  * screen saver ends if lock-on-wake is set. Its choices are kept with the
@@ -26,6 +29,9 @@ struct lock_settings {
 };
 
 void lockscreen_lock(void);
+/* Someone has to log in (at boot): the users to choose from, or the one's
+ * password prompt. Unlocking then logs them in (users_set_current()). */
+void lockscreen_login(void);
 int lockscreen_active(void);
 
 /* The input loop, while it's active: every key and pointer update. */

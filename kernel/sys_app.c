@@ -8,6 +8,7 @@
 #include "kernel/font.h"
 #include "kernel/lkx.h"
 #include "kernel/lockscreen.h"
+#include "kernel/users.h"
 #include "kernel/kern86_abi.h"
 #include "kernel/printk.h"
 #include "kernel/screensaver.h"
@@ -354,6 +355,61 @@ static int lock_settings(uint32_t u, uint32_t set)
     return 0;
 }
 
+/* --- users (kernel/users.h) ----------------------------------------------------------------- */
+
+static int users_out(uint32_t out)
+{
+    if (user_check(out, sizeof(struct k86_users), 1))
+        return -EFAULT;
+    struct k86_users *u = (struct k86_users *)out;
+    memset(u, 0, sizeof(*u));
+    u->count = users_count();
+    u->current = users_current();
+    for (int i = 0; i < u->count && i < K86_USERS_MAX; i++) {
+        const struct user *s = users_get(i);
+        memcpy(u->user[i].name, s->name, sizeof(u->user[i].name));
+        u->user[i].admin = (uint8_t)s->admin;
+        u->user[i].has_password = (uint8_t)s->has_password;
+        u->user[i].colour = s->colour;
+    }
+    return 0;
+}
+
+static int user_change(uint32_t uc)
+{
+    static struct k86_user_change c;        /* copied in: the app can't change it while it's checked */
+    if (user_check(uc, sizeof(c), 0))
+        return -EFAULT;
+    memcpy(&c, (const void *)uc, sizeof(c));
+    c.name[sizeof(c.name) - 1] = c.password[sizeof(c.password) - 1] = c.auth[sizeof(c.auth) - 1] = '\0';
+    int me = users_current();
+    const struct user *self = users_get(me);
+    int err = 0;
+    if (!self)
+        err = -EPERM;                       /* nobody's logged in */
+    else if ((c.op == K86_USER_ADD || c.op == K86_USER_REMOVE || c.op == K86_USER_ADMIN ||
+              ((c.op == K86_USER_PASSWORD || c.op == K86_USER_RENAME) && c.user != me)) && !self->admin)
+        err = -EPERM;
+    else if (self->has_password && !users_check(me, c.auth))
+        err = -EACCES;
+    if (!err) {
+        switch (c.op) {
+        case K86_USER_ADD:      err = users_add(c.name, c.password, c.admin); break;
+        case K86_USER_PASSWORD: err = users_set_password(c.user, c.password); break;
+        case K86_USER_RENAME:   err = users_rename(c.user, c.name); break;
+        case K86_USER_ADMIN:    err = users_set_admin(c.user, c.admin); break;
+        case K86_USER_REMOVE:   err = users_remove(c.user); break;
+        default:                err = -EINVAL; break;
+        }
+    }
+    if (err == -EACCES)
+        kprintf("users: a change refused: wrong password\n");
+    else if (err)
+        kprintf("users: a change refused (%s)\n", errno_name(err));
+    memset(&c, 0, sizeof(c));               /* no passwords left lying about */
+    return err;
+}
+
 static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, uint32_t len)
 {
     struct fat_volume *v;
@@ -446,6 +502,8 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_WALLPAPER_IMAGE: return wallpaper_image_user(a1, a2, a3, a4, a5);
     case SYS_LOCK:           kprintf("shell: lock (an app)\n"); lockscreen_lock(); return 0;
     case SYS_LOCK_SETTINGS:  return lock_settings(a1, a2);
+    case SYS_USERS:          return users_out(a1);
+    case SYS_USER_CHANGE:    return user_change(a1);
     case SYS_EC_READ:        return ec_read(a1);
     default:                 return -ENOSYS;
     }

@@ -3,9 +3,11 @@
 const char *errno_name(int err)
 {
     switch (err < 0 ? -err : err) {
+    case EPERM:  return "EPERM";
     case ENOENT: return "ENOENT";
     case EIO:    return "EIO";
     case ENOMEM: return "ENOMEM";
+    case EACCES: return "EACCES";
     case EFAULT: return "EFAULT";
     case EBUSY:  return "EBUSY";
     case EEXIST: return "EEXIST";

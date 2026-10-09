@@ -15,7 +15,7 @@ The toolchain is the host's `gcc -m32 -ffreestanding`, GNU `ld` and `nasm`, all 
 |---|---|
 | `wsl make` | Builds `build/litekernx.img`: bootloader, kernel, apps, wallpapers, and a FAT32 partition |
 | `wsl make run` | Builds and boots it in a QEMU window |
-| `wsl make test` | Runs every test: the VM smoke test, the bootloader tests, the FAT32 tests, the picture decoder tests and the kernel tests (about 10 minutes) |
+| `wsl make test` | Runs every test: the VM smoke test, the bootloader tests, the FAT32 tests, the picture decoder tests, the users tests and the kernel tests (about 12 minutes) |
 | `wsl make usb` | Builds the images for the real Eee PC into `build/usb/` (see [HARDWARE-TEST.md](HARDWARE-TEST.md)) |
 | `wsl make debug` | Like `run`, paused, with a gdb stub on `:1234`; interrupts and resets logged to `build/qemu-debug.log` |
 | `wsl make smoke` / `smoke-gui` | Boots a tiny test image, to check the VM itself works |

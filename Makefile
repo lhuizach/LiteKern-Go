@@ -78,7 +78,7 @@ RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/ker
 # kernels by tests/kernel/user_programs.asm.
 USER_TEST_BINS := $(patsubst %.asm,$(BUILD)/%.user.bin,$(wildcard tests/kernel/user/*.asm))
 
-.PHONY: all run debug test test-boot test-fat test-image test-kernel smoke smoke-gui check-tools clean \
+.PHONY: all run debug test test-boot test-fat test-image test-users test-kernel smoke smoke-gui check-tools clean \
         vbox-create vbox vbox-test usb
 
 all: $(IMAGE)
@@ -282,7 +282,7 @@ debug: $(IMAGE)
 
 # --- tests ------------------------------------------------------------------
 
-test: smoke test-boot test-fat test-image test-kernel
+test: smoke test-boot test-fat test-image test-users test-kernel
 
 # The FAT32 driver, built for Linux and checked with fsck.fat and mtools.
 test-fat:
@@ -293,6 +293,11 @@ test-fat:
 # with Pillow's decodes of the same files.
 test-image:
 	@bash tests/image/test-image.sh
+	@echo
+
+# Users and their password hashes (kernel/users.c), checked against hashlib.
+test-users:
+	@bash tests/users/test-users.sh
 	@echo
 
 test-boot:

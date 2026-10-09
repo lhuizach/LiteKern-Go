@@ -27,6 +27,8 @@
 #ifndef LKX_SETTINGS_H
 #define LKX_SETTINGS_H
 
+#include <stdint.h>
+
 /* After storage_init(): read settings.txt and apply the style, accent and
  * screen saver. Logs what it found. */
 void settings_load(void);
@@ -43,6 +45,12 @@ void settings_save(void);
 
 /* Write the custom wallpaper (after Files' Set Wallpaper), then settings.txt. */
 void settings_save_wallpaper(void);
+
+/* Other files in the LiteKern folder (kernel/users.h's users.txt): write
+ * one (replacing it), or read one into buf (its size, -ENOENT, -EINVAL if
+ * bigger than len, -ENODEV without a writable boot disk). */
+int settings_write_file(const char *name, const void *data, uint32_t len);
+int settings_read_file(const char *name, void *buf, uint32_t len);
 
 /* The lock screen's own picture: read (at boot, from settings_load) and written. */
 int settings_load_lock_picture(void);

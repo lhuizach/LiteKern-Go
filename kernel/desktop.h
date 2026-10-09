@@ -40,6 +40,9 @@ int desktop_started(void);
  * stops drawing, keeping track of what changed. 0 hands the screen back:
  * everything is redrawn, the pointer included. */
 void desktop_cover(int on);
+/* Uncover, and compose the whole desktop into the screen's back buffer
+ * without showing it (the lock screen's unlock animation reveals it). */
+void desktop_render_quiet(void);
 
 /* The theme or wallpaper changed: redraw everything. */
 void desktop_refresh(void);

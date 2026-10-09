@@ -385,9 +385,15 @@ void wg_entry_draw(struct gfx_surface *s, struct wg_entry *e)
     struct gfx_surface in = gfx_sub(s, (struct gfx_rect){ e->r.x + 10, e->r.y, e->r.w - 20, e->r.h });
     int h = text_height(TEXT_BODY), y = (e->r.h - h) / 2;
     uint32_t fg = e->disabled ? t->fg_dim : t->fg;
-    text_draw(&in, 0, y, e->text + e->scroll, TEXT_BODY, fg);
+    if (e->secret) {            /* a dot a character, 10 px apart */
+        for (int i = e->scroll; i < e->len; i++)
+            gfx_fill_circle(&in, (i - e->scroll) * 10 + 4, y + h / 2, 3, fg);
+    } else {
+        text_draw(&in, 0, y, e->text + e->scroll, TEXT_BODY, fg);
+    }
     if (e->focused) {           /* the text cursor (steady: there's no timer to blink it) */
-        int cx = text_width_n(e->text + e->scroll, e->cursor - e->scroll, TEXT_BODY);
+        int cx = e->secret ? (e->cursor - e->scroll) * 10
+                           : text_width_n(e->text + e->scroll, e->cursor - e->scroll, TEXT_BODY);
         gfx_fill_rect(&in, cx, y, 1, h, t->fg);
     }
     e->dirty = 0;

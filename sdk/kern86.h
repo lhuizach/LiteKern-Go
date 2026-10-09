@@ -160,6 +160,17 @@ static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stri
                      (uint32_t)where);
 }
 
+/* The users (kernel/users.h): list them; change them (checked and saved by the kernel). */
+static inline int k86_users(struct k86_users *out)
+{
+    return k86_call(SYS_USERS, (uint32_t)out, 0, 0, 0);
+}
+
+static inline int k86_user_change(const struct k86_user_change *c)
+{
+    return k86_call(SYS_USER_CHANGE, (uint32_t)c, 0, 0, 0);
+}
+
 /* The lock screen: lock now; read or change its choices (saved). */
 static inline int k86_lock(void)
 {

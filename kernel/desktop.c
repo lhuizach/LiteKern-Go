@@ -16,6 +16,7 @@
 #include "kernel/screen.h"
 #include "kernel/lockscreen.h"
 #include "kernel/settings.h"
+#include "kernel/users.h"
 #include "kernel/string.h"
 #include "kernel/theme.h"
 #include "kernel/wallpaper.h"
@@ -1249,6 +1250,8 @@ void desktop_start(void)
     /* The boot budget's finish line (docs/BOOT-BUDGET.md: <= 5 s from stage 1). */
     kprintf("[boot] desktop t=%u\n", uptime_ms());
     kprintf("desktop: ready\n");     /* everything is up: the tests wait for this */
+    if (users_need_login())
+        lockscreen_login();     /* someone has to log in first (kernel/users.h) */
 }
 
 int desktop_started(void)
@@ -1264,6 +1267,15 @@ void desktop_cover(int on)
     cursor_refresh();
     damage_all();
     shell_flush();
+}
+
+void desktop_render_quiet(void)
+{
+    covered = 0;
+    if (!screen_ready())
+        return;
+    compose((struct gfx_rect){ 0, 0, S()->w, S()->h });
+    ndmg = 0;                               /* all of it is drawn now */
 }
 
 void desktop_refresh(void)

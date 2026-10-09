@@ -4,9 +4,11 @@
 #ifndef LKX_ERRNO_H
 #define LKX_ERRNO_H
 
+#define EPERM   1       /* not allowed (not an admin) */
 #define ENOENT  2       /* no such file or entry */
 #define EIO     5       /* I/O error */
 #define ENOMEM  12      /* out of memory / table full */
+#define EACCES  13      /* a wrong password */
 #define EFAULT  14      /* bad address (e.g. a user pointer the kernel won't touch) */
 #define EBUSY   16      /* device or resource busy */
 #define EEXIST  17      /* already exists */

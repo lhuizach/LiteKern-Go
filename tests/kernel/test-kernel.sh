@@ -616,12 +616,57 @@ check "settings: picture wallpapers are kept across a restart (desktop and lock 
     '^lock: locked \(wallpaper Custom\)$' \
     '!PANIC|couldn.t be read|is corrupt'
 
+# Users (kernel/users.h), on a scratch disk: a new stick has one admin,
+# "User", without a password (straight to the desktop). In Settings ->
+# Users (its header's Users button, x 196, y 147): Change Password (342,
+# 632) to "apple", twice; then Add User (201, 632) "Ann" with no password,
+# which asks for User's own password now that there is one.
+mkdir -p build/test-users
+cp build/litekernx.img build/test-users/disk.img
+path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$SETTINGS_TILE" "$GRID_Y"; click; add sleep:1.5
+go 196 147; click; add sleep:0.6; go 342 632; click
+add sleep:0.5 a p p l e ret sleep:0.3 a p p l e ret sleep:1.5
+go 201 632; click; add sleep:0.5 shift-a n n ret sleep:0.3 ret sleep:0.3 ret sleep:0.3 a p p l e ret sleep:1.5
+KEYS="$P" KEYS_DONE='^user: settings: users add' boot_until build/test-users/disk.img "$done_re" 40
+check "users: Settings sets a password and adds a user (asking for yours)" \
+    '^users: none saved yet: one admin, "User", no password$' \
+    '^user: settings: page users$' \
+    '^users: User has a new password$' \
+    '^user: settings: users password User: done$' \
+    '^users: added Ann$' \
+    '^users: saved \(2\)$' \
+    '^user: settings: users add Ann: done$' \
+    '!PANIC|users: a change refused|lock: login'
+
+# After a restart someone has to log in: the picker (User chosen, Enter),
+# a wrong password (refused), the right one; then Super+L and Enter bring
+# the password prompt again, and "apple" unlocks.
+KEYS="sleep:0.6 ret sleep:0.5 p e a r ret sleep:1.5 a p p l e ret sleep:1.5 meta_l-l sleep:1.2 ret sleep:0.5 \
+a p p l e ret sleep:1.5" KEYS_DONE='^lock: unlocked' boot_until build/test-users/disk.img '^lock: login screen' 30
+check "users: the login screen, a wrong password, the right one; a password unlocks it" \
+    '^users: 2 \(User admin password, Ann\)$' \
+    '^lock: login screen \(2 users\)$' \
+    '^lock: password for User$' \
+    '^lock: wrong password for User \(1\)$' \
+    '^lock: logged in as User$' \
+    '^anim: unlock, ' \
+    '^lock: locked \(wallpaper desktop\)$' \
+    '^lock: unlocked$' \
+    '!PANIC|logged in as Ann'
+
+# Ann has no password: choosing her (Right, Enter) logs her straight in.
+KEYS="sleep:0.6 right sleep:0.3 ret sleep:1.5" KEYS_DONE='^lock: logged in' \
+    boot_until build/test-users/disk.img '^lock: login screen' 30
+check "users: someone without a password logs straight in" \
+    '^lock: logged in as Ann$' \
+    '!PANIC|lock: password for Ann'
+
 # The lock screen (kernel/lockscreen.h). Super+L locks over Calculator; the
 # first key (5) only unlocks it, so Calculator never gets it, and the sum
 # typed after does reach it. Then the power menu's Lock (its third item, y
 # 108-142) locks again, and a click unlocks.
 path; go "$SHOWAPPS_X" "$DOCK_Y"; click; go "$CALC_TILE" "$GRID_Y"; click
-add sleep:1.5 meta_l-l sleep:0.8 5 sleep:0.5 1 shift-equal 2 ret sleep:0.5
+add sleep:1.5 meta_l-l sleep:1.2 5 sleep:0.8 1 shift-equal 2 ret sleep:0.5
 go 998 15; click; add sleep:0.3; go 930 125; click; add sleep:1; go 500 400; click; add sleep:0.5
 KEYS="$P" KEYS_DONE='^shell: lock$' SCREEN="corner=" boot_until build/litekernx.img "$done_re" 30
 check "lock screen: Super+L and the power menu lock it; the key or click that unlocks goes nowhere else" \

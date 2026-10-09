@@ -62,6 +62,13 @@
 #define SYS_LOCK            25  /* lock the screen now (kernel/lockscreen.h) */
 #define SYS_LOCK_SETTINGS   26  /* ebx: struct k86_lock *, ecx: 0 = read it, 1 = change to it
                                  * (saved). An unknown wallpaper means the desktop's */
+#define SYS_USERS           27  /* ebx: struct k86_users * out: everyone, and who's logged in */
+#define SYS_USER_CHANGE     28  /* ebx: const struct k86_user_change *. Checked by the kernel:
+                                 * adding, removing and making admins needs an admin; changing
+                                 * someone else needs an admin; and if whoever's logged in has
+                                 * a password, `auth` must be it. 0, -EPERM, -EACCES (a wrong
+                                 * auth), -EINVAL, -EEXIST, -ENOSPC, -EBUSY (the last admin, or
+                                 * you), saved at once */
 #define SYS_HW_PROBE        19  /* ebx: struct k86_probe_item * out, ecx: max, edx: flags
                                  * (K86_PROBE_*). Lists the sensors and controls the kernel
                                  * can see on this machine; only ever reads. Returns the
@@ -186,6 +193,33 @@ struct k86_lock {
     int32_t clock24;            /* 1: 14:05; 0: 2:05 PM */
     int32_t on_wake;            /* lock when the screen saver ends */
     int32_t has_picture;        /* read only: it has a picture of its own to show */
+};
+
+#define K86_USERS_MAX       8
+#define K86_USER_NAME       21          /* 20 characters, NUL included */
+#define K86_PASSWORD        64
+struct k86_users {
+    int32_t count;
+    int32_t current;            /* the one logged in */
+    struct {
+        char name[K86_USER_NAME];
+        uint8_t admin, has_password, pad[2];
+        uint32_t colour;        /* the avatar's */
+    } user[K86_USERS_MAX];
+};
+
+#define K86_USER_ADD        1   /* name, password ("": none), admin */
+#define K86_USER_PASSWORD   2   /* user: index; password: the new one ("": none) */
+#define K86_USER_RENAME     3   /* user, name */
+#define K86_USER_ADMIN      4   /* user, admin: 1 or 0 */
+#define K86_USER_REMOVE     5   /* user */
+struct k86_user_change {
+    int32_t op;
+    int32_t user;
+    int32_t admin;
+    char name[K86_USER_NAME];
+    char password[K86_PASSWORD];
+    char auth[K86_PASSWORD];    /* the logged-in user's own password, if they have one */
 };
 
 struct k86_dirent {

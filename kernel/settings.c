@@ -91,6 +91,16 @@ static int load_file(const char *name, void *buf, uint32_t len)
     return fat_read(v, &e, 0, buf, e.size);
 }
 
+int settings_write_file(const char *name, const void *data, uint32_t len)
+{
+    return save_file(name, data, len);
+}
+
+int settings_read_file(const char *name, void *buf, uint32_t len)
+{
+    return load_file(name, buf, len);
+}
+
 /* --- reading ------------------------------------------------------------------------------- */
 
 static int number(const char *s, uint32_t *out)

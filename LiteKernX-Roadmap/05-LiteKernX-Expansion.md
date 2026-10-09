@@ -46,12 +46,12 @@ Needed §3's writable storage, which came early: settings already save to the bo
 - [x] Locking: Lock in the power menu, Super+L, and optionally when the screen saver ends. Unlocking (no users yet): a click or a key
 - [x] Saved with the other settings; QEMU tests: lock, unlock, the clock rolling over, input not reaching apps
 
-**Stage 2: users and passwords**
-- [ ] First start: a setup screen (name, optional password, avatar: a picture or a letter tile). That user is the admin
-- [ ] The login screen: the users to pick from, the password field, the big clock and the power menu
-- [ ] Passwords never stored as typed: salted and hashed (SHA-256, many rounds) in `/LiteKern/users.txt`. A wrong one shakes the field and waits a moment before the next try; a Caps Lock warning
-- [ ] System calls for users (list, check a password, add, change), checked by the kernel: changing an account needs its password, adding or removing users needs an admin's, so a misbehaving app can't take one over
-- [ ] Tests: setup, a wrong password then the right one, the delay
+**Stage 2: users and passwords** — **done in QEMU (2026-10-09)**: `kernel/users.c`, `kernel/sha256.c`, the login screen and password prompt in `kernel/lockscreen.c`, Settings' Users page (pulled forward from stage 4: without it nothing could add a user). **Changed from the plan, the user told why:** no setup screen at first start. A new stick has one admin, "User", without a password, and starts straight to the desktop (as decided: a login only when it's needed); rename it and set a password in Settings → Users. The lock and unlock slide like a curtain (the user's request)
+- [x] ~~First start: a setup screen~~ one admin, "User", no password (see above); avatars are letter tiles in each user's colour for now (pictures: stage 4)
+- [x] The login screen: the users to pick from, the password field, the big clock and the power menu
+- [x] Passwords never stored as typed: salted and hashed (SHA-256, many rounds) in `/LiteKern/users.txt`. A wrong one shakes the field and waits a moment before the next try; a Caps Lock warning
+- [x] System calls for users (list, check a password, add, change), checked by the kernel: changing an account needs its password, adding or removing users needs an admin's, so a misbehaving app can't take one over
+- [x] Tests: Settings adding a user and a password, the login screen, a wrong password then the right one, a password unlocking the lock screen, no password logging straight in; on the host, SHA-256's vectors and every stored hash worked out again by Python's hashlib (`tests/users/`)
 
 **Stage 3: per-user everything**
 - [ ] Each user's own style, accent, desktop and lock wallpapers, screen saver, Blocksmith projects: `/LiteKern/users/<name>/`. Today's settings file becomes the first user's

@@ -30,6 +30,7 @@
 #include "defaults.h"
 #include "kernel/lockscreen.h"
 #include "kernel/settings.h"
+#include "kernel/users.h"
 #include "kernel/storage.h"
 #include "kernel/string.h"
 #include "kernel/timing.h"
@@ -382,6 +383,7 @@ void kmain(uint32_t magic, const struct boot_info *handoff)
     drivers_add_acpi_devices();     /* the embedded controller, read-only */
     storage_init();         /* the disks Files can open (reads each partition table) */
     settings_load();        /* what Settings chose last time, from the boot disk */
+    users_load();           /* who uses this machine (kernel/users.h) */
     splash_progress(45);
     idle(bi);
 }

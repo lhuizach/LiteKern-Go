@@ -117,6 +117,7 @@ struct wg_entry {
     int focused, disabled;
     uint32_t under;
     int dirty;
+    int secret;                 /* a password: dots, not the characters */
 };
 
 void wg_entry_set(struct wg_entry *e, const char *text);   /* cursor at the end */
