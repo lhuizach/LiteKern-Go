@@ -215,6 +215,9 @@ $(BUILD)/kernel.bin: $(BUILD)/kernel.elf
 endif
 
 -include $(KERNEL_OBJS:.o=.d)
+# The apps' and the SDK's too: a header they share (kernel/widget.h) changing
+# must rebuild every app, or an app and the SDK disagree on a struct's layout.
+-include $(wildcard $(BUILD)/sdk/*.d $(foreach p,$(APP_PATHS),$(BUILD)/$(p)/*.d))
 
 # --- boot image -------------------------------------------------------------
 # Layout (docs/BOOT-PROTOCOL.md): stage 1 | stage 2 (whole sectors) | kernel
