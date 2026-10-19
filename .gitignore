@@ -5,3 +5,4 @@ build/
 *.bin
 *.elf
 __pycache__/
+build-linux/

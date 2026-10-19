@@ -36,13 +36,15 @@ Then wait for a yes. One phase at a time, each finished and tested before the ne
 - [x] Copy of the code, with its history (`C:\Users\lhuir\LiteKern-X-Linux`)
 - [x] This roadmap
 
-## L1. The desktop as a Linux program, in a window on the PC
+## L1. The desktop as a Linux program, in a window on the PC — **done 2026-10-19** (the user was away: no SDL2 needed in the end)
 **Estimate:** 3–5 hours of work. **Size:** about 1,500–2,500 new lines (the `platform/` layer and the SDL backend), small edits to the UI code.
 **You:** run one command in WSL to install SDL2 (it needs your password); look at the screenshots; if you like, open it on your PC.
-- [ ] `platform/`: memory, logging, time and clock, storage on normal Linux files, the ramdisk as a folder of assets
-- [ ] The SDL backend: a 1024x600 window, keyboard (AZERTY), mouse
-- [ ] The desktop, top bar, dock, app menu, windows, lock screen, screen saver, wallpapers, themes, settings and users, the Log app; no other apps yet
-- [ ] Tests: the host-side tests (users, image) pass; screenshots match the kernel version's
+**As built:** about 1,850 new lines in `platform/` and `tests/linux/`, and **no change to the UI code** beyond two splits that the kernel build shares: the keyboard layouts (`kernel/keymap.c`, out of `drivers/kbd.c`) and the app list (`kernel/appreg.c`, out of `kernel/lkx.c`). **Changed from the plan:** no SDL2. The window backend speaks the X11 protocol to WSLg's X server itself, so nothing has to be installed (and nothing needed the user's password); it's checked by reading pixels back from the X server (`LKX_X11_VERIFY=1`). The headless backend runs the tests' own key language and writes PNG screenshots. Built 32-bit (`-m32`), like the EeePC's Linux will be, so the kernel code keeps its 32-bit addresses. The shell opens the kernel build's disk image as its "boot disk": the ramdisk and the FAT32 code work unchanged.
+- [x] `platform/`: memory (mmap), logging (stdout, like the serial port), time and the clock, the disk image as `boot0`, the screen, keyboard and pointer as `fb0`, `kbd0`, `mouse0`, `rtc0` for the kernel's driver layer
+- [x] ~~The SDL backend~~ the x11 backend: a 1024x600 window, keyboard (AZERTY, by key position), mouse; and the headless backend for tests
+- [x] The desktop, top bar, dock, app menu, windows, lock screen, screen saver, wallpapers, themes, settings and users, the Log app; no other apps yet (their icons show; opening one says L2)
+- [x] Tests: `tests/linux/test-linux.sh` (12: start-up, app menu, Log and its close button, the power menu's Lock, Super+L and the big clock, the login screen with a wrong then right password, a user without a password, AZERTY, the screen saver, and the kernel's wm, gfx and widgets self-tests, unchanged); the host-side tests (users, image) pass
+- [ ] Still to do when the user is back: open the window (`wsl make -f platform/Makefile run`) and try it by hand: the keyboard and mouse through X haven't been used by a person yet
 
 ## L2. The apps on Linux
 **Estimate:** 4–6 hours. **Size:** about 1,500–2,500 lines (`libk86` for apps, the app server in the shell).

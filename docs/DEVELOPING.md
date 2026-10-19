@@ -26,7 +26,7 @@ wsl make STYLE=light ACCENT=teal WALLPAPER=dusk SPLASH=log
 ```
 The screen saver (glowing ribbons, `kernel/screensaver.h`) starts after 5 minutes without input; `SCREENSAVER=<seconds>` changes that, and `SCREENSAVER=0` turns it off. To see it straight away: `wsl make run SCREENSAVER=5`.
 
-The keyboard is French AZERTY (`drivers/kbd.c`); `KEYBOARD=qwerty` builds the US layout. `tests/kernel/test-kernel.sh` builds with qwerty, because QEMU types by key position with US names, and checks AZERTY on its own build.
+The keyboard is French AZERTY (`kernel/keymap.c`, shared by the PS/2 driver and the Linux build); `KEYBOARD=qwerty` builds the US layout. `tests/kernel/test-kernel.sh` builds with qwerty, because QEMU types by key position with US names, and checks AZERTY on its own build.
 
 ## VirtualBox
 There's a second dev VM, `LiteKern X`, in your Windows VirtualBox, with the same Eee PC-like profile as the QEMU VM plus the real panel's **1024×600** mode (QEMU can't do that one). It's driven from WSL by [`vm/vbox.sh`](../vm/vbox.sh):
@@ -48,6 +48,17 @@ wsl "WAIT_FOR=^kbd: ready" "TYPE=Hi!" "TYPED=kbd: key 0x002 .!." bash vm/vbox.sh
 - In QEMU, the log (COM1) goes to the terminal and to `build/serial.log`. On the Eee PC, which has no serial port, the **Log** app shows it. **VM timings don't count toward the [boot budget](BOOT-BUDGET.md).**
 - [`tests/lib/drive.py`](../tests/lib/drive.py) drives a headless QEMU from a little script (move the pointer, click, type, take screenshots, record MP4s). The README's screenshots were made with it.
 
+## On Linux (the port: `LiteKernX-Roadmap/06-LiteKernX-Linux-Port.md`)
+The same desktop as a Linux program, `lkx-shell`: today's `kernel/` UI code with the Linux versions of what it got from the hardware in `platform/` (`platform/platform.h` says what each file does). It opens the kernel build's disk image, so the ramdisk (apps, wallpapers) and the FAT32 partition (settings, users) are the same.
+
+| Command | What it does |
+|---|---|
+| `wsl make -f platform/Makefile` | Builds `build-linux/lkx-shell` (32-bit, like the EeePC's Linux will be) |
+| `wsl make -f platform/Makefile run` | Opens it in a window on the PC (WSLg's X server, spoken to directly: nothing to install) |
+| `wsl bash tests/linux/test-linux.sh` | Its tests: headless, scripted like the kernel tests, with screenshots (about 1 minute) |
+
+Options: `--size 1024x768` (the VMs' screen; the default is the EeePC's 1024x600), `--disk IMAGE`, `--keyboard qwerty`, and for scripts `--backend headless --keys "STEPS" --shot FILE.png` (the key language of `tests/lib/qemu_monitor.py`). Apps don't run yet on Linux (phase L2): their icons are there, opening one logs `apps run on Linux from phase L2`.
+
 ## Where things are
 ```
 LiteKernX-Roadmap/   the plan, phase by phase
@@ -63,8 +74,10 @@ apps/                the KERN86 apps (Files, Calculator, Settings, Hardware Prob
 sdk/                 what apps are built with (kern86.h and friends)
 assets/              logo, icons, cursors, wallpapers, the GUI font
 tools/               build-time converters (fonts, icons, wallpapers, the ramdisk) and setup
+platform/            the Linux port: lkx-shell's devices, memory, time, event loop and backends
+                     (headless, x11); platform/include shadows kernel headers Linux can't use
 docs/                this guide and the rest (below)
-tests/               bootloader, FAT32 and kernel tests; test apps; the QEMU helpers
+tests/               bootloader, FAT32, kernel and Linux (tests/linux) tests; test apps; the QEMU helpers
 vm/                  the QEMU and VirtualBox dev VMs
 ```
 
