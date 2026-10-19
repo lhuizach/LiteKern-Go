@@ -338,23 +338,33 @@ static void verify(void)
     kprintf("x11: the window shows the framebuffer: %s\n", good == 4 ? "yes" : "NO");
 }
 
-static int x_wait(int ms)
+static int x_fd(void)
+{
+    flush();
+    return fd;
+}
+
+static int x_due(void)
+{
+    return -1;
+}
+
+/* Whatever events have come (never waits). */
+static void x_pump(void)
 {
     static int verified;
     if (!verified && plat_ready() && getenv("LKX_X11_VERIFY")) {
         verified = 1;
         verify();
     }
-    flush();
     struct pollfd p = { fd, POLLIN, 0 };
-    if (poll(&p, 1, ms < 0 ? 0 : ms) <= 0)
-        return 0;
+    if (poll(&p, 1, 0) <= 0)
+        return;
     ssize_t k = read(fd, inbuf + in_len, sizeof(inbuf) - in_len);
     if (k <= 0)
         lost();
     in_len += (size_t)k;
     size_t at = 0;
-    int any = 0;
     while (in_len - at >= 32) {
         const uint8_t *e = inbuf + at;
         size_t len = 32;
@@ -365,11 +375,9 @@ static int x_wait(int ms)
         if (e[0] != 1)
             event(e);
         at += len;
-        any = 1;
     }
     memmove(inbuf, inbuf + at, in_len - at);
     in_len -= at;
-    return any;
 }
 
 static void x_close(void)
@@ -382,4 +390,4 @@ static void x_close(void)
     }
 }
 
-const struct backend backend_x11 = { "x11", x_open, x_present, x_wait, x_close };
+const struct backend backend_x11 = { "x11", x_open, x_present, x_fd, x_due, x_pump, x_close };

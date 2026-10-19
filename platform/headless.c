@@ -16,7 +16,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include "kernel/timing.h"
 
 static char *script, *at;
 static uint32_t next_ms;        /* uptime when the next step may run */
@@ -134,30 +134,28 @@ static void h_present(const uint32_t *px, int stride, int x0, int y0, int w, int
     (void)px, (void)stride, (void)x0, (void)y0, (void)w, (void)h;
 }
 
-static void sleep_ms(uint32_t ms)
+static int h_fd(void)
 {
-    struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000 };
-    nanosleep(&ts, 0);
+    return -1;
 }
 
-static int h_wait(int ms)
+static int h_due(void)
 {
-    extern uint32_t uptime_ms(void);
-    uint32_t now = uptime_ms();
-    if (!plat_ready() || !at || !*at) {
-        if (ms > 0)
-            sleep_ms((uint32_t)ms);
-        return 0;
-    }
-    if ((int32_t)(next_ms - now) > 0) {
-        uint32_t left = next_ms - now;
-        sleep_ms(ms >= 0 && (uint32_t)ms < left ? (uint32_t)ms : left);
-        return 0;
-    }
+    if (!plat_ready() || !at || !*at)
+        return -1;
+    int32_t left = (int32_t)(next_ms - uptime_ms());
+    return left < 0 ? 0 : left;
+}
+
+/* The next step, if it's due. */
+static void h_pump(void)
+{
+    if (h_due() != 0)
+        return;
     while (*at == ' ' || *at == '\n' || *at == '\t')
         at++;
     if (!*at)
-        return 0;
+        return;
     char tok[256];
     size_t n = strcspn(at, " \n\t");
     if (n >= sizeof(tok))
@@ -166,11 +164,10 @@ static int h_wait(int ms)
     tok[n] = '\0';
     at += n;
     next_ms = uptime_ms() + step(tok);
-    return 1;
 }
 
 static void h_close(void)
 {
 }
 
-const struct backend backend_headless = { "headless", h_open, h_present, h_wait, h_close };
+const struct backend backend_headless = { "headless", h_open, h_present, h_fd, h_due, h_pump, h_close };

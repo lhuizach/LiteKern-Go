@@ -46,13 +46,16 @@ Then wait for a yes. One phase at a time, each finished and tested before the ne
 - [x] Tests: `tests/linux/test-linux.sh` (12: start-up, app menu, Log and its close button, the power menu's Lock, Super+L and the big clock, the login screen with a wrong then right password, a user without a password, AZERTY, the screen saver, and the kernel's wm, gfx and widgets self-tests, unchanged); the host-side tests (users, image) pass
 - [ ] Still to do when the user is back: open the window (`wsl make -f platform/Makefile run`) and try it by hand: the keyboard and mouse through X haven't been used by a person yet
 
-## L2. The apps on Linux
+## L2. The apps on Linux — **done 2026-10-19** (the user said go ahead while away)
 **Estimate:** 4–6 hours. **Size:** about 1,500–2,500 lines (`libk86` for apps, the app server in the shell).
 **You:** try the apps in the window, look at screenshots.
-- [ ] `libk86`: `sdk/kern86.h` over a socket and shared memory
-- [ ] The app server: today's `sys_app.c` checks, windows, input, files, users
-- [ ] Files, Calculator, Settings, Blocksmith; the Hardware Probe reads Linux's `/sys` instead of the hardware
-- [ ] An app crashing or hanging doesn't take the desktop down (the `crash`/`hang` test apps)
+**As built:** about 1,400 lines (`platform/kip.h`, `libk86.c`, `lkx.c`, `hwprobe.c`, tests). **The apps' sources are unchanged**; `sdk/kern86.h` sends `k86_call()` to `platform/libk86.c` when built for Linux, and **`kernel/sys_app.c` runs unchanged in the shell, with every check in it**: the app sends the bytes behind its pointers (each call's arguments are described once, in `platform/kip.h`), the shell hands `sys_app.c` pointers to its copies, and the outputs go back. A pointer the app can't touch itself (`process_vm_readv` on itself says so, without faulting) reaches `sys_app.c` as one its checks refuse, so the answers come in the kernel's order: the bad-calls test app gets the same 16 answers as on the kernel. Window pixels are shared memory (the shell's page allocations are memory files, `memfd`). Apps are separate Linux processes (fork + exec, a socket on fd 3); a crash is a signal, logged as the kernel names it; the 10 s watchdog is the kernel's.
+- [x] `libk86`: `sdk/kern86.h` over a socket and shared memory
+- [x] The app server: today's `sys_app.c` checks, windows, input, files, users
+- [x] Files, Calculator, Settings, Blocksmith; the Hardware Probe reads Linux's `/proc` and `/sys` instead of the hardware (the user asked whether it's still needed: its driver-hunting job is gone on Linux, kept as a cheap system-info page, easy to drop)
+- [x] An app crashing or hanging doesn't take the desktop down (the `crash`/`hang`/`badcalls` test apps)
+- [x] Tests: `tests/linux/test-linux.sh` now 20 checks (Calculator, Files and closing it, Settings saved and kept, a user added, Blocksmith run and save, the Probe, Files opened and closed 15 times, the misbehaving apps)
+- [ ] Still to do when the user is back: try the apps in the window by hand
 
 ## L3. A bootable USB stick
 **Estimate:** 5–8 hours, plus 1–2 hours for Buildroot's first build. **Size:** Buildroot and kernel configuration, about 800–1,500 lines (the DRM/evdev backend, start-up).

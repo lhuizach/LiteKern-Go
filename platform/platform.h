@@ -9,7 +9,8 @@
  *   pmm.c       pages from mmap
  *   timing.c    the clock, from CLOCK_MONOTONIC
  *   power.c     Restart and Shut Down (the PC build just exits)
- *   lkx.c       apps: listed, not run yet (phase L2)
+ *   lkx.c       apps, each its own Linux process (kip.h, libk86.c: phase L2)
+ *   hwprobe.c   the Hardware Probe's facts, from /proc and /sys
  *   main.c      start-up and the event loop (kernel/main.c's idle loop)
  *
  * A backend shows the screen and brings input:
@@ -29,9 +30,13 @@ struct backend {
     int (*open)(int w, int h);
     /* Show a rectangle of the framebuffer (0xAARRGGBB pixels, `stride` per row). */
     void (*present)(const uint32_t *px, int stride, int x, int y, int w, int h);
-    /* Wait up to `ms` (0: just check) for input, handing it to plat_key() and
-     * plat_pointer(). 1 if anything came. */
-    int (*wait)(int ms);
+    /* Before the loop sleeps: send what's queued; the fd to wake for (input),
+     * or -1. */
+    int (*fd)(void);
+    /* ms until it wants a turn without input (a script's next step); -1: never. */
+    int (*due_ms)(void);
+    /* Take what's come (input, or a due step): to plat_key() and plat_pointer(). */
+    void (*pump)(void);
     void (*close)(void);
 };
 
@@ -51,6 +56,9 @@ const uint32_t *plat_framebuffer(int *w, int *h);
 int plat_screenshot(const char *path);
 /* 1 once the desktop is up (scripts start then). */
 int plat_ready(void);
+/* Sleep up to `ms` (0: just look), waking for input, the apps, or the
+ * backend's next turn; then hand over the input. */
+void plat_wait(int ms);
 /* Leave: tidy up and exit with `code`. */
 void plat_exit(int code) __attribute__((noreturn));
 
@@ -59,6 +67,17 @@ void plat_exit(int code) __attribute__((noreturn));
 /* Register the devices; `disk`: the disk image (a LiteKern X .img), or NULL;
  * `layout`: the keyboard's, or NULL for the build's. */
 void plat_devices_init(const struct backend *b, int w, int h, const char *disk, const char *layout);
+/* The memory file behind an allocation that starts at `start` (pmm_alloc*),
+ * or -1: a window's pixels, shared with its app. */
+int plat_memory_fd(uint32_t start);
+
+/* --- apps (platform/lkx.c), for the loop's waiting ------------------------------------------- */
+struct pollfd;
+/* Their sockets, to wake for. Returns how many. */
+int lkx_fds(struct pollfd *out, int max);
+/* ms until an app's timer (or the watchdog) wants a turn; -1: none. */
+int lkx_next_ms(void);
+
 /* How often something asked to be woken (RTC_SET_RATE), in Hz; 0: once a second. */
 uint32_t plat_wake_hz(void);
 

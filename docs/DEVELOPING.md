@@ -57,7 +57,7 @@ The same desktop as a Linux program, `lkx-shell`: today's `kernel/` UI code with
 | `wsl make -f platform/Makefile run` | Opens it in a window on the PC (WSLg's X server, spoken to directly: nothing to install) |
 | `wsl bash tests/linux/test-linux.sh` | Its tests: headless, scripted like the kernel tests, with screenshots (about 1 minute) |
 
-Options: `--size 1024x768` (the VMs' screen; the default is the EeePC's 1024x600), `--disk IMAGE`, `--keyboard qwerty`, and for scripts `--backend headless --keys "STEPS" --shot FILE.png` (the key language of `tests/lib/qemu_monitor.py`). Apps don't run yet on Linux (phase L2): their icons are there, opening one logs `apps run on Linux from phase L2`.
+Options: `--size 1024x768` (the VMs' screen; the default is the EeePC's 1024x600), `--disk IMAGE`, `--keyboard qwerty`, and for scripts `--backend headless --keys "STEPS" --shot FILE.png` (the key language of `tests/lib/qemu_monitor.py`). The apps are Linux programs too, built from the same sources into `build-linux/apps/<name>/<name>` (`LKX_APPS=` points the shell elsewhere); each runs as its own process and talks to the shell over a socket (`platform/kip.h`). `make -f platform/Makefile EXTRA_APPS="tests/apps/crash ..."` builds the tests' misbehaving apps as well.
 
 ## Where things are
 ```

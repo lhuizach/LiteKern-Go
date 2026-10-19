@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# LiteKern X on Linux (LiteKernX-Roadmap/06, phase L1): lkx-shell, the desktop
-# as a Linux program, run headless with scripted input (platform/headless.c,
+# LiteKern X on Linux (LiteKernX-Roadmap/06, phases L1 and L2): lkx-shell, the
+# desktop as a Linux program, and the apps as Linux processes, run headless with scripted input (platform/headless.c,
 # the same key language as tests/kernel) at the EeePC's 1024x600. Checks its
 # log, like tests/kernel/test-kernel.sh, and its screenshots.
 #
@@ -10,7 +10,12 @@ cd "$(dirname "$0")/../.."
 
 failures=0
 W=1024 H=600
-make -s -f platform/Makefile >/dev/null || exit 1
+# The shell and the apps, the tests' misbehaving ones too; their disk image
+# (the kernel build's, with them in the ramdisk).
+TEST_APPS="tests/apps/crash tests/apps/badcalls tests/apps/hang"
+make -s -f platform/Makefile EXTRA_APPS="$TEST_APPS" >/dev/null || exit 1
+rm -f build/test-apps/litekernx.img build/test-apps/stage1.bin     # FAT_MB isn't a make dependency
+make -s BUILD=build/test-apps FAT_MB=64 "EXTRA_APPS=$TEST_APPS" build/test-apps/litekernx.img >/dev/null || exit 1
 for t in wm gfx widgets; do
     make -s -f platform/Makefile SELFTEST=$t LBUILD=build-linux/selftest-$t >/dev/null || exit 1
 done
@@ -161,6 +166,112 @@ check "the screen saver starts after the idle time, covers the desktop, a key en
     '^screensaver: on \(idle 2 s\)$' \
     '^saver-screen: corner 000000$' \
     '^screensaver: off after [0-9]+ s: [1-9][0-9]* frames'
+
+# --- the apps, each its own Linux process (phase L2) ------------------------------------------
+# The app menu at 1024x600, one row of 6: Files, Calculator, Settings, Probe,
+# Blocksmith, Log (kernel/desktop.c's grid), at y 265.
+tile() { echo $(( (W - 6 * 112) / 2 + 56 + $1 * 112 )); }
+GRID_Y=265
+open_app() { go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go "$(tile "$1")" $GRID_Y; click; add sleep:1.5; }
+
+path; open_app 1; add 5 shift-equal 3 ret sleep:0.5
+SCREEN="has=ffffff@330,110,700,230" run $SHELL_BIN build-linux/test/disk.img "$P" --keyboard qwerty
+check "Calculator runs as a Linux process: keys in, its window drawn" \
+    '^desktop: open Calculator$' \
+    '^user: calculator: open$' \
+    '^user: calculator: 5 \+ 3 = 8$' \
+    '^screen: has ffffff in 330,110,700,230: yes$' \
+    '!crashed|stopped|PANIC'
+
+# Files from the dock; its close button (760x500 at 132,65: 868,89) ends it.
+path; go $FILES_X $DOCK_Y; click; add sleep:1.5; go 868 89; click; add sleep:1
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "Files lists the disk (its calls through kernel/sys_app.c); closing its window ends it" \
+    '^user: files: open Boot disk \(LITEKERNX\)$' \
+    '^lkx: Files exited \(0\)$'
+
+# Settings (944x552 at 40,39; content from 41,86): the Light card, saved;
+# after a restart it's still light. Then Users (header 196,63), Add User
+# (201,548): "Ann", no password (no auth: User has none).
+nwall=$(ls assets/wallpapers/*.png | grep -vc -- '-light\.png$')
+row_w=$(( (nwall + 1) * 160 + nwall * 24 )); [ "$row_w" -lt 424 ] && row_w=424
+light_x=$(( 41 + (942 - row_w) / 2 + 324 ))
+cp build/litekernx.img build-linux/test/settings.img
+path; open_app 2; go "$light_x" 194; click; add sleep:1; go 196 63; click; add sleep:0.8
+go 201 548; click; add sleep:0.5 shift-a n n ret sleep:0.3 ret sleep:0.3 ret sleep:1.5
+run $SHELL_BIN build-linux/test/settings.img "$P" --keyboard qwerty
+check "Settings: a style change is saved; a user added (SYS_USER_CHANGE, checked by the shell)" \
+    '^user: settings: style light$' \
+    '^settings: saved$' \
+    '^users: added Ann$' \
+    '^user: settings: users add Ann: done$' \
+    '!refused|crashed|PANIC'
+run $SHELL_BIN build-linux/test/settings.img "sleep:0.5"
+check "Settings' choices are kept across a restart" \
+    '^settings: loaded( for User)?: light, ' \
+    '^users: 2 \(User admin, Ann\)$'
+
+# Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
+# saves it as "Test" (SYS_FS_WRITE).
+cp build/litekernx.img build-linux/test/blocksmith.img
+path; open_app 4; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
+run $SHELL_BIN build-linux/test/blocksmith.img "$P" --keyboard qwerty
+check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
+    '^user: blocksmith: run$' \
+    '^user: blocksmith: print Hello from Blocksmith!$' \
+    '^user: blocksmith: print You clicked at x = [0-9]+$' \
+    '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
+    '!blocksmith: error|crashed'
+
+path; open_app 3; add sleep:1
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the Hardware Probe reads Linux's /proc and /sys" \
+    '^user: probe: open$' \
+    '^user: probe: [1-9][0-9]* items$' \
+    '!crashed'
+
+# Stability: Files opened and closed 15 times; each must end cleanly.
+path; add gap:0.1
+for i in $(seq 15); do go $FILES_X $DOCK_Y; click; add sleep:0.8; go 868 89; click; add sleep:0.6; done
+run $SHELL_BIN build-linux/test/disk.img "$P"
+n=$(grep -c '^lkx: Files exited (0)$' <<<"$out")
+out+=$'\n'"stress: $n of 15 ended"
+check "Files opened and closed 15 times, ending cleanly each time" \
+    '^stress: 15 of 15 ended$' \
+    '!crashed|stopped|PANIC'
+
+# Misbehaving apps (tests/apps) must only end themselves: Crash writes to
+# address 0, Badcalls passes kernel pointers and nonsense (the same answers
+# as the kernel's), Hang spins until the watchdog. Then Files still works.
+# Their menu: 9 tiles (8 a row, y 213): Crash, Badcalls, Hang at 679, 791, 903.
+path
+for x in 679 791 903; do go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go $x 213; click; add sleep:1.5; done
+add sleep:11; go $FILES_X $DOCK_Y; click; add sleep:1.5
+cp build/test-apps/litekernx.img build-linux/test/apps.img
+run $SHELL_BIN build-linux/test/apps.img "$P"
+check "apps: a crash, bad calls and a hang each end only the app" \
+    '^lkx: Crash crashed \(page fault\) and was stopped; the system carries on$' \
+    '^user: badcalls: present before open -22$' \
+    '^user: badcalls: unknown call -38$' \
+    '^user: badcalls: list into kernel memory -14$' \
+    '^user: badcalls: path in kernel memory -14$' \
+    '^user: badcalls: bad volume -19$' \
+    '^user: badcalls: dot-dot path -22$' \
+    '^user: badcalls: missing folder -2$' \
+    '^user: badcalls: bad name -22$' \
+    '^user: badcalls: window into kernel memory -14$' \
+    '^user: badcalls: header with 99 buttons -22$' \
+    '^user: badcalls: font into kernel memory -14$' \
+    '^user: badcalls: write from kernel memory -14$' \
+    '^user: badcalls: write too big -14$' \
+    '^user: badcalls: too much memory -22$' \
+    '^user: badcalls: wallpaper from kernel memory -14$' \
+    '^user: badcalls: wallpaper too big -22$' \
+    '^lkx: Badcalls exited \(7\)$' \
+    '^user: no response for 10 s' \
+    '^lkx: Hang stopped responding and was stopped$' \
+    '^user: files: open Boot disk' \
+    '!still running|PANIC|Segmentation'
 
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do

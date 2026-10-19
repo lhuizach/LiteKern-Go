@@ -1,5 +1,6 @@
 /* LiteKern X on Linux — memory, time, power, the log's output and the bits
  * of hardware the kernel code still names (platform/platform.h). */
+#define _GNU_SOURCE                 /* memfd_create */
 #include "platform/platform.h"
 #include "kernel/pci.h"
 #include "kernel/pmm.h"
@@ -11,11 +12,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <fcntl.h>
 #include <sys/sysinfo.h>
 #include <time.h>
 #include <unistd.h>
 
-/* --- pages (kernel/pmm.h): anonymous mappings, page-aligned like the kernel's ----------------- */
+/* --- pages (kernel/pmm.h) ------------------------------------------------------------------------
+ * Each allocation is a memory file (memfd), mapped shared: a window's pixels
+ * can then be handed to its app (platform/lkx.c), as the kernel maps them
+ * into the app's address space. The kernel frees page by page; the file
+ * goes when the last of its pages does. */
+
+#define REGIONS 4096
+static struct region {
+    uint32_t start, pages, left;
+    int fd;
+} regions[REGIONS];
 
 uint32_t pmm_alloc(void)
 {
@@ -26,14 +38,49 @@ uint32_t pmm_alloc_contiguous(uint32_t count)
 {
     if (!count)
         return 0;
-    void *p = mmap(0, (size_t)count * PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    return p == MAP_FAILED ? 0 : (uint32_t)p;
+    struct region *r = 0;
+    for (int i = 0; i < REGIONS && !r; i++)
+        if (!regions[i].pages)
+            r = &regions[i];
+    size_t bytes = (size_t)count * PAGE_SIZE;
+    int fd = r ? memfd_create("lkx-pages", MFD_CLOEXEC) : -1;
+    if (fd < 0 || ftruncate(fd, (off_t)bytes)) {
+        if (fd >= 0)
+            close(fd);
+        return 0;
+    }
+    void *p = mmap(0, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) {
+        close(fd);
+        return 0;
+    }
+    *r = (struct region){ (uint32_t)p, count, count, fd };
+    return (uint32_t)p;
 }
 
 void pmm_free(uint32_t phys)
 {
-    if (phys)
-        munmap((void *)phys, PAGE_SIZE);    /* one page, as the kernel frees them */
+    if (!phys)
+        return;
+    munmap((void *)phys, PAGE_SIZE);
+    for (int i = 0; i < REGIONS; i++) {
+        struct region *r = &regions[i];
+        if (r->pages && phys >= r->start && phys - r->start < r->pages * PAGE_SIZE) {
+            if (!--r->left) {
+                close(r->fd);
+                r->pages = 0;
+            }
+            return;
+        }
+    }
+}
+
+int plat_memory_fd(uint32_t start)
+{
+    for (int i = 0; i < REGIONS; i++)
+        if (regions[i].pages && regions[i].start == start)
+            return regions[i].fd;
+    return -1;
 }
 
 uint32_t pmm_free_frames(void)

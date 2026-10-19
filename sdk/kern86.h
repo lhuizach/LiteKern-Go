@@ -15,6 +15,22 @@
 #include <stdint.h>
 #include "kernel/kern86_abi.h"
 
+#ifdef LKX_LINUX
+/* On Linux (the port's phase L2) an app is a Linux process: its calls go to
+ * lkx-shell over a socket (platform/libk86.c), not through int 0x80, which
+ * on Linux is Linux's own system call gate. */
+int k86_linux_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e);
+
+static inline int k86_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    return k86_linux_call(nr, a, b, c, d, 0);
+}
+
+static inline int k86_call5(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e)
+{
+    return k86_linux_call(nr, a, b, c, d, e);
+}
+#else
 static inline int k86_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
     int ret;
@@ -34,6 +50,7 @@ static inline int k86_call5(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uin
                      : "memory");
     return ret;
 }
+#endif
 
 static inline __attribute__((noreturn)) void k86_exit(int code)
 {

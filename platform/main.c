@@ -36,6 +36,7 @@
 #include "kernel/wm.h"
 #include "defaults.h"
 
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,6 +60,24 @@ static uint32_t give_up_ms;
 int plat_ready(void)
 {
     return ready;
+}
+
+/* Sleep until input, an app's call, or someone's next turn (apps' timers,
+ * the backend's script, the clock or the screen saver: `ms`). */
+void plat_wait(int ms)
+{
+    struct pollfd fds[1 + 32];
+    int n = 0, bfd = be->fd();
+    if (bfd >= 0)
+        fds[n++] = (struct pollfd){ bfd, POLLIN, 0 };
+    n += lkx_fds(fds + n, 32);
+    int due = be->due_ms(), apps = lkx_next_ms();
+    if (due >= 0 && due < ms)
+        ms = due;
+    if (apps >= 0 && apps < ms)
+        ms = apps;
+    poll(fds, (nfds_t)n, ms < 0 ? 0 : ms);
+    be->pump();
 }
 
 void plat_exit(int code)
@@ -135,7 +154,7 @@ void idle_step(int busy)
     int nk = dev_read(in.kbd, keys, sizeof(keys));
     int nm = dev_read(in.mouse, moves, sizeof(moves));
     if (nk <= 0 && nm <= 0 && !in.moved) {
-        be->wait(sleep_ms(busy));
+        plat_wait(sleep_ms(busy));
         return;
     }
     if ((nk > 0 || nm > 0) && screensaver_input())
@@ -192,7 +211,7 @@ void idle_step(int busy)
         in.moved = 0;
         in.last_log = uptime_ms();
     } else if (in.moved) {
-        be->wait(1);
+        plat_wait(1);
     }
 }
 
