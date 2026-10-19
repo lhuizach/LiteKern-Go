@@ -6,3 +6,4 @@ build/
 *.elf
 __pycache__/
 build-linux/
+build-target/
