@@ -95,6 +95,7 @@ If Files or the log shows a `boot0: BIOS read ... failed (AH=0x..)` line, photo 
 | Log app: `anim: open ...` / `anim: close ...` | After opening and closing an app: **photo the "slowest frame" numbers.** Over 30 ms means the animation skips itself |
 | Text | Smooth, proportional text everywhere except the Log app |
 | Settings | Dark ↔ Light, the accent colours and the four wallpapers all change at once, and stay changed when you go back to the desktop |
+| Keyboard layout | French AZERTY (the build's default; `make KEYBOARD=qwerty` for US). In the Log, the A key shows `'a'`, the 1 key `'&'`, Shift+1 `'1'`, AltGr+0 `'@'`. Accented keys type the plain letter (é → e): the fonts are ASCII only |
 | Calculator and Files | Work with the touchpad and the keyboard. In Files, double-click `Welcome to LiteKern X.txt` to read it |
 | Pictures | Copy a phone photo (JPEG) and a PNG into the stick's `Pictures` folder from Windows. In Files, double-click one: it shows the right way up, within about 5 seconds. Left/Right go to the next one. **Set Wallpaper**, then close Files: the photo fills the desktop. The Log app's `files: picture ... decoded in N ms` line: **photo it** |
 | Settings kept | In Settings choose Light, another accent and another background, then Shut Down and switch on again: it starts as you left it. Make a photo the wallpaper (Files), restart: it's still there. The Log app's `settings: custom wallpaper, N KB, read in N ms` line: **photo it** (the stick read at every start) |

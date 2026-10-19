@@ -11,6 +11,8 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 failures=0
+# QEMU types by key position, US-style: the test builds use the US layout.
+export KEYBOARD=qwerty
 
 selftest_src=tests/kernel/selftest_drivers.c
 make -s build/litekernx.img >/dev/null || exit 1
@@ -46,6 +48,7 @@ rm -f build/test-apps/litekernx.img build/test-apps/stage1.bin     # FAT_MB isn'
 make -s BUILD=build/test-apps FAT_MB=64 "EXTRA_APPS=tests/apps/crash tests/apps/badcalls tests/apps/hang" \
     build/test-apps/litekernx.img >/dev/null || exit 1
 make -s BUILD=build/test-saver SCREENSAVER=2 build/test-saver/litekernx.img >/dev/null || exit 1
+make -s BUILD=build/test-azerty KEYBOARD=azerty build/test-azerty/litekernx.img >/dev/null || exit 1
 make -s BUILD=build/test-widgets EXTRA_CFLAGS=-DLKX_SELFTEST_WIDGETS \
     EXTRA_KERNEL_SRCS=tests/kernel/selftest_widgets.c build/test-widgets/litekernx.img >/dev/null || exit 1
 make -s BUILD=build/test-fakeec EXTRA_CFLAGS=-DLKX_FAKE_EC build/test-fakeec/litekernx.img >/dev/null || exit 1
@@ -284,6 +287,21 @@ check "keyboard: IRQ-driven key events decoded (shift, caps lock, ctrl, E0 keys)
     '^kbd: key 0x02e ascii 0x03 mods 0x2$' \
     '^kbd: key 0x001 ascii 0x1b$' \
     '^kbd: key 0x00e ascii 0x08$' \
+    '!PANIC'
+
+# The French layout (the build's default; KEYBOARD=azerty): the keys QEMU
+# calls q, 1, Shift+1, AltGr+0, m, ; and Shift+; type a & 1 @ , m M.
+KEYS="q 1 shift-1 alt_r-0 m semicolon shift-semicolon" KEYS_DONE="^kbd: key 0x027 'M'" \
+    boot_until build/test-azerty/litekernx.img "$done_re" 20
+check "keyboard: the AZERTY layout (shift, AltGr)" \
+    '^kbd: layout azerty$' \
+    "^kbd: key 0x010 'a'$" \
+    "^kbd: key 0x002 '&'$" \
+    "^kbd: key 0x002 '1' mods 0x1$" \
+    "^kbd: key 0x00b '@' mods 0x4$" \
+    "^kbd: key 0x032 ','$" \
+    "^kbd: key 0x027 'm'$" \
+    "^kbd: key 0x027 'M' mods 0x1$" \
     '!PANIC'
 
 KEYS="move:40,30 move:-10,0 press:1 release press:2 release press:4 release move:0,-900 move:5000,0" \
