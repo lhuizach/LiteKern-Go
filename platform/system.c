@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/reboot.h>
 #include <sys/sysinfo.h>
 #include <time.h>
 #include <unistd.h>
@@ -159,23 +160,37 @@ void boot_report(uint64_t ready)
     kprintf("[boot] ready t=%u\n", uptime_ms());
 }
 
-/* --- power (kernel/power.h): on the PC, the window just closes (L4: Linux's reboot) ------------ */
+/* --- power (kernel/power.h): on the EeePC (LKX_TARGET, set by lkx-start)
+ * Linux restarts or switches off, after writing everything out; on the PC
+ * the window just closes. ------------------------------------------------------------------- */
 
 int power_can_off(void)
 {
     return 1;
 }
 
+static void __attribute__((noreturn)) power(int how, const char *what)
+{
+    if (!getenv("LKX_TARGET")) {
+        kprintf("power: %s (the PC build exits)\n", what);
+        plat_exit(0);
+    }
+    kprintf("power: %s\n", what);
+    fflush(stdout);
+    sync();
+    reboot(how);
+    kprintf("power: Linux refused (%s)\n", what);
+    plat_exit(1);
+}
+
 void power_restart(void)
 {
-    kprintf("power: restart (the PC build exits)\n");
-    plat_exit(0);
+    power(RB_AUTOBOOT, "restart");
 }
 
 void power_off(void)
 {
-    kprintf("power: off (the PC build exits)\n");
-    plat_exit(0);
+    power(RB_POWER_OFF, "off");
 }
 
 /* --- the log's other copy (kernel/serial.h): standard output, as the VMs' serial port ---------- */

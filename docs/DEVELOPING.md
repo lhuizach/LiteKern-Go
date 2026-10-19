@@ -59,6 +59,8 @@ The same desktop as a Linux program, `lkx-shell`: today's `kernel/` UI code with
 
 Options: `--size 1024x768` (the VMs' screen; the default is the EeePC's 1024x600), `--disk IMAGE`, `--keyboard qwerty`, and for scripts `--backend headless --keys "STEPS" --shot FILE.png` (the key language of `tests/lib/qemu_monitor.py`). The apps are Linux programs too, built from the same sources into `build-linux/apps/<name>/<name>` (`LKX_APPS=` points the shell elsewhere); each runs as its own process and talks to the shell over a socket (`platform/kip.h`). `make -f platform/Makefile EXTRA_APPS="tests/apps/crash ..."` builds the tests' misbehaving apps as well.
 
+The USB stick (phase L3): `wsl bash linux/build.sh` builds `build-linux/litekernx-linux.img` with Buildroot (the first time 1–2 hours; then `linux/build.sh image`, minutes), `wsl bash tests/linux/test-image.sh` boots it in QEMU and tests it, and [HARDWARE-TEST-LINUX.md](HARDWARE-TEST-LINUX.md) is the EeePC checklist.
+
 ## Where things are
 ```
 LiteKernX-Roadmap/   the plan, phase by phase

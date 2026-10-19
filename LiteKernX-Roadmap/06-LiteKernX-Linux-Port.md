@@ -57,13 +57,15 @@ Then wait for a yes. One phase at a time, each finished and tested before the ne
 - [x] Tests: `tests/linux/test-linux.sh` now 20 checks (Calculator, Files and closing it, Settings saved and kept, a user added, Blocksmith run and save, the Probe, Files opened and closed 15 times, the misbehaving apps)
 - [ ] Still to do when the user is back: try the apps in the window by hand
 
-## L3. A bootable USB stick
+## L3. A bootable USB stick — **done in QEMU 2026-10-19; waiting for the EeePC**
 **Estimate:** 5–8 hours, plus 1–2 hours for Buildroot's first build. **Size:** Buildroot and kernel configuration, about 800–1,500 lines (the DRM/evdev backend, start-up).
 **You:** one WSL command to install Buildroot's tools; flash the stick; boot the EeePC; photos of the screen and the Log (display, touchpad, keyboard, how long boot takes).
-- [ ] Buildroot for i686, a Linux kernel set up for the 1000HE (Intel graphics, the touchpad, the keyboard, USB, the Atheros Ethernet `atl1e` and Wi-Fi `ath9k`)
-- [ ] The DRM/KMS and evdev backend
-- [ ] Boots straight into the desktop, with the splash
-- [ ] The QEMU tests run against the Linux image
+**As built:** `linux/` (Buildroot 2026.02.3 LTS as an external tree: `buildroot.defconfig`, `kernel.config`, the overlay with `inittab` and `lkx-start`; `build.sh` builds it all in `~/lkx-buildroot`), `platform/drm.c` (DRM/KMS with a dumb buffer and DIRTYFB, evdev with hotplug through inotify; no libraries). **The stick keeps the kernel version's layout:** the ramdisk at sector 1024 and the FAT32 partition at 8192; SYSLINUX's MBR boots the FAT32 partition, whose `/syslinux` holds Linux and the system (an initramfs: it all runs from RAM). `lkx-start` finds the stick by its ramdisk and lkx-shell opens it as its disk, as on the PC: the FAT32 code, settings, users and files carry over unchanged. The touchpad is a plain PS/2 mouse (`psmouse.proto=exps`), as the kernel version drives it. Restart and Shut Down are Linux's (`reboot()`), done here rather than in L4. Two WSL snags fixed in `build.sh`: Windows folders in PATH, and Ubuntu 26.04's Rust coreutils (the GNU ones, still installed as `gnu*`, go first).
+- [x] Buildroot for i686 (tuned for the Atom), a Linux kernel set up for the 1000HE (Intel graphics, the touchpad, the keyboard, USB, the Atheros Ethernet `atl1e` and Wi-Fi `ath9k`, the Eee PC's ACPI bits)
+- [x] The DRM/KMS and evdev backend
+- [x] Boots straight into the desktop, with the splash
+- [x] The QEMU tests run against the Linux image (`tests/linux/test-image.sh`: boot, Calculator with QEMU's mouse and keyboard, Super+L, Shut Down powers off)
+- [ ] On the EeePC (`docs/HARDWARE-TEST-LINUX.md`): the panel at 1024x600, the touchpad and keyboard, a USB mouse at full speed, boot time
 
 ## L4. Everything the kernel version does
 **Estimate:** 4–6 hours. **Size:** about 1,000–1,500 lines.

@@ -18,7 +18,8 @@
  *               screenshots
  *   x11         a window on the PC (WSL's own X server), spoken to directly:
  *               no library needed
- * The EeePC's (Linux DRM/KMS and evdev) comes in phase L3. */
+ *   drm         the real screen and input (Linux DRM/KMS and evdev): the
+ *               EeePC, and the Linux image in QEMU (phase L3) */
 #ifndef LKX_PLATFORM_H
 #define LKX_PLATFORM_H
 
@@ -26,8 +27,9 @@
 
 struct backend {
     const char *name;
-    /* Open a w x h display. 0, or -1 with the reason logged. */
-    int (*open)(int w, int h);
+    /* Open the display: w x h as asked, or the size it has (drm: the panel's),
+     * written back. 0, or -1 with the reason logged. */
+    int (*open)(int *w, int *h);
     /* Show a rectangle of the framebuffer (0xAARRGGBB pixels, `stride` per row). */
     void (*present)(const uint32_t *px, int stride, int x, int y, int w, int h);
     /* Before the loop sleeps: send what's queued; the fd to wake for (input),
@@ -40,7 +42,7 @@ struct backend {
     void (*close)(void);
 };
 
-extern const struct backend backend_headless, backend_x11;
+extern const struct backend backend_headless, backend_x11, backend_drm;
 
 /* --- what backends call ---------------------------------------------------------------------- */
 

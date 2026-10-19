@@ -24,6 +24,8 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -295,7 +297,10 @@ static int disk_init(device_t *dev)
     struct stat st;
     if (disk_fd < 0 || fstat(disk_fd, &st) < 0)
         return -ENODEV;
-    disk_sectors = (uint32_t)(st.st_size / BLK_SECTOR);
+    uint64_t bytes = (uint64_t)st.st_size;
+    if (S_ISBLK(st.st_mode) && ioctl(disk_fd, BLKGETSIZE64, &bytes))   /* a real disk: no file size */
+        return -ENODEV;
+    disk_sectors = (uint32_t)(bytes / BLK_SECTOR);
     return 0;
 }
 

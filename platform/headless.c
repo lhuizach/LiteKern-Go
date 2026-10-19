@@ -122,10 +122,10 @@ static uint32_t step(const char *tok)
     return gap_ms;
 }
 
-static int h_open(int w, int h)
+static int h_open(int *w, int *h)
 {
-    sw = w, sh = h;
-    x = w / 2, y = h / 2;           /* where the desktop's pointer starts */
+    sw = *w, sh = *h;
+    x = sw / 2, y = sh / 2;           /* where the desktop's pointer starts */
     return 0;
 }
 

@@ -142,8 +142,9 @@ static int cookie(int num, uint8_t *out_cookie)
     return 0;
 }
 
-static int x_open(int w, int h)
+static int x_open(int *wp, int *hp)
 {
+    int w = *wp, h = *hp;
     const char *display = getenv("DISPLAY");
     int num = 0;
     if (!display || sscanf(display, ":%d", &num) != 1) {

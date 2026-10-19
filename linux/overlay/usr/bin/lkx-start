@@ -1,0 +1,41 @@
+#!/bin/sh
+# LiteKern X on Linux: start the desktop (from /etc/inittab).
+#
+# The desktop opens the stick it was booted from as its disk: the ramdisk
+# (apps, wallpapers) at sector 1024 and the FAT32 partition (settings, users,
+# files), as the kernel version did. USB disks can take a few seconds to
+# appear, so it waits for the one whose sector 1024 starts "LKXR".
+
+find_disk() {
+    for d in /sys/block/sd* /sys/block/vd* /sys/block/hd*; do
+        [ -e "$d" ] || continue
+        dev=/dev/${d##*/}
+        if [ "$(dd if="$dev" bs=512 skip=1024 count=1 2>/dev/null | head -c 4)" = "LKXR" ]; then
+            echo "$dev"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The log goes to the serial port when there is one (QEMU, the tests).
+out=/dev/null
+if stty -F /dev/ttyS0 115200 >/dev/null 2>&1; then
+    out=/dev/ttyS0
+fi
+
+disk=
+i=0
+while [ -z "$disk" ] && [ $i -lt 100 ]; do
+    disk=$(find_disk) || disk=
+    [ -z "$disk" ] && { usleep 200000 2>/dev/null || sleep 1; }
+    i=$((i + 1))
+done
+echo "lkx-start: disk ${disk:-not found} after $((i * 200)) ms" > "$out"
+
+export LKX_APPS=/usr/lib/litekern
+export LKX_TARGET=1
+if [ -n "$disk" ]; then
+    exec /usr/bin/lkx-shell --backend drm --disk "$disk" > "$out" 2>&1
+fi
+exec /usr/bin/lkx-shell --backend drm > "$out" 2>&1

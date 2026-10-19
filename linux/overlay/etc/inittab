@@ -1,0 +1,11 @@
+# LiteKern X on Linux: busybox's init (linux/buildroot.defconfig).
+# The system is in RAM; the desktop starts as soon as it's up, and again if it
+# ever stops (lkx-start). No login prompts: LiteKern X has its own.
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mount -t tmpfs tmpfs /tmp
+::sysinit:/bin/mount -t tmpfs tmpfs /run
+::sysinit:/bin/hostname -F /etc/hostname
+::respawn:/usr/bin/lkx-start
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/sync

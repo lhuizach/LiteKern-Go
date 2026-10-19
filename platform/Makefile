@@ -17,6 +17,7 @@ LBUILD ?= build-linux
 KBUILD ?= build
 SELFTEST ?=
 EXTRA_APPS ?=
+KERNEL_BUILD ?= 1
 CC     := gcc
 CFLAGS := -m32 -std=gnu11 -O2 -g -Wall -Wextra -Werror -fno-strict-aliasing \
           -Iplatform/include -I. -I$(KBUILD)/gen -DLKX_LINUX \
@@ -68,8 +69,12 @@ $(LBUILD)/sdk/%.o: sdk/%.c | kernel-build
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # The kernel build makes the generated sources and the disk image.
+# KERNEL_BUILD=0: it's been done (linux/build.sh, building for the EeePC
+# with Buildroot's compiler, runs it with the host's first).
 kernel-build:
+ifneq ($(KERNEL_BUILD),0)
 	@$(MAKE) -s BUILD=$(KBUILD) EXTRA_APPS= $(KBUILD)/litekernx.img   # never the tests' apps
+endif
 
 $(LBUILD)/lkx-shell: $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)

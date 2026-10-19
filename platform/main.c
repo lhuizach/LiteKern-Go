@@ -2,10 +2,11 @@
  * kmain() and idle loop (kernel/main.c), minus everything Linux now does:
  * the same desktop code, the same log lines, the same order.
  *
- *   lkx-shell [--backend x11|headless] [--disk IMAGE] [--size WxH]
+ *   lkx-shell [--backend x11|headless|drm] [--disk IMAGE] [--size WxH]
  *             [--keys "STEPS"] [--shot FILE] [--for SECONDS] [--keyboard azerty|qwerty]
  *
- *   --backend   x11 (a window; the default when $DISPLAY is set) or headless
+ *   --backend   x11 (a window; the default when $DISPLAY is set), headless, or
+ *               drm (the real screen: the EeePC, linux/overlay/usr/bin/lkx-start)
  *   --disk      the disk image: its ramdisk (apps, wallpapers) and FAT32
  *               partition (settings, users, files). Default: build/litekernx.img
  *   --size      the screen: 1024x600 like the EeePC (default), 1024x768 like the VMs
@@ -219,7 +220,7 @@ void idle_step(int busy)
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: lkx-shell [--backend x11|headless] [--disk IMAGE] [--size WxH]\n"
+    fprintf(stderr, "usage: lkx-shell [--backend x11|headless|drm] [--disk IMAGE] [--size WxH]\n"
                     "                 [--keys \"STEPS\"] [--shot FILE] [--for SECONDS]\n");
     exit(2);
 }
@@ -252,7 +253,8 @@ int main(int argc, char **argv)
             usage();
         i++;
     }
-    be = !strcmp(backend, "x11") ? &backend_x11 : !strcmp(backend, "headless") ? &backend_headless : 0;
+    be = !strcmp(backend, "x11") ? &backend_x11 : !strcmp(backend, "headless") ? &backend_headless
+       : !strcmp(backend, "drm") ? &backend_drm : 0;
     if (!be)
         usage();
     if (!strcmp(be->name, "headless")) {
@@ -266,7 +268,7 @@ int main(int argc, char **argv)
     serial_init();
     kprintf("\nLiteKern X (on Linux)\n");
     timing_init(0);
-    if (be->open(w, h)) {
+    if (be->open(&w, &h)) {
         fprintf(stderr, "lkx-shell: the %s backend couldn't start\n", be->name);
         return 1;
     }
