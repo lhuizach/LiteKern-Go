@@ -12,6 +12,8 @@
   <img src="docs/screenshots/tour.gif" width="640" alt="LiteKern X in action: opening apps, minimising and restoring a window">
 </p>
 
+> **This is the Linux port** (started 2026-10-19): LiteKern X's desktop and apps moving onto the Linux kernel, for Wi-Fi, a browser and Linux apps. The plan and its phases: [`LiteKernX-Roadmap/06-LiteKernX-Linux-Port.md`](LiteKernX-Roadmap/06-LiteKernX-Linux-Port.md). The own-kernel version lives on in `C:\Users\lhuir\LiteKern X`.
+
 ## What is it?
 
 LiteKern X is a complete operating system for one 2009 netbook, the ASUS Eee PC 1000HE. There's no Linux or Windows underneath: everything, from the code that starts the machine to the windows on the screen, is written for this project.

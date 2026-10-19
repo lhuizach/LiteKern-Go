@@ -6,6 +6,7 @@
 > 3. `03-LiteKernX-Polish.md`
 > 4. `04-LiteKernX-Publishing.md`
 > 5. `05-LiteKernX-Expansion.md` — after v1.0: ACPI, audio, USB, networking, users, localisation, x86-64
+> 6. `06-LiteKernX-Linux-Port.md` — this repository: the desktop and apps moved onto the Linux kernel (phases L0–L8)
 >
 > The Stage 0–6 breakdown below is kept for history. Where it disagrees with the phase files (e.g. the `driver_t` definition, KERN86 timing, memory protection), the phase files win.
 
