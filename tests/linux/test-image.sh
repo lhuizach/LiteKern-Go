@@ -79,13 +79,13 @@ check() {
 }
 
 # QEMU's screen is 1024x768 (Bochs): the kernel tests' layout. The dock: Files,
-# Log, Show Apps; the app menu one row of 6 at y 363.
+# Log, Show Apps; the app menu one row of 7 at y 363 (the Web app is the image's own).
 path() { PX=512 PY=384 P=""; }
 go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 DOCK_Y=728 SHOWAPPS_X=572 GRID_Y=363
-tile() { echo $(( (1024 - 6 * 112) / 2 + 56 + $1 * 112 )); }
+tile() { echo $(( (1024 - 7 * 112) / 2 + 56 + $1 * 112 )); }   # 7: Files, Calculator, Settings, Probe, Web, Blocksmith, Log
 ready_re='^desktop: ready'
 
 cp build-linux/litekernx-linux.img build-linux/test-image/disk.img
@@ -163,6 +163,37 @@ boot_until $img '^net: Wi-Fi connected to LiteKern Test' 120
 check "Wi-Fi: a remembered network is joined by itself after a restart" \
     '^net: Ethernet eth0, Wi-Fi wlan0 \(1 remembered\)$' \
     '^net: Wi-Fi connected to LiteKern Test, 192\.168\.77\.[0-9]+$'
+
+# --- the browser (phase L6) ---------------------------------------------------------------------
+# The Web app (NetSurf, from the system image: its own kerns.json) in the app
+# menu (7 tiles at y 363: Web the fifth, x 623); it opens a LiteKern X window
+# on the start page (dark: #222226); its close button ends it.
+WEB_X=623
+path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:1; go $WEB_X $GRID_Y; click; add sleep:8
+KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=9 SCREEN="has=222226@100,250,600,400" \
+    boot_until build-linux/test-image/disk.img "$ready_re" 120
+check "the Web app: listed, opens NetSurf in a LiteKern X window on the start page" \
+    '^lkx: Web \(apps/browser/browser' \
+    '^desktop: open Web$' \
+    '^user: browser: open$' \
+    '^screen: has 222226 in 100,250,600,400: yes$' \
+    '!lkx: Web (crashed|exited)|unrecognized option'
+
+# A search over HTTPS (DuckDuckGo's HTML page: no JavaScript needed), typed
+# on QEMU's keyboard. Needs the internet: skipped without it.
+if curl -s -m 5 -o /dev/null https://html.duckduckgo.com/html/; then
+    path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:1; go $WEB_X $GRID_Y; click; add sleep:7
+    go 300 335; click; add sleep:0.5 e e e p c ret sleep:25
+    KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=34 SCREEN="has=ffffff@100,250,600,400" \
+        boot_until build-linux/test-image/disk.img "$ready_re" 120
+    cp build-linux/test-image/shot.png build-linux/test-image/web-search.png
+    check "the Web app: an HTTPS search, typed on the keyboard, shows its results" \
+        '^user: browser: open$' \
+        '^screen: has ffffff in 100,250,600,400: yes$' \
+        '!lkx: Web (crashed|exited)'
+else
+    echo "SKIP  the Web app's HTTPS search (no internet here)"
+fi
 
 # The power menu's Shut Down (its second item, y 74-108): Linux switches the VM off.
 path; go 998 15; click; add sleep:0.5; go 930 91; click

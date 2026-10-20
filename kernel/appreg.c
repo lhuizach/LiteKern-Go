@@ -78,17 +78,14 @@ static int ends_with(const char *s, const char *tail)
     return n >= t && !strcmp(s + n - t, tail);
 }
 
-static void register_one(const char *manifest_name)
+/* One app from its kerns.json (`json`, read from `manifest_name`). Its
+ * program must be in the ramdisk, unless `outside` (the Linux build's own
+ * apps: appreg_add()). */
+static void register_json(const char *manifest_name, char *json, int outside)
 {
-    const void *data;
-    uint32_t size;
-    char json[MANIFEST_MAX + 1], entry[24];
-    if (nfound == APPS_MAX || ramdisk_find(manifest_name, &data, &size) || size > MANIFEST_MAX) {
-        kprintf("lkx: %s: unreadable or too big\n", manifest_name);
+    char entry[24];
+    if (nfound == APPS_MAX)
         return;
-    }
-    memcpy(json, data, size);
-    json[size] = '\0';
     typeof(found[0]) *f = &found[nfound];
     if (!json_str(json, "name", f->name, sizeof(f->name)) ||
         !json_str(json, "entry", entry, sizeof(entry))) {
@@ -103,8 +100,8 @@ static void register_one(const char *manifest_name)
         return;
     memcpy(f->path, manifest_name, (size_t)dir);
     memcpy(f->path + dir, entry, strlen(entry) + 1);
-    uint32_t prog_size;
-    if (ramdisk_size(f->path, &prog_size)) {          /* read when it's opened */
+    uint32_t prog_size = 0;
+    if (!outside && ramdisk_size(f->path, &prog_size)) {     /* read when it's opened */
         kprintf("lkx: %s: its program %s isn't in the ramdisk\n", manifest_name, f->path);
         return;
     }
@@ -118,6 +115,30 @@ static void register_one(const char *manifest_name)
     nfound++;
 }
 
+static void register_one(const char *manifest_name)
+{
+    const void *data;
+    uint32_t size;
+    char json[MANIFEST_MAX + 1];
+    if (ramdisk_find(manifest_name, &data, &size) || size > MANIFEST_MAX) {
+        kprintf("lkx: %s: unreadable or too big\n", manifest_name);
+        return;
+    }
+    memcpy(json, data, size);
+    json[size] = '\0';
+    register_json(manifest_name, json, 0);
+}
+
+void appreg_add(const char *manifest_name, const char *json)
+{
+    char copy[MANIFEST_MAX + 1];
+    int n = (int)strlen(json);
+    if (n > MANIFEST_MAX)
+        return;
+    memcpy(copy, json, (size_t)n + 1);
+    register_json(manifest_name, copy, 1);
+}
+
 void lkx_register_all(void)
 {
     nfound = 0;
@@ -126,6 +147,9 @@ void lkx_register_all(void)
         if (n && !strncmp_(n, "apps/", 5) && ends_with(n, "/kerns.json"))
             register_one(n);
     }
+#ifdef LKX_LINUX
+    plat_more_apps();                       /* the Linux build's own (the Web app) */
+#endif
     /* By "order", keeping the ramdisk's order for equal ones (insertion sort). */
     int idx[APPS_MAX];
     for (int i = 0; i < nfound; i++) {

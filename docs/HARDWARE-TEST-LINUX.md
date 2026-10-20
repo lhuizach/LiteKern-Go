@@ -24,6 +24,7 @@ What you'll see: a black screen for a few seconds while Linux starts (no text on
 | Apps | Files, Settings (change the style; restart; still changed), Blocksmith (F5 runs the project) |
 | Power menu | Shut Down switches the EeePC off; Restart restarts it |
 | Wi-Fi | Settings → Network (its tab): your network is listed; Connect, type the password: "Connected", and the Wi-Fi icon lights up in the top bar. Restart: it joins by itself. If the list says Wi-Fi is switched off, press **Fn+F2** |
+| Web | With Wi-Fi or Ethernet connected: the app menu's **Web** opens the start page; Wikipedia and a DuckDuckGo search load. Note how long a page takes |
 | Ethernet | Plug in a cable: the Network page says connected, with an address; unplug it: no cable |
 
 **Photo:** the **Log** app (the dock), scrolled to the top, then to these lines:

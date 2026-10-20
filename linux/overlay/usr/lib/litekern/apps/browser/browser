@@ -1,0 +1,26 @@
+#!/bin/sh
+# LiteKern X: the Web app (LiteKernX-Roadmap/06, phase L6). NetSurf's
+# framebuffer front end in a LiteKern X window: libnsfb's "lkx" surface
+# (platform/nsfb_lkx.c). lkx-shell starts this with its socket on fd 3, which
+# exec keeps for netsurf-fb.
+#
+# Its cache and cookies live in RAM (/tmp: gone at a restart); the fonts are
+# DejaVu; it opens on LiteKern X's start page. NetSurf's own --options must
+# come first: it stops reading them at the first other argument (-f).
+export HOME=/tmp/web
+mkdir -p "$HOME/.netsurf"
+F=/usr/share/fonts/dejavu
+START=file:///usr/share/litekern/start.html
+exec /usr/bin/netsurf-fb \
+    --fb_face_sans_serif=$F/DejaVuSans.ttf \
+    --fb_face_sans_serif_bold=$F/DejaVuSans-Bold.ttf \
+    --fb_face_sans_serif_italic=$F/DejaVuSans-Oblique.ttf \
+    --fb_face_sans_serif_italic_bold=$F/DejaVuSans-BoldOblique.ttf \
+    --fb_face_serif=$F/DejaVuSerif.ttf \
+    --fb_face_serif_bold=$F/DejaVuSerif-Bold.ttf \
+    --fb_face_monospace=$F/DejaVuSansMono.ttf \
+    --fb_face_monospace_bold=$F/DejaVuSansMono-Bold.ttf \
+    --fb_face_cursive=$F/DejaVuSans-Oblique.ttf \
+    --fb_face_fantasy=$F/DejaVuSans.ttf \
+    --homepage_url=$START \
+    -f lkx "${1:-$START}"

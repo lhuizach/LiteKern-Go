@@ -86,13 +86,15 @@ Then wait for a yes. One phase at a time, each finished and tested before the ne
 - [x] Tests (`tests/linux/test-image.sh`, 7 now): Ethernet's address and icon; simulated Wi-Fi (`mac80211_hwsim`, an access point started by `lkx-start` only when the test's command line asks): a wrong password refused, the right one joining, an address, and the network rejoined by itself after a restart
 - [ ] On the EeePC: your Wi-Fi from Settings → Network; the Ethernet port with a cable
 
-## L6. The browser
+## L6. The browser — **done in QEMU 2026-10-20 (downloads still to do); waiting for the EeePC**
 **Estimate:** 8–12 hours. **Size:** about 2,000–3,000 lines (a LiteKern X front end for NetSurf), plus build work.
 **You:** flash; try a list of sites; photos.
-- [ ] NetSurf (a lightweight C browser) with a LiteKern X front end: address bar, back, forward, reload, links, images, scrolling
-- [ ] HTTPS, with the usual root certificates
-- [ ] Downloads go to your home folder
-- [ ] Expect: Wikipedia, docs, blogs, news, forums. Not expected: YouTube, Google Docs, Discord (they need a full Chromium or Firefox)
+**As built:** much smaller than planned, about 450 lines: **NetSurf 3.10's own framebuffer front end** (its address bar, buttons, scrolling) **drawing into a LiteKern X window** through a new libnsfb surface, `platform/nsfb_lkx.c` ("lkx": the window's canvas is the surface, its events are libnsfb's; keys arrive as the characters LiteKern X's layout made, AZERTY included). Built by our Buildroot package `linux/package/netsurf-lkx` (Buildroot's own netsurf recipe and patches, without SDL), restyled to LiteKern X's look (dark furniture, white line icons: `make-icons.py`). It's **the Web app**, the first app of the system image's own: the Linux build also lists `/usr/lib/litekern/apps/*/kerns.json` (`plat_more_apps`, `appreg_add`). A start page (`/usr/share/litekern/start.html`) links pages that work without JavaScript and searches with DuckDuckGo's HTML version. Fonts: DejaVu (the UI's Ubuntu font is only a pre-drawn atlas here).
+- [x] NetSurf (a lightweight C browser) in a LiteKern X window: address bar, back, forward, reload, links, images, scrolling (keys, scroll bars: no mouse wheel yet)
+- [x] HTTPS, with the usual root certificates (curl and OpenSSL)
+- [ ] Downloads go to your home folder: NetSurf's framebuffer front end has none; it needs a download table of ours (and SYS_FS_WRITE's 1 MiB limit raised)
+- [x] Expect: Wikipedia (its mobile site renders best), docs, blogs, news, forums. Not expected: YouTube, Google Docs, Discord (they need a full Chromium or Firefox)
+- [x] Tests (`tests/linux/test-image.sh`, 9 now): the Web app opens on the start page; an HTTPS search typed on the keyboard shows results (skipped without the internet)
 
 ## L7. JavaScript in the browser
 **Estimate:** 10–20+ hours; uncertain until L6 is done. **Size:** large.

@@ -23,6 +23,7 @@
 #include "platform/kip.h"
 #include "platform/platform.h"
 
+#include <dirent.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -454,6 +455,35 @@ int lkx_set_memory(uint32_t bytes)
 {
     (void)bytes;
     return -ENOSYS;                         /* the app's own (platform/libk86.c) */
+}
+
+/* Apps of the Linux build's own, beyond the ramdisk's: any
+ * <LKX_APPS>/apps/<name>/kerns.json (the ramdisk's apps have only their
+ * programs there). The Web app (NetSurf, linux/package/netsurf-lkx) is one. */
+void plat_more_apps(void)
+{
+    const char *dir = getenv("LKX_APPS");
+    char path[512];
+    snprintf(path, sizeof(path), "%s/apps", dir ? dir : app_dir);
+    DIR *d = opendir(path);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (e->d_name[0] == '.')
+            continue;
+        char file[900], json[1100];
+        snprintf(file, sizeof(file), "%s/%s/kerns.json", path, e->d_name);
+        FILE *f = fopen(file, "r");
+        if (!f)
+            continue;
+        size_t n = fread(json, 1, sizeof(json) - 1, f);
+        fclose(f);
+        json[n] = '\0';
+        char manifest[300];
+        snprintf(manifest, sizeof(manifest), "apps/%s/kerns.json", e->d_name);
+        appreg_add(manifest, json);
+    }
+    if (d)
+        closedir(d);
 }
 
 int lkx_running(const struct app *a)

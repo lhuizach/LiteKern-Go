@@ -17,6 +17,11 @@
 
 /* Add every app found in the ramdisk to the app list (kernel/apps.h). */
 void lkx_register_all(void);
+/* An app from a kerns.json found elsewhere than the ramdisk (`manifest_name`:
+ * "apps/<name>/kerns.json", its program beside it): the Linux build's own
+ * apps, offered by plat_more_apps() (platform/lkx.c). */
+void appreg_add(const char *manifest_name, const char *json);
+void plat_more_apps(void);
 
 /* Start the app in its window (already open). It runs whenever it has
  * something to do (lkx_schedule); when it ends, how is logged and the shell

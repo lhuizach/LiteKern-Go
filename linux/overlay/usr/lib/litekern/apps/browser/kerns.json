@@ -1,0 +1,11 @@
+{
+  "name": "Web",
+  "icon": "browser",
+  "entry": "browser",
+  "version": "1.0",
+  "order": 4,
+  "width": 1000,
+  "height": 560,
+  "min_width": 480,
+  "min_height": 320
+}
