@@ -106,8 +106,19 @@ update() {
     echo "disk updated from $IMAGE"
 }
 
+# MOUSE=usbtablet (the Linux port's VM): the pointer goes where the PC's is,
+# with no capturing the mouse, and VirtualBox shows the guest's hardware
+# cursor as the PC's own pointer. Needs a USB controller. Applied at every
+# start, so a VM made before this setting gets it too.
+MOUSE=${MOUSE:-}
+pointer() {
+    [ -n "$MOUSE" ] || return 0
+    vbm modifyvm "$VM" --usb-ohci on --mouse "$MOUSE"
+}
+
 start() {
     update
+    pointer
     rm -f "$SERIAL_LOG"
     vbm startvm "$VM" --type gui
     echo "serial log: $SERIAL_LOG"
@@ -115,6 +126,7 @@ start() {
 
 test_boot() {
     update
+    pointer
     rm -f "$SERIAL_LOG" "$DIR/screen.png"
     vbm startvm "$VM" --type headless >/dev/null
     local i result=timeout

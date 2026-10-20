@@ -159,16 +159,22 @@ static const uint32_t *cursor_img;  /* what's in it */
 
 static int d_cursor(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y)
 {
-    if (cursor_state < 0 || card < 0 || !crtc_id)
+    if (cursor_state < 0)
         return -1;
+    if (card < 0 || !crtc_id) {
+        kprintf("drm: no display for a hardware cursor yet\n");
+        return -1;
+    }
     if (!argb) {
         struct drm_mode_cursor c = { .flags = DRM_MODE_CURSOR_BO, .crtc_id = crtc_id, .handle = 0 };
         ioctl(card, DRM_IOCTL_MODE_CURSOR, &c);
         cursor_img = 0;
         return cursor_state > 0 ? 0 : -1;
     }
-    if (w > CURSOR_SIZE || h > CURSOR_SIZE)
+    if (w > CURSOR_SIZE || h > CURSOR_SIZE) {
+        kprintf("drm: a %dx%d pointer is too big for the hardware cursor: drawn\n", w, h);
         return -1;
+    }
     if (!cursor_handle) {
         struct drm_mode_create_dumb dumb = { .width = CURSOR_SIZE, .height = CURSOR_SIZE, .bpp = 32 };
         struct drm_mode_map_dumb map;

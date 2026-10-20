@@ -49,7 +49,8 @@ qemu)
 vbox)
     shift
     export VM="LiteKern X (Linux)" DISK_UUID=4c4b5800-0000-4000-8000-000000000002
-    export GRAPHICS=vboxsvga KEEP_DISK=1 IMAGE DIR=build-linux/vbox WAIT_FOR='^desktop: ready'
+    export GRAPHICS=vboxsvga KEEP_DISK=1 IMAGE DIR=build-linux/vbox MOUSE=usbtablet
+    export WAIT_FOR="${WAIT_FOR:-^desktop: ready}"
     exec bash vm/vbox.sh "$@"
     ;;
 *)
