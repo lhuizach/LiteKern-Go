@@ -87,6 +87,10 @@ if [ -f "$OUT/.lkx-kernel-config" ] && [ linux/kernel.config -nt "$OUT/.lkx-kern
     make -s -C "$BR" O="$OUT" linux-reconfigure
 fi
 touch "$OUT/.lkx-kernel-config"
+if [ -f "$OUT/.lkx-busybox-config" ] && [ linux/busybox.fragment -nt "$OUT/.lkx-busybox-config" ]; then
+    make -s -C "$BR" O="$OUT" busybox-reconfigure
+fi
+touch "$OUT/.lkx-busybox-config"
 make -s -C "$BR" O="$OUT"
 
 echo "== the image"

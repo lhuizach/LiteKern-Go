@@ -319,6 +319,11 @@ static int disk_rw(struct blk_io *io, int write)
             return -EIO;
         done += (size_t)n;
     }
+    /* On the stick at once, as the kernel version's BIOS writes were: Linux
+     * would otherwise hold them for up to half a minute, and a setting saved
+     * just before the power goes would be lost. */
+    if (write && fdatasync(disk_fd))
+        return -EIO;
     return 0;
 }
 

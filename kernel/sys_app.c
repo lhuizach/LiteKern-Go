@@ -8,6 +8,7 @@
 #include "kernel/font.h"
 #include "kernel/lkx.h"
 #include "kernel/lockscreen.h"
+#include "kernel/net.h"
 #include "kernel/users.h"
 #include "kernel/kern86_abi.h"
 #include "kernel/printk.h"
@@ -85,6 +86,7 @@ static int window_header(uint32_t req)
         h.buttons[i].label[sizeof(h.buttons[i].label) - 1] = '\0';
         wm_add_button(w, h.buttons[i].side ? WM_RIGHT : WM_LEFT, (enum wm_icon)h.buttons[i].icon,
                       h.buttons[i].label, h.buttons[i].id);
+        wm_select_button(w, i, h.buttons[i].selected);
     }
     wm_set_title(w, h.title);
     wm_present();
@@ -515,6 +517,43 @@ static int ec_read(uint32_t out)
     return 0;
 }
 
+/* --- networking (kernel/net.h) ---------------------------------------------------- */
+
+static int net_status_out(uint32_t out)
+{
+    if (user_check(out, sizeof(struct k86_net), 1))
+        return -EFAULT;
+    net_status((struct k86_net *)out);
+    return 0;
+}
+
+static int net_scan_out(uint32_t out, uint32_t max)
+{
+    if (max > K86_WIFI_MAX || user_check(out, max * (uint32_t)sizeof(struct k86_wifi), 1))
+        return -EFAULT;
+    return net_scan((struct k86_wifi *)out, (int)max);
+}
+
+static int net_join_user(uint32_t ussid, uint32_t upassword)
+{
+    char ssid[K86_SSID_MAX], password[K86_PASSWORD];
+    int err = user_string(ssid, ussid, sizeof(ssid));
+    if (!err)
+        err = user_string(password, upassword, sizeof(password));
+    if (err)
+        return err;
+    if (!ssid[0])
+        return -EINVAL;
+    return net_join(ssid, password);
+}
+
+static int net_forget_user(uint32_t ussid)
+{
+    char ssid[K86_SSID_MAX];
+    int err = user_string(ssid, ussid, sizeof(ssid));
+    return err ? err : net_forget(ssid);
+}
+
 int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
 {
     switch (nr) {
@@ -544,6 +583,10 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_HOME:           return home_out(a1);
     case SYS_USER_CHANGE:    return user_change(a1);
     case SYS_EC_READ:        return ec_read(a1);
+    case SYS_NET_STATUS:     return net_status_out(a1);
+    case SYS_NET_SCAN:       return net_scan_out(a1, a2);
+    case SYS_NET_JOIN:       return net_join_user(a1, a2);
+    case SYS_NET_FORGET:     return net_forget_user(a1);
     default:                 return -ENOSYS;
     }
 }

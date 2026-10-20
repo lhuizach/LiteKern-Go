@@ -218,4 +218,26 @@ static inline int k86_delete(int vol, const char *dir, const char *name)
     return k86_call(SYS_FS_DELETE, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, 0);
 }
 
+/* Networking (the Linux port; the kernel version has none: K86_NET_NONE, -ENODEV). */
+static inline int k86_net_status(struct k86_net *out)
+{
+    return k86_call(SYS_NET_STATUS, (uint32_t)out, 0, 0, 0);
+}
+
+/* What the last Wi-Fi scan found (and a new one asked for): the count of all. */
+static inline int k86_net_scan(struct k86_wifi *out, int max)
+{
+    return k86_call(SYS_NET_SCAN, (uint32_t)out, (uint32_t)max, 0, 0);
+}
+
+static inline int k86_net_join(const char *ssid, const char *password)
+{
+    return k86_call(SYS_NET_JOIN, (uint32_t)ssid, (uint32_t)password, 0, 0);
+}
+
+static inline int k86_net_forget(const char *ssid)
+{
+    return k86_call(SYS_NET_FORGET, (uint32_t)ssid, 0, 0, 0);
+}
+
 #endif

@@ -79,6 +79,9 @@ const char *wm_title(const struct wm_window *w);
  * WM_EVENT_HEADER. Returns 0 or -ENOMEM (WM_MAX_BUTTONS). */
 int wm_add_button(struct wm_window *w, enum wm_side side, enum wm_icon icon, const char *label, int id);
 void wm_clear_buttons(struct wm_window *w);
+/* Show button `i` (in the order added) as the current one, like a tab: a
+ * soft background even when the pointer isn't on it. */
+void wm_select_button(struct wm_window *w, int i, int selected);
 
 /* Who owns it (the shell's app), set by whoever created it. */
 void wm_set_owner(struct wm_window *w, const void *owner);

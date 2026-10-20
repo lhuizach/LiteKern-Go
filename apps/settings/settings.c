@@ -13,6 +13,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
+#include "apps/settings/network.h"
 #include "apps/settings/users.h"
 
 #define CARD_W 200
@@ -27,9 +28,11 @@ static struct gfx_surface canvas;
 static struct k86_appearance app;
 static struct k86_lock lock;
 static int bg_lock;                     /* the Background row is for the lock screen */
-static int page;                        /* 0: Appearance, 1: Users (users.c) */
+static int page;                        /* 0: Appearance, 1: Users (users.c), 2: Network (network.c) */
 #define PAGE_APPEARANCE 1               /* the header's buttons */
 #define PAGE_USERS 2
+#define PAGE_NETWORK 3
+static int has_network;                 /* the Network page: only with Ethernet or Wi-Fi */
 static uint32_t thumbs[K86_MAX_WALLPAPERS][THUMB_W * THUMB_H];
 static int have_thumb[K86_MAX_WALLPAPERS];
 
@@ -403,15 +406,18 @@ static void header(void)
 {
     struct k86_header h;
     memset(&h, 0, sizeof(h));
-    memcpy(h.title, page ? "Users" : "Appearance", page ? 6 : 11);
+    static const char *const titles[] = { "Appearance", "Users", "Network" };
+    memcpy(h.title, titles[page], strlen(titles[page]) + 1);
     static const struct { int id; const char *label; } b[] = { { PAGE_APPEARANCE, "Appearance" },
-                                                               { PAGE_USERS, "Users" } };
-    for (int i = 0; i < 2; i++) {
+                                                               { PAGE_USERS, "Users" },
+                                                               { PAGE_NETWORK, "Network" } };
+    h.nbuttons = has_network ? 3 : 2;
+    for (int i = 0; i < h.nbuttons; i++) {
         h.buttons[i].side = 0;
         h.buttons[i].id = b[i].id;
+        h.buttons[i].selected = i == page;      /* the page showing: its tab stands out */
         memcpy(h.buttons[i].label, b[i].label, strlen(b[i].label) + 1);
     }
-    h.nbuttons = 2;
     k86_header(&h);
 }
 
@@ -420,10 +426,14 @@ static void show_page(int p)
     if (p == page)
         return;
     page = p;
-    k86_logf("settings: page %s", page ? "users" : "appearance");
+    static const char *const names[] = { "appearance", "users", "network" };
+    k86_logf("settings: page %s", names[page]);
     header();
-    if (page)
+    k86_timer_set(page == 2 ? 2000 : 0);    /* the Network page refreshes itself */
+    if (page == 1)
         users_page_open(&canvas);
+    else if (page == 2)
+        network_page_open(&canvas);
     else {
         layout();
         draw();
@@ -435,6 +445,7 @@ int main(void)
     if (k86_window_open(&win))
         return 1;
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
+    has_network = network_page_available();
     header();
     k86_appearance(&app);
     k86_lock_settings(&lock, 0);
@@ -450,25 +461,35 @@ int main(void)
             return 1;
         switch (ev.type) {
         case K86_EVENT_POINTER:
-            if (page)
+            if (page == 1)
                 users_page_pointer(&ev);
+            else if (page == 2)
+                network_page_pointer(&ev);
             else
                 pointer(&ev);
             break;
         case K86_EVENT_KEY:
-            if (page)
+            if (page == 1)
                 users_page_key(&ev.key);
+            else if (page == 2)
+                network_page_key(&ev.key);
             else
                 key(&ev.key);
             break;
         case K86_EVENT_HEADER:
-            show_page(ev.id == PAGE_USERS);
+            show_page(ev.id == PAGE_USERS ? 1 : ev.id == PAGE_NETWORK ? 2 : 0);
+            break;
+        case K86_EVENT_TIMER:
+            if (page == 2)
+                network_page_tick();
             break;
         case K86_EVENT_THEME:
             k86_lock_settings(&lock, 0);
             layout();
-            if (page)
+            if (page == 1)
                 users_page_draw();
+            else if (page == 2)
+                network_page_draw();
             else
                 draw();
             break;
@@ -476,9 +497,12 @@ int main(void)
             canvas.w = ev.x;
             canvas.h = ev.y;
             layout();
-            if (page) {
+            if (page == 1) {
                 users_page_layout();
                 users_page_draw();
+            } else if (page == 2) {
+                network_page_layout();
+                network_page_draw();
             } else {
                 draw();
             }

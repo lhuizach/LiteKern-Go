@@ -34,7 +34,7 @@ boot_until() {
     sleep 0.5
     if [ -n "${KEYS:-}" ]; then
         python3 tests/lib/qemu_monitor.py keys "$sock" $KEYS
-        for ((i = 0; i < 100; i++)); do
+        for ((i = 0; i < ${KEYS_WAIT:-10} * 10; i++)); do      # KEYS_WAIT: seconds (10)
             grep -Eq "$KEYS_DONE" "$log" && break
             sleep 0.1
         done
@@ -119,6 +119,50 @@ check "Super+L locks: the big clock" \
     '^shell: lock \(Super\+L\)$' \
     '^lock: locked' \
     '^screen: has ffffff in 380,180,660,330: yes$'
+
+# --- networking (phase L5) ---------------------------------------------------------------------
+# Ethernet: QEMU's own network hands out 10.0.2.15; the top bar shows the
+# Ethernet icon.
+# (the top bar looks once a second: a moment for it)
+KEYS="sleep:2" KEYS_DONE='^never' KEYS_WAIT=2 SCREEN="has=ffffff@935,5,975,25"     boot_until build-linux/test-image/disk.img '^net: Ethernet connected' 120
+check "Ethernet: found, an address from DHCP, the icon in the top bar" \
+    '^net: Ethernet eth0, ' \
+    '^net: Ethernet connected, 10\.0\.2\.15$' \
+    '^screen: has ffffff in 935,5,975,25: yes$'
+
+# Wi-Fi, simulated (lkx-start's test hook, lkx.test=hwsim on the test copy's
+# command line): an access point "LiteKern Test", WPA2, password "apple pie".
+# Settings -> Network (its tab at 284,147): the network listed (row y 309);
+# Connect (199,632) asks for the password: a wrong one is refused and not
+# kept, Connect asks again, the right one joins, gets an address, and is
+# remembered on the stick. AZERTY, by key position: "apple pie" is q p p l e.
+img=build-linux/test-image/wifi.img
+cp build-linux/litekernx-linux.img $img
+mtype -i $img@@4194304 ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' \
+    > build-linux/test-image/syslinux.cfg
+mcopy -o -i $img@@4194304 build-linux/test-image/syslinux.cfg ::/syslinux/syslinux.cfg
+SETTINGS_TILE=$(tile 2)
+path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.8; go "$SETTINGS_TILE" $GRID_Y; click; add sleep:2
+go 284 147; click; add sleep:4; go 400 309; click; add sleep:0.5
+go 199 632; click; add sleep:1 w r o n g w r o n g ret sleep:12
+go 199 632; click; add sleep:1 q p p l e spc p i e ret
+KEYS="$P" KEYS_DONE='^net: Wi-Fi connected to LiteKern Test' KEYS_WAIT=30 SCREEN="corner=" \
+    boot_until $img "$ready_re" 120
+cp build-linux/test-image/shot.png build-linux/test-image/network.png
+check "Wi-Fi: Settings -> Network lists it, a wrong password is refused, the right one joins" \
+    '^lkx-start: test Wi-Fi: an access point on wlan1$' \
+    '^net: Ethernet eth0, Wi-Fi wlan0 \(0 remembered\)$' \
+    '^user: settings: page network$' \
+    '^net: Wi-Fi: the password for LiteKern Test was refused$' \
+    '^net: Wi-Fi: remembered LiteKern Test$' \
+    '^net: Wi-Fi connected to LiteKern Test, 192\.168\.77\.[0-9]+$' \
+    '!PANIC|crashed'
+
+# ...and after a restart it joins by itself.
+boot_until $img '^net: Wi-Fi connected to LiteKern Test' 120
+check "Wi-Fi: a remembered network is joined by itself after a restart" \
+    '^net: Ethernet eth0, Wi-Fi wlan0 \(1 remembered\)$' \
+    '^net: Wi-Fi connected to LiteKern Test, 192\.168\.77\.[0-9]+$'
 
 # The power menu's Shut Down (its second item, y 74-108): Linux switches the VM off.
 path; go 998 15; click; add sleep:0.5; go 930 91; click

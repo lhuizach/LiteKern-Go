@@ -113,6 +113,7 @@ struct k86_header {
         int32_t icon;       /* 0 text, 1 back, 2 add, 3 up (kernel/wm.h's order) */
         int32_t id;
         char label[16];
+        int32_t selected;   /* 1: shown as the current one (a tab: Settings' pages) */
     } buttons[K86_MAX_BUTTONS];
 };
 
@@ -229,6 +230,42 @@ struct k86_dirent {
     uint32_t size;
     int32_t is_dir;
     uint16_t date, time;
+};
+
+/* --- networking (the Linux port's phase L5; kernel/net.h) ------------------------------------ *
+ * The kernel version has no network hardware: SYS_NET_STATUS says so and the
+ * others return -ENODEV. */
+#define SYS_NET_STATUS      30  /* ebx: struct k86_net * out */
+#define SYS_NET_SCAN        31  /* ebx: struct k86_wifi * out, ecx: max. Asks for a new scan and
+                                 * returns what the last one found (all of them: may be > max) */
+#define SYS_NET_JOIN        32  /* ebx: name (SSID), ecx: password ("": an open network).
+                                 * Remembered, on the stick, for next time */
+#define SYS_NET_FORGET      33  /* ebx: name: no longer remembered (and left, if joined) */
+
+#define K86_SSID_MAX        33          /* 32 bytes and a NUL */
+#define K86_WIFI_MAX        32
+#define K86_NET_NONE        0   /* states: no such hardware */
+#define K86_NET_OFF         1   /* Wi-Fi switched off (the radio switch, Fn+F2) / no cable */
+#define K86_NET_DOWN        2   /* there, not connected */
+#define K86_NET_CONNECTING  3   /* joining, or asking for an address */
+#define K86_NET_UP          4   /* connected, with an address */
+#define K86_NET_WRONG_KEY   5   /* Wi-Fi: the password was refused */
+struct k86_net {
+    int32_t wired;              /* K86_NET_*: the Ethernet port */
+    int32_t wifi;               /* K86_NET_*: Wi-Fi */
+    char ssid[K86_SSID_MAX];    /* the Wi-Fi network joined, or being joined */
+    uint8_t signal;             /* its strength, 0-100 */
+    uint8_t pad[2];
+    char address[16];           /* "192.168.1.23": the address in use ("" none) */
+};
+
+struct k86_wifi {
+    char ssid[K86_SSID_MAX];
+    uint8_t signal;             /* 0-100 */
+    uint8_t secure;             /* needs a password */
+    uint8_t known;              /* remembered */
+    uint8_t connected;
+    uint8_t pad[3];
 };
 
 #endif

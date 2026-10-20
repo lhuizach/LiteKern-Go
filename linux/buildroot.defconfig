@@ -33,3 +33,21 @@ BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_LITEKERNX_PATH)/overlay $(BASE_DIR)/lkx-overl
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
 # BR2_TARGET_ROOTFS_TAR is not set
+
+# Networking (phase L5): Wi-Fi (wpa_supplicant, WPA2 and WPA3), the
+# regulatory database, DHCP and time come from busybox (udhcpc, ntpd).
+# hostapd only for the tests: a simulated access point (mac80211_hwsim).
+# OpenSSL and the root certificates: WPA3 now, HTTPS in the browser (L6).
+BR2_PACKAGE_OPENSSL=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_WPA3=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_HOSTAPD=y
+BR2_PACKAGE_HOSTAPD_WPA3=y
+BR2_PACKAGE_WIRELESS_REGDB=y
+BR2_PACKAGE_IW=y
+
+# busybox: Buildroot's config plus linux/busybox.fragment.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_LITEKERNX_PATH)/busybox.fragment"

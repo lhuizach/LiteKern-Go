@@ -103,6 +103,10 @@ static const struct kip_call kip_calls[] = {
     [SYS_USER_CHANGE]     = { { IN(sizeof(struct k86_user_change)) } },
     [SYS_HOME]            = { { OUT(K86_PATH_MAX) } },
     [SYS_UPTIME_MS]       = { { V } },
+    [SYS_NET_STATUS]      = { { OUT(sizeof(struct k86_net)) } },
+    [SYS_NET_SCAN]        = { { { KIP_OUT, 2, 0, sizeof(struct k86_wifi) }, V } },
+    [SYS_NET_JOIN]        = { { S, S } },
+    [SYS_NET_FORGET]      = { { S } },
 };
 #define KIP_CALLS (sizeof(kip_calls) / sizeof(kip_calls[0]))
 

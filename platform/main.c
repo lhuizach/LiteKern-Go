@@ -148,6 +148,7 @@ void idle_step(int busy)
     desktop_tick();
     lockscreen_tick();
     screensaver_poll();
+    net_poll();
     if (give_up_ms && uptime_ms() > give_up_ms) {
         kprintf("lkx-shell: --for ran out\n");
         plat_exit(1);
@@ -301,6 +302,7 @@ int main(int argc, char **argv)
     storage_init();
     users_load();
     settings_load();
+    net_init();
     splash_progress(45);
 
     in.kbd = device_find("kbd0");

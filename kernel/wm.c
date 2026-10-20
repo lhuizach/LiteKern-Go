@@ -28,6 +28,7 @@ struct button {
     enum wm_icon icon;
     char label[16];
     int id;
+    int selected;       /* the current tab: a background even without the pointer */
 };
 
 struct wm_window {
@@ -431,9 +432,19 @@ int wm_add_button(struct wm_window *w, enum wm_side side, enum wm_icon icon, con
     b->icon = icon;
     copy(b->label, label, sizeof(b->label));
     b->id = id;
+    b->selected = 0;
     if (!w->minimised)
         shell_damage(header_rect(w, w->r));
     return 0;
+}
+
+void wm_select_button(struct wm_window *w, int i, int selected)
+{
+    if (i < 0 || i >= w->nbuttons || w->buttons[i].selected == !!selected)
+        return;
+    w->buttons[i].selected = !!selected;
+    if (!w->minimised)
+        shell_damage(header_rect(w, w->r));
 }
 
 void wm_clear_buttons(struct wm_window *w)
@@ -661,9 +672,11 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
             draw_control(s, b, w->maximised, cx, cy, bg ? bg : t->button_bg, fg);
             continue;
         }
-        if (bg)     /* flat header-bar buttons only show a background when hovered */
-            gfx_fill_round_rect(s, rs[b].x - ox, rs[b].y - oy, rs[b].w, rs[b].h, t->radius, bg);
         const struct button *bt = &w->buttons[b];
+        if (!bg && bt->selected)    /* the current tab: a soft background */
+            bg = t->button_bg;
+        if (bg)     /* flat header-bar buttons only show a background when hovered (or current) */
+            gfx_fill_round_rect(s, rs[b].x - ox, rs[b].y - oy, rs[b].w, rs[b].h, t->radius, bg);
         if (bt->icon != WM_ICON_NONE)
             draw_icon(s, bt->icon, cx, cy, fg);
         else

@@ -15,6 +15,7 @@
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
 #include "kernel/lockscreen.h"
+#include "kernel/net.h"
 #include "kernel/settings.h"
 #include "kernel/users.h"
 #include "kernel/string.h"
@@ -496,7 +497,7 @@ static struct gfx_rect dock_icon_rect(int i)
 
 /* --- hit testing ---------------------------------------------------------------------- */
 
-enum hit_kind { H_NONE, H_HOME, H_POWER, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
+enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_BAR };
 
 static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT };
@@ -523,6 +524,16 @@ static struct gfx_rect power_rect(void)
 {
     return (struct gfx_rect){ S()->w - T()->spacing - BAR_BUTTON_W, (T()->topbar_h - BAR_BUTTON_H) / 2,
                               BAR_BUTTON_W, BAR_BUTTON_H };
+}
+
+/* The network icon, left of the power button (only with network hardware). */
+static struct k86_net net_shown;
+static int net_present(void) { return net_shown.wired != K86_NET_NONE || net_shown.wifi != K86_NET_NONE; }
+
+static struct gfx_rect net_rect(void)
+{
+    struct gfx_rect p = power_rect();
+    return (struct gfx_rect){ p.x - BAR_BUTTON_W - 4, p.y, BAR_BUTTON_W, BAR_BUTTON_H };
 }
 
 static struct gfx_rect menu_rect(void)
@@ -576,6 +587,8 @@ static struct hit hit_at(int x, int y)
             return (struct hit){ H_HOME, 0 };
         if (inside(power_rect(), x, y))
             return (struct hit){ H_POWER, 0 };
+        if (net_present() && inside(net_rect(), x, y))
+            return (struct hit){ H_NET, 0 };
         return (struct hit){ H_BAR, 0 };
     }
     if (dock_up() && inside(dock_rect(), x, y)) {
@@ -596,6 +609,7 @@ static void damage_hit(struct hit h)
     switch (h.kind) {
     case H_HOME:     shell_damage(home_rect()); break;
     case H_POWER:    shell_damage(power_rect()); break;
+    case H_NET:      shell_damage(net_rect()); break;
     case H_RESTART:
     case H_SHUTDOWN:
     case H_LOCK:
@@ -636,6 +650,42 @@ static void draw_home_icon(int cx, int cy, uint32_t c)
         gfx_fill_rect(VS, VX(cx - i), VY(cy - 7 + i), 2 * i + 1, 1, c);
     gfx_fill_rect(VS, VX(cx - 5), VY(cy + 1), 11, 6, c);      /* walls */
     gfx_fill_rect(VS, VX(cx - 1), VY(cy + 3), 3, 4, T()->topbar_bg);   /* door */
+}
+
+/* The network (kernel/net.h): Wi-Fi as a fan whose arcs light up with the
+ * signal, Ethernet as three linked boxes; dimmed when not connected. */
+static void draw_net_icon(int cx, int cy, const struct k86_net *n, uint32_t bg)
+{
+    uint32_t lit = SHELL_FG, dim = gfx_mix(bg, SHELL_FG, 160);
+    int wifi = n->wifi != K86_NET_NONE && (n->wifi == K86_NET_UP || n->wired != K86_NET_UP);
+    if (wifi) {
+        int up = n->wifi == K86_NET_UP;
+        int bars = !up ? 0 : n->signal >= 66 ? 3 : n->signal >= 33 ? 2 : 1;
+        int ox = cx, oy = cy + 6;
+        for (int k = 3; k >= 1; k--) {      /* rings, outside in, then cut to a fan */
+            gfx_fill_circle(VS, VX(ox), VY(oy), 3 + 3 * k, bars >= k ? lit : dim);
+            gfx_fill_circle(VS, VX(ox), VY(oy), 1 + 3 * k, bg);
+        }
+        for (int dy = -13; dy <= 13; dy++) {
+            int up_rows = dy <= 0 ? -dy : -1;           /* 45 degrees either side of up */
+            if (up_rows < 0) {
+                gfx_fill_rect(VS, VX(ox - 13), VY(oy + dy), 27, 1, bg);
+                continue;
+            }
+            gfx_fill_rect(VS, VX(ox - 13), VY(oy + dy), 13 - up_rows, 1, bg);
+            gfx_fill_rect(VS, VX(ox + up_rows + 1), VY(oy + dy), 13 - up_rows, 1, bg);
+        }
+        gfx_fill_circle(VS, VX(ox), VY(oy - 1), 2, up ? lit : dim);
+        return;
+    }
+    uint32_t c = n->wired == K86_NET_UP ? lit : dim;
+    gfx_fill_rect(VS, VX(cx - 3), VY(cy - 8), 7, 5, c);         /* the boxes */
+    gfx_fill_rect(VS, VX(cx - 10), VY(cy + 3), 7, 5, c);
+    gfx_fill_rect(VS, VX(cx + 4), VY(cy + 3), 7, 5, c);
+    gfx_fill_rect(VS, VX(cx), VY(cy - 3), 1, 4, c);             /* the links */
+    gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 15, 1, c);
+    gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 1, 2, c);
+    gfx_fill_rect(VS, VX(cx + 7), VY(cy + 1), 1, 2, c);
 }
 
 static void draw_power_icon(int cx, int cy, uint32_t c, uint32_t bg)
@@ -728,6 +778,12 @@ static void draw_topbar(void)
     bg = menu_open ? gfx_mix(WHITE, t->topbar_bg, A_HOVER) : hit_bg((struct hit){ H_POWER, 0 }, t->topbar_bg);
     gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
     draw_power_icon(r.x + r.w / 2, r.y + r.h / 2, SHELL_FG, bg);
+    if (net_present()) {
+        r = net_rect();
+        bg = hit_bg((struct hit){ H_NET, 0 }, t->topbar_bg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+        draw_net_icon(r.x + r.w / 2, r.y + r.h / 2, &net_shown, bg);
+    }
 }
 
 static void draw_menu(void)
@@ -1176,6 +1232,13 @@ static void activate(struct hit h)
     case H_POWER:
         menu_set(!menu_open);
         break;
+    case H_NET:                             /* Settings, where the Network page is */
+        for (int i = 0; i < builtin_app_count; i++)
+            if (!strcmp(builtin_apps[i].name, "Settings")) {
+                launch(i, net_rect());
+                break;
+            }
+        break;
     case H_LOGOUT:
         menu_set(0);
         shell_flush();
@@ -1431,6 +1494,13 @@ void desktop_tick(void)
     if (!rtc || dev_ioctl(rtc, RTC_GET_TICKS, &ticks) < 0 || ticks == last_tick)
         return;
     last_tick = ticks;
+    struct k86_net n;                       /* the network icon: redrawn when it changes */
+    net_status(&n);
+    if (memcmp(&n, &net_shown, sizeof(n))) {
+        net_shown = n;
+        shell_damage((struct gfx_rect){ net_rect().x, 0, BAR_BUTTON_W, T()->topbar_h });
+        shell_flush();
+    }
     struct rtc_time now;
     dev_read(rtc, &now, sizeof(now));
     if (now.minute == clock_shown.minute && now.hour == clock_shown.hour &&

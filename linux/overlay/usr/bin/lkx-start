@@ -35,6 +35,35 @@ echo "lkx-start: disk ${disk:-not found} after $((i * 200)) ms" > "$out"
 
 export LKX_APPS=/usr/lib/litekern
 export LKX_TARGET=1
+
+# Tests only (tests/linux/test-image.sh adds lkx.test=hwsim to the test copy's
+# syslinux.cfg): two simulated Wi-Fi radios, an access point on the second
+# ("LiteKern Test", WPA2, password "apple pie") handing out addresses, and the
+# desktop told to leave that one alone: it sees one Wi-Fi card, wlan0.
+if grep -q "lkx.test=hwsim" /proc/cmdline; then
+    modprobe mac80211_hwsim radios=2
+    i=0
+    while [ ! -e /sys/class/net/wlan1 ] && [ $i -lt 50 ]; do usleep 100000; i=$((i + 1)); done
+    cat > /tmp/hostapd.conf <<EOF
+interface=wlan1
+driver=nl80211
+ssid=LiteKern Test
+hw_mode=g
+channel=6
+wpa=2
+wpa_passphrase=apple pie
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+EOF
+    hostapd -B /tmp/hostapd.conf > "$out" 2>&1
+    ip addr add 192.168.77.1/24 dev wlan1
+    ip link set wlan1 up
+    mkdir -p /var/lib/misc && touch /var/lib/misc/udhcpd.leases
+    printf 'start 192.168.77.10\nend 192.168.77.50\ninterface wlan1\nopt router 192.168.77.1\nopt dns 192.168.77.1\n' > /tmp/udhcpd.conf
+    udhcpd /tmp/udhcpd.conf
+    echo "lkx-start: test Wi-Fi: an access point on wlan1" > "$out"
+    export LKX_NET_SKIP=wlan1
+fi
 if [ -n "$disk" ]; then
     exec /usr/bin/lkx-shell --backend drm --disk "$disk" > "$out" 2>&1
 fi

@@ -76,12 +76,15 @@ Then wait for a yes. One phase at a time, each finished and tested before the ne
 - [ ] Settings kept across restarts; the Log shows Linux's messages
 - [ ] Free from Linux: USB mice and keyboards at full speed (the BIOS slowdown is gone), battery level, brightness keys
 
-## L5. Networking
+## L5. Networking — **done in QEMU 2026-10-20; waiting for the EeePC**
 **Estimate:** 4–6 hours. **Size:** about 1,000–1,500 lines.
 **You:** flash; join your Wi-Fi from Settings; photos.
-- [ ] Ethernet and Wi-Fi, DHCP, DNS, the clock set from the network
-- [ ] Settings → Network: scan, join with a password, forget
-- [ ] A network icon in the top bar
+**As built:** about 1,250 lines. `platform/net.c` runs the network from lkx-shell's own loop, no daemon of ours: Ethernet with busybox's `udhcpc`; Wi-Fi through `wpa_supplicant`'s control socket (scan, join WPA2/WPA3/open, its events: a refused password), the radio unblocked (rfkill); remembered networks on the stick (`/LiteKern/wifi.txt`), given back to `wpa_supplicant` at start so it rejoins by itself; a network is only remembered once it has joined. Four new calls (`SYS_NET_STATUS/SCAN/JOIN/FORGET`, `kernel/net.h`): the kernel version answers "no network hardware" (`kernel/net.c`), so its Settings and top bar look as before. Also from this phase: **writes to the stick are made at once** (`fdatasync`): Linux held them for up to half a minute, so a setting saved just before a power cut was lost. **The user asked for:** Settings' header shows the current tab (a soft background: `wm_select_button`, in the kernel version too). **Changed from the plan:** the clock isn't set from the network yet: Linux would then show UTC, and LiteKern X has no time zone setting (the EeePC's own clock is already right); it waits for one.
+- [x] Ethernet and Wi-Fi, DHCP, DNS (`udhcpc` writes `/etc/resolv.conf`); ~~the clock set from the network~~ (above)
+- [x] Settings → Network: scan, join with a password (asked again if refused), forget; its tab only with network hardware
+- [x] A network icon in the top bar: Wi-Fi's arcs lit by the signal, or Ethernet; dimmed when not connected; a click opens Settings
+- [x] Tests (`tests/linux/test-image.sh`, 7 now): Ethernet's address and icon; simulated Wi-Fi (`mac80211_hwsim`, an access point started by `lkx-start` only when the test's command line asks): a wrong password refused, the right one joining, an address, and the network rejoined by itself after a restart
+- [ ] On the EeePC: your Wi-Fi from Settings → Network; the Ethernet port with a cable
 
 ## L6. The browser
 **Estimate:** 8–12 hours. **Size:** about 2,000–3,000 lines (a LiteKern X front end for NetSurf), plus build work.

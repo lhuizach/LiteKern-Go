@@ -109,4 +109,4 @@ run: $(LBUILD)/lkx-shell
 clean:
 	rm -rf $(LBUILD)
 
--include $(OBJS:.o=.d) $(wildcard $(LBUILD)/apps/*/*.d $(LBUILD)/sdk/*.d)
+-include $(OBJS:.o=.d) $(wildcard $(LBUILD)/apps/*/*.d $(LBUILD)/sdk/*.d $(LBUILD)/platform/libk86.d)

@@ -83,6 +83,11 @@ int lkx_fds(struct pollfd *out, int max);
 /* ms until an app's timer (or the watchdog) wants a turn; -1: none. */
 int lkx_next_ms(void);
 
+/* Networking (platform/net.c): started once the disk is read; looked after
+ * from the loop (it rate-limits itself). */
+void net_init(void);
+void net_poll(void);
+
 /* How often something asked to be woken (RTC_SET_RATE), in Hz; 0: once a second. */
 uint32_t plat_wake_hz(void);
 

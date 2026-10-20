@@ -23,12 +23,15 @@ What you'll see: a black screen for a few seconds while Linux starts (no text on
 | A USB mouse | Plug one in: it works at once, **at full speed** (the BIOS slowdown is gone: Linux drives USB itself) |
 | Apps | Files, Settings (change the style; restart; still changed), Blocksmith (F5 runs the project) |
 | Power menu | Shut Down switches the EeePC off; Restart restarts it |
+| Wi-Fi | Settings → Network (its tab): your network is listed; Connect, type the password: "Connected", and the Wi-Fi icon lights up in the top bar. Restart: it joins by itself. If the list says Wi-Fi is switched off, press **Fn+F2** |
+| Ethernet | Plug in a cable: the Network page says connected, with an address; unplug it: no cable |
 
 **Photo:** the **Log** app (the dock), scrolled to the top, then to these lines:
 - `lkx-start: disk /dev/sd... after ... ms` — the stick, found
 - `drm: 1024x600 on connector ... (the built-in panel)` — the screen
 - every `input: ...` line — the keyboard and touchpad Linux found
 - `[boot] desktop t=...`
+- every `net: ...` line (which network chips Linux found, and Wi-Fi joining)
 
 ## If something goes wrong
 | What you see | What to send |
