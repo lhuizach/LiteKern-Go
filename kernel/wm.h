@@ -83,6 +83,18 @@ void wm_clear_buttons(struct wm_window *w);
  * soft background even when the pointer isn't on it. */
 void wm_select_button(struct wm_window *w, int i, int selected);
 
+/* A maximised window has no header bar: the shell's top bar shows its title,
+ * its buttons (in the order added) and its controls, and passes clicks on
+ * them back here. */
+int wm_header_hidden(const struct wm_window *w);
+int wm_button_count(const struct wm_window *w);
+int wm_button_info(const struct wm_window *w, int i, enum wm_side *side, enum wm_icon *icon,
+                   const char **label, int *selected);
+void wm_press_header_button(struct wm_window *w, int i);
+void wm_press_control(struct wm_window *w, int which);      /* 0 minimise, 1 maximise/restore, 2 close */
+void wm_draw_header_icon(struct gfx_surface *s, enum wm_icon icon, int cx, int cy, uint32_t colour);
+void wm_draw_control(struct gfx_surface *s, int which, int maximised, int cx, int cy, uint32_t bg, uint32_t fg);
+
 /* Who owns it (the shell's app), set by whoever created it. */
 void wm_set_owner(struct wm_window *w, const void *owner);
 const void *wm_owner(const struct wm_window *w);

@@ -497,7 +497,7 @@ static struct gfx_rect dock_icon_rect(int i)
 
 /* --- hit testing ---------------------------------------------------------------------- */
 
-enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
+enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_WBTN, H_WCTL, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_BAR };
 
 static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT };
@@ -534,6 +534,57 @@ static struct gfx_rect net_rect(void)
 {
     struct gfx_rect p = power_rect();
     return (struct gfx_rect){ p.x - BAR_BUTTON_W - 4, p.y, BAR_BUTTON_W, BAR_BUTTON_H };
+}
+
+/* --- a maximised window's header, in the top bar -------------------------------------------
+ * The focused window, when it's maximised, has no header bar (kernel/wm.h:
+ * wm_header_hidden): its buttons follow the app's name on the left (Settings'
+ * tabs: the current one with a soft background), its right-hand buttons and
+ * its minimise/restore/close sit left of the network and power buttons. */
+#define WBAR_H     24
+#define WBAR_GAP   4
+#define WCTL_SIZE  24
+#define WCTL_GAP   8
+
+static const char *focused_name(void);
+
+static struct wm_window *merged(void)
+{
+    struct wm_window *w = wm_focused();
+    return w && !grid_open && wm_header_hidden(w) && !wm_is_minimised(w) ? w : 0;
+}
+
+/* Where w's buttons (btn[i], in the order added) and controls (ctl[0..2]:
+ * minimise, restore, close) go in the top bar. */
+static void wbar_layout(struct wm_window *w, struct gfx_rect btn[WM_MAX_BUTTONS], struct gfx_rect ctl[3])
+{
+    const struct theme *t = T();
+    int y = (t->topbar_h - WBAR_H) / 2;
+    int left = t->spacing + BAR_BUTTON_W + t->spacing * 2 + text_width(focused_name(), TEXT_BOLD) + 14;
+    int right = (net_present() ? net_rect().x : power_rect().x) - 10;
+    for (int k = 2; k >= 0; k--) {
+        ctl[k] = (struct gfx_rect){ right - WCTL_SIZE, (t->topbar_h - WCTL_SIZE) / 2, WCTL_SIZE, WCTL_SIZE };
+        right -= WCTL_SIZE + WCTL_GAP;
+    }
+    right -= 6;
+    for (int i = 0; i < WM_MAX_BUTTONS; i++) {
+        enum wm_side side;
+        enum wm_icon icon;
+        const char *label;
+        int sel;
+        if (wm_button_info(w, i, &side, &icon, &label, &sel)) {
+            btn[i] = (struct gfx_rect){ 0, 0, 0, 0 };
+            continue;
+        }
+        int bw = icon != WM_ICON_NONE ? 28 : text_width(label, TEXT_BOLD) + 22;
+        if (side == WM_LEFT) {
+            btn[i] = (struct gfx_rect){ left, y, bw, WBAR_H };
+            left += bw + WBAR_GAP;
+        } else {
+            btn[i] = (struct gfx_rect){ right - bw, y, bw, WBAR_H };
+            right -= bw + WBAR_GAP;
+        }
+    }
 }
 
 static struct gfx_rect menu_rect(void)
@@ -589,6 +640,17 @@ static struct hit hit_at(int x, int y)
             return (struct hit){ H_POWER, 0 };
         if (net_present() && inside(net_rect(), x, y))
             return (struct hit){ H_NET, 0 };
+        struct wm_window *w = merged();
+        if (w) {
+            struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
+            wbar_layout(w, btn, ctl);
+            for (int k = 0; k < 3; k++)
+                if (inside(ctl[k], x, y))
+                    return (struct hit){ H_WCTL, k };
+            for (int i = 0; i < WM_MAX_BUTTONS; i++)
+                if (inside(btn[i], x, y))
+                    return (struct hit){ H_WBTN, i };
+        }
         return (struct hit){ H_BAR, 0 };
     }
     if (dock_up() && inside(dock_rect(), x, y)) {
@@ -610,6 +672,8 @@ static void damage_hit(struct hit h)
     case H_HOME:     shell_damage(home_rect()); break;
     case H_POWER:    shell_damage(power_rect()); break;
     case H_NET:      shell_damage(net_rect()); break;
+    case H_WBTN:
+    case H_WCTL:     shell_damage((struct gfx_rect){ 0, 0, S()->w, T()->topbar_h }); break;
     case H_RESTART:
     case H_SHUTDOWN:
     case H_LOCK:
@@ -767,6 +831,32 @@ static void draw_topbar(void)
     const char *name = focused_name();
     if (name[0])
         text_draw(VS, VX(t->spacing + BAR_BUTTON_W + t->spacing * 2), VY(ty), name, TEXT_BOLD, SHELL_FG);
+    struct wm_window *mw = merged();
+    if (mw) {                               /* its header: buttons and controls */
+        struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
+        wbar_layout(mw, btn, ctl);
+        for (int i = 0; i < WM_MAX_BUTTONS; i++) {
+            enum wm_side side;
+            enum wm_icon icon;
+            const char *label;
+            int sel;
+            if (wm_button_info(mw, i, &side, &icon, &label, &sel))
+                continue;
+            struct gfx_rect b = btn[i];
+            uint32_t base = sel ? t->button_bg : t->topbar_bg;
+            uint32_t bbg = hit_bg((struct hit){ H_WBTN, i }, base);
+            if (bbg != t->topbar_bg)
+                gfx_fill_round_rect(VS, VX(b.x), VY(b.y), b.w, b.h, t->radius, bbg);
+            if (icon != WM_ICON_NONE)
+                wm_draw_header_icon(VS, icon, VX(b.x + b.w / 2), VY(b.y + b.h / 2), SHELL_FG);
+            else
+                text_draw(VS, VX(b.x + (b.w - text_width(label, TEXT_BOLD)) / 2), VY(ty), label, TEXT_BOLD, SHELL_FG);
+        }
+        for (int k = 0; k < 3; k++) {
+            uint32_t cbg = hit_bg((struct hit){ H_WCTL, k }, t->button_bg);
+            wm_draw_control(VS, k, 1, VX(ctl[k].x + WCTL_SIZE / 2), VY(ctl[k].y + WCTL_SIZE / 2), cbg, SHELL_FG);
+        }
+    }
     char text[24];
     clock_text(text);
     text_draw(VS, VX((S()->w - text_width(text, TEXT_BOLD)) / 2), VY(ty), text, TEXT_BOLD, SHELL_FG);
@@ -1231,6 +1321,14 @@ static void activate(struct hit h)
         break;
     case H_POWER:
         menu_set(!menu_open);
+        break;
+    case H_WBTN:                            /* a maximised window's header button */
+        if (merged())
+            wm_press_header_button(merged(), h.app);
+        break;
+    case H_WCTL:                            /* ...and its minimise, restore, close */
+        if (merged())
+            wm_press_control(merged(), h.app);
         break;
     case H_NET:                             /* Settings, where the Network page is */
         for (int i = 0; i < builtin_app_count; i++)

@@ -106,15 +106,32 @@ static int radius(const struct wm_window *w)
     return w->maximised ? 0 : WM_RADIUS;
 }
 
+/* A maximised window has no header bar of its own: its title, buttons and
+ * controls are in the shell's top bar (kernel/desktop.c, wm_header_hidden()),
+ * and its content takes the room. */
+static int header_h(const struct wm_window *w)
+{
+    return w->maximised ? 0 : T()->headerbar_h;
+}
+
 static struct gfx_rect header_rect(const struct wm_window *w, struct gfx_rect r)
 {
     int i = inset(w);
-    return (struct gfx_rect){ r.x + i, r.y + i, r.w - 2 * i, T()->headerbar_h };
+    return (struct gfx_rect){ r.x + i, r.y + i, r.w - 2 * i, header_h(w) };
+}
+
+/* What changed in w's header: its header bar, or the top bar showing it. */
+static void damage_header(const struct wm_window *w)
+{
+    if (header_h(w))
+        shell_damage(header_rect(w, w->r));
+    else
+        shell_damage((struct gfx_rect){ 0, 0, area.x + area.w, area.y });
 }
 
 static struct gfx_rect content_rect(const struct wm_window *w, struct gfx_rect r)
 {
-    int i = inset(w), hh = T()->headerbar_h;
+    int i = inset(w), hh = header_h(w);
     return (struct gfx_rect){ r.x + i, r.y + i + hh, r.w - 2 * i, r.h - 2 * i - hh };
 }
 
@@ -124,6 +141,11 @@ static void layout(const struct wm_window *w, struct gfx_rect r, struct gfx_rect
 {
     const struct theme *t = T();
     struct gfx_rect h = header_rect(w, r);
+    if (!h.h) {                             /* no header bar: nothing to click here */
+        for (int b = 0; b < NB; b++)
+            out[b] = (struct gfx_rect){ 0, 0, 0, 0 };
+        return;
+    }
     int size = t->button_size, top = h.y + (h.h - size) / 2;
     int left = h.x + t->spacing, right = h.x + h.w - t->spacing;
     for (int b = B_CLOSE; b >= B_MIN; b--) {
@@ -280,6 +302,7 @@ void wm_set_maximised(struct wm_window *w, int maximised)
     }
     apply_size(w);
     damage(w);
+    shell_damage((struct gfx_rect){ 0, 0, area.x + area.w, area.y });     /* the top bar shows it, or not */
 }
 
 /* --- creating and closing -------------------------------------------------------------- */
@@ -331,8 +354,9 @@ struct wm_window *wm_create(const char *title, int w, int h, int min_w, int min_
     }
     if (!win || area.w <= 0)
         return 0;
-    /* The buffer: big enough for the largest content (maximised). */
-    int bw = area.w, bh = area.h - T()->headerbar_h;
+    /* The buffer: big enough for the largest content (maximised: the whole
+     * area, its header being in the top bar). */
+    int bw = area.w, bh = area.h;
     uint32_t bytes = (uint32_t)(bw * bh * 4);
     uint32_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys)
@@ -415,7 +439,7 @@ void wm_set_title(struct wm_window *w, const char *title)
         return;
     copy(w->title, title, WM_TITLE_MAX);
     if (!w->minimised)
-        shell_damage(header_rect(w, w->r));
+        damage_header(w);
 }
 
 const char *wm_title(const struct wm_window *w)
@@ -434,7 +458,7 @@ int wm_add_button(struct wm_window *w, enum wm_side side, enum wm_icon icon, con
     b->id = id;
     b->selected = 0;
     if (!w->minimised)
-        shell_damage(header_rect(w, w->r));
+        damage_header(w);
     return 0;
 }
 
@@ -444,7 +468,7 @@ void wm_select_button(struct wm_window *w, int i, int selected)
         return;
     w->buttons[i].selected = !!selected;
     if (!w->minimised)
-        shell_damage(header_rect(w, w->r));
+        damage_header(w);
 }
 
 void wm_clear_buttons(struct wm_window *w)
@@ -455,7 +479,7 @@ void wm_clear_buttons(struct wm_window *w)
     if (press_win == w && press_btn < WM_MAX_BUTTONS)
         press_btn = NONE;
     if (!w->minimised)
-        shell_damage(header_rect(w, w->r));
+        damage_header(w);
 }
 
 void wm_set_owner(struct wm_window *w, const void *owner)
@@ -652,6 +676,8 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
 {
     const struct theme *t = T();
     struct gfx_rect h = header_rect(w, r);
+    if (!h.h)
+        return;                             /* maximised: it's in the top bar */
     int rad = radius(w) ? radius(w) - 1 : 0, focused = w == focus || !live;
     struct gfx_surface *s = &v->s;
     int ox = v->ox, oy = v->oy;
@@ -1125,4 +1151,53 @@ int wm_input_mouse(int x, int y, uint8_t buttons)
         drag_dy = y - w->r.y;
     }
     return 1;
+}
+
+/* --- a maximised window's header, in the shell's top bar (kernel/wm.h) ---------------------- */
+
+int wm_header_hidden(const struct wm_window *w)
+{
+    return w && !header_h(w);
+}
+
+int wm_button_count(const struct wm_window *w)
+{
+    return w ? w->nbuttons : 0;
+}
+
+int wm_button_info(const struct wm_window *w, int i, enum wm_side *side, enum wm_icon *icon,
+                   const char **label, int *selected)
+{
+    if (!w || i < 0 || i >= w->nbuttons)
+        return -1;
+    *side = w->buttons[i].side;
+    *icon = w->buttons[i].icon;
+    *label = w->buttons[i].label;
+    *selected = w->buttons[i].selected;
+    return 0;
+}
+
+void wm_press_header_button(struct wm_window *w, int i)
+{
+    if (w && i >= 0 && i < w->nbuttons)
+        press_button(w, i);
+}
+
+void wm_press_control(struct wm_window *w, int which)
+{
+    static const int b[] = { B_MIN, B_MAX, B_CLOSE };
+    if (w && which >= 0 && which < 3)
+        press_button(w, b[which]);
+}
+
+void wm_draw_header_icon(struct gfx_surface *s, enum wm_icon icon, int cx, int cy, uint32_t colour)
+{
+    draw_icon(s, icon, cx, cy, colour);
+}
+
+void wm_draw_control(struct gfx_surface *s, int which, int maximised, int cx, int cy, uint32_t bg, uint32_t fg)
+{
+    static const int b[] = { B_MIN, B_MAX, B_CLOSE };
+    if (which >= 0 && which < 3)
+        draw_control(s, b[which], maximised, cx, cy, bg, fg);
 }

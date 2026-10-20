@@ -236,10 +236,10 @@ void selftest_wm_run(void)
     struct gfx_rect a = wm_area();
     check(wm_is_maximised(w) && wm_rect(w).x == a.x && wm_rect(w).y == a.y && wm_rect(w).w == a.w &&
               wm_rect(w).h == a.h && next(w, &ev) && ev.type == WM_EVENT_RESIZE && ev.x == a.w &&
-              ev.y == a.h - hh,
+              ev.y == a.h,
           "maximised: it fills the space below the top bar, square-cornered");
-    check(px(a.x, a.y) == t->headerbar_bg && px(a.x + a.w - 1, a.y) == t->headerbar_bg,
-          "maximised: its header bar reaches the corners");
+    check(wm_header_hidden(w) && wm_content(w)->h == a.h && px(a.x, a.y) != t->headerbar_bg,
+          "maximised: no header bar of its own (the top bar shows it): the content starts at the top");
     wm_set_maximised(w, 0);
     wm_present();
     check(!wm_is_maximised(w) && wm_rect(w).x == m.x && wm_rect(w).w == m.w && next(w, &ev) &&

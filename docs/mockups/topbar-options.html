@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Top bar options</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+:root { --page: #f4f4f5; --text: #1d1d1f; --muted: #5f5f66; }
+@media (prefers-color-scheme: dark) { :root { --page: #121214; --text: #f2f2f3; --muted: #a0a0a8; } }
+body { margin: 0; padding: 16px; background: var(--page); color: var(--text); font-family: 'Ubuntu Sans', Ubuntu, sans-serif; }
+h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+.intro { color: var(--muted); font-size: 14px; margin: 0 0 18px; max-width: 680px; }
+.v { margin: 0 0 26px; }
+.lab { font-size: 15px; margin: 0 0 8px; }
+.lab b { font-weight: 700; }
+.frame { width: 100%; max-width: 1024px; aspect-ratio: 1024 / 600; overflow: hidden; border-radius: 8px; position: relative; }
+.scr { width: 1024px; height: 600px; transform-origin: 0 0; position: absolute; left: 0; top: 0; color: #fff; background: #222226; overflow: hidden; font-family: 'Ubuntu Sans', Ubuntu, Cantarell, sans-serif; }
+.bar { position: absolute; left: 0; top: 0; right: 0; display: flex; align-items: center; background: #000; font-size: 14px; font-weight: 700; }
+.ib { width: 40px; height: 24px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+.tab { padding: 4px 11px; border-radius: 6px; font-weight: 700; font-size: 14px; }
+.sel { background: #444448; }
+.wc { width: 24px; height: 24px; border-radius: 12px; background: #444448; display: flex; align-items: center; justify-content: center; font-size: 13px; margin-left: 8px; }
+.clock { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+.body { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 24px; }
+.h { font-weight: 700; font-size: 15px; margin: 0 0 10px; }
+.card { display: inline-block; width: 200px; height: 120px; border-radius: 10px; margin-right: 22px; vertical-align: top; }
+.dot { display: inline-block; width: 30px; height: 30px; border-radius: 15px; margin-right: 16px; }
+.pill { display: inline-block; width: 120px; height: 34px; border-radius: 17px; background: #444448; margin: 0 10px 10px 0; text-align: center; line-height: 34px; font-weight: 700; font-size: 14px; }
+.dock { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); background: rgba(70, 70, 80, .75); border-radius: 16px; padding: 8px; display: flex; gap: 12px; }
+.di { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+</style>
+</head>
+<body>
+<h1>Top bar options for maximised windows</h1>
+<p class="intro">LiteKern X at the EeePC's 1024x600, with Settings maximised. In every option the window's own header bar goes away while it's maximised; normal (not maximised) windows keep theirs as today.</p>
+<div id="out"></div>
+<script>
+const I = (n, s) => `<i class="ti ti-${n}" style="font-size:${s || 17}px" aria-hidden="true"></i>`;
+const tabs = `<span class="tab sel">Appearance</span><span class="tab">Users</span><span class="tab">Network</span>`;
+const wc = `<span class="wc">${I('minus', 13)}</span><span class="wc">${I('copy', 12)}</span><span class="wc">${I('x', 13)}</span>`;
+const status = `<span class="ib" style="margin-left:6px">${I('wifi')}</span><span class="ib">${I('power')}</span>`;
+const home = `<span class="ib" style="margin-left:6px">${I('home')}</span>`;
+const clock = `<div class="clock">Tue 20 Oct&nbsp;&nbsp;17:48</div>`;
+function body(top) {
+  return `<div class="body" style="top:${top}px">
+<p class="h">Style</p><span class="card" style="background:#2e2e32;outline:2px solid #3584e4;outline-offset:2px"></span><span class="card" style="background:#fafafb"></span>
+<div style="position:absolute;left:520px;top:22px"><p class="h">Screen saver</p><span class="pill">Off</span><span class="pill">1 min</span><span class="pill">2 min</span><br><span class="pill" style="background:#3584e4">5 min</span><span class="pill">10 min</span><span class="pill">30 min</span></div>
+<p class="h" style="margin-top:26px">Accent color</p><span class="dot" style="background:#3584e4;outline:2px solid #fff;outline-offset:2px"></span><span class="dot" style="background:#2190a4"></span><span class="dot" style="background:#3a944a"></span><span class="dot" style="background:#ed5b00"></span><span class="dot" style="background:#e62d42"></span><span class="dot" style="background:#9141ac"></span>
+<p class="h" style="margin-top:26px">Background</p>${['#c8ccd6', '#1d2b2e', '#2a2350', '#232a44', '#2b2235'].map(c => `<span class="card" style="width:160px;height:90px;margin-right:24px;background:${c}"></span>`).join('')}
+</div><div class="dock"><span class="di" style="color:#63a0e9">${I('folder', 30)}</span><span class="di" style="background:#1e1e26">${I('terminal-2', 26)}</span><span class="di" style="color:#bbb">${I('settings', 30)}</span><span class="di">${I('grid-dots', 28)}</span></div>`;
+}
+const V = [
+  ['<b>A</b>: app title and tabs on the left, clock centred, window buttons on the right. Gains 46 px.',
+   `<div class="bar" style="height:30px">${home}<span style="margin:0 14px 0 8px">Settings</span>${tabs}${clock}<span style="flex:1"></span>${wc}<span style="width:10px"></span>${status}</div>`, 30],
+  ['<b>B</b>: tabs on the left, app title centred, clock moves right next to the window buttons. Gains 46 px.',
+   `<div class="bar" style="height:30px">${home}<span style="width:8px"></span>${tabs}<div class="clock">Settings</div><span style="flex:1"></span><span style="font-weight:500;margin-right:6px">Tue 20 Oct&nbsp;&nbsp;17:48</span>${wc}<span style="width:10px"></span>${status}</div>`, 30],
+  ['<b>C</b>: window buttons on the left (like Ubuntu Netbook / Unity), then title and tabs; clock centred. Gains 46 px.',
+   `<div class="bar" style="height:30px">${home}<span style="width:4px"></span>${wc.replace(/margin-left:8px/g, 'margin-left:6px')}<span style="margin:0 14px">Settings</span>${tabs}${clock}<span style="flex:1"></span>${status}</div>`, 30],
+  ['<b>D</b>: like A, but the bar takes the window’s header grey and grows a little, so it reads as one bar. Gains 38 px.',
+   `<div class="bar" style="height:38px;background:#2e2e32;border-bottom:1px solid #19191c">${home}<span style="margin:0 14px 0 8px">Settings</span>${tabs}${clock}<span style="flex:1"></span>${wc}<span style="width:10px"></span>${status}</div>`, 39],
+];
+const out = document.getElementById('out');
+/* #A ... #D: that option alone (for exporting images) */
+const only = 'ABCD'.indexOf(location.hash.slice(1));
+const shown = only >= 0 ? [V[only]] : V;
+if (only >= 0)
+  document.querySelectorAll('h1, .intro').forEach(e => e.remove());
+out.innerHTML = shown.map(([l, bar, t]) => `<div class="v"><p class="lab">${l}</p><div class="frame"><div class="scr">${bar}${body(t)}</div></div></div>`).join('');
+function fit() {
+  document.querySelectorAll('.frame').forEach(f => { f.firstElementChild.style.transform = `scale(${f.clientWidth / 1024})`; });
+}
+addEventListener('resize', fit);
+fit();
+document.fonts && document.fonts.ready.then(fit);
+</script>
+</body>
+</html>

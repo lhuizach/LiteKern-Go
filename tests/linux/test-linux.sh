@@ -211,6 +211,19 @@ check "Settings' choices are kept across a restart" \
     '^settings: loaded( for User)?: light, ' \
     '^users: 2 \(User admin, Ann\)$'
 
+# A maximised window's header joins the top bar (the user's option A): Settings
+# maximised (its button at 924,63) shows its tabs there; Users (275,15) in the
+# top bar switches page; restore (924,15) brings its own header bar back.
+path; open_app 2; go 924 63; click; add sleep:1.5; go 275 15; click; add sleep:1
+go 600 300; add sleep:0.3 shot:build-linux/test/merged.png; go 924 15; click; add sleep:1
+run $SHELL_BIN build-linux/test/disk.img "$P"
+out+=$'\n'$(python3 tests/lib/qemu_monitor.py check build-linux/test/merged.png "has=444448@240,4,310,26" 2>&1)
+check "a maximised window's tabs and buttons are in the top bar, and work there" \
+    '^desktop: maximise Settings$' \
+    '^user: settings: page users$' \
+    '^screen: has 444448 in 240,4,310,26: yes$' \
+    '^desktop: unmaximise Settings$'
+
 # Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
 # saves it as "Test" (SYS_FS_WRITE).
 cp build/litekernx.img build-linux/test/blocksmith.img
