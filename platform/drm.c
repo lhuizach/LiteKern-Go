@@ -36,7 +36,7 @@
 
 static int card = -1, ep = -1, ino = -1, tty = -1;
 static uint8_t *scan;               /* the dumb buffer, mapped */
-static uint32_t pitch, fb_id;
+static uint32_t pitch, fb_id, crtc_id;
 static int sw, sh;
 
 /* --- the screen -------------------------------------------------------------------------------- */
@@ -129,6 +129,7 @@ static int open_display(int *w, int *h)
     fb_id = fb.fb_id;
     struct drm_mode_crtc set = { .set_connectors_ptr = (uintptr_t)&best.connector_id, .count_connectors = 1,
                                  .crtc_id = crtc, .fb_id = fb.fb_id, .mode_valid = 1, .mode = mode };
+    crtc_id = crtc;
     if (ioctl(card, DRM_IOCTL_MODE_SETCRTC, &set)) {
         kprintf("drm: couldn't show the mode %s\n", mode.name);
         return -1;
@@ -145,6 +146,71 @@ static int open_display(int *w, int *h)
 #define CLIPS 16
 static struct drm_clip_rect clips[CLIPS];
 static int nclips;
+
+/* --- the hardware cursor (kernel/screen.h): the GPU draws the pointer -------------------------
+ * A 64x64 buffer given to the CRTC (CURSOR2: with its click point, which
+ * virtual GPUs need to show it as the PC's own pointer). Moving it is one
+ * call and redraws nothing. A driver without one (QEMU's bochs) says no on
+ * the first try, and the pointer is drawn in software from then on. */
+#define CURSOR_SIZE 64
+static int cursor_state;            /* 0 untried, 1 works, -1 none */
+static uint32_t cursor_handle, *cursor_px;
+static const uint32_t *cursor_img;  /* what's in it */
+
+static int d_cursor(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y)
+{
+    if (cursor_state < 0 || card < 0 || !crtc_id)
+        return -1;
+    if (!argb) {
+        struct drm_mode_cursor c = { .flags = DRM_MODE_CURSOR_BO, .crtc_id = crtc_id, .handle = 0 };
+        ioctl(card, DRM_IOCTL_MODE_CURSOR, &c);
+        cursor_img = 0;
+        return cursor_state > 0 ? 0 : -1;
+    }
+    if (w > CURSOR_SIZE || h > CURSOR_SIZE)
+        return -1;
+    if (!cursor_handle) {
+        struct drm_mode_create_dumb dumb = { .width = CURSOR_SIZE, .height = CURSOR_SIZE, .bpp = 32 };
+        struct drm_mode_map_dumb map;
+        if (ioctl(card, DRM_IOCTL_MODE_CREATE_DUMB, &dumb))
+            goto none;
+        map = (struct drm_mode_map_dumb){ .handle = dumb.handle };
+        if (ioctl(card, DRM_IOCTL_MODE_MAP_DUMB, &map))
+            goto none;
+        cursor_px = mmap(0, dumb.size, PROT_READ | PROT_WRITE, MAP_SHARED, card, (off_t)map.offset);
+        if (cursor_px == MAP_FAILED)
+            goto none;
+        cursor_handle = dumb.handle;
+    }
+    if (argb != cursor_img) {               /* a new shape: into the buffer, then shown */
+        memset(cursor_px, 0, CURSOR_SIZE * CURSOR_SIZE * 4);
+        for (int r = 0; r < h; r++)
+            memcpy(cursor_px + r * CURSOR_SIZE, argb + r * w, (size_t)w * 4);
+        struct drm_mode_cursor2 c = { .flags = DRM_MODE_CURSOR_BO, .crtc_id = crtc_id,
+                                      .width = CURSOR_SIZE, .height = CURSOR_SIZE,
+                                      .handle = cursor_handle, .hot_x = hot_x, .hot_y = hot_y };
+        if (ioctl(card, DRM_IOCTL_MODE_CURSOR2, &c)) {
+            struct drm_mode_cursor old = { .flags = DRM_MODE_CURSOR_BO, .crtc_id = crtc_id,
+                                           .width = CURSOR_SIZE, .height = CURSOR_SIZE, .handle = cursor_handle };
+            if (ioctl(card, DRM_IOCTL_MODE_CURSOR, &old))
+                goto none;
+        }
+        cursor_img = argb;
+    }
+    struct drm_mode_cursor m = { .flags = DRM_MODE_CURSOR_MOVE, .crtc_id = crtc_id,
+                                 .x = x - hot_x, .y = y - hot_y };
+    if (ioctl(card, DRM_IOCTL_MODE_CURSOR, &m))
+        goto none;
+    if (!cursor_state)
+        kprintf("drm: the pointer is the display's own (a hardware cursor)\n");
+    cursor_state = 1;
+    return 0;
+none:
+    if (!cursor_state)
+        kprintf("drm: no hardware cursor: the pointer is drawn\n");
+    cursor_state = -1;
+    return -1;
+}
 
 static void d_present(const uint32_t *px, int stride, int x, int y, int w, int h)
 {
@@ -371,4 +437,4 @@ static void d_close(void)
         ioctl(tty, KDSETMODE, KD_TEXT);
 }
 
-const struct backend backend_drm = { "drm", d_open, d_present, d_fd, d_due, d_pump, d_close };
+const struct backend backend_drm = { "drm", d_open, d_present, d_fd, d_due, d_pump, d_close, d_cursor };

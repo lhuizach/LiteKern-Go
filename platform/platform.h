@@ -24,6 +24,7 @@
 #define LKX_PLATFORM_H
 
 #include <stdint.h>
+#include "kernel/screen.h"
 
 struct backend {
     const char *name;
@@ -40,6 +41,8 @@ struct backend {
     /* Take what's come (input, or a due step): to plat_key() and plat_pointer(). */
     void (*pump)(void);
     void (*close)(void);
+    /* The display's own cursor, if it has one (kernel/screen.h); NULL: none. */
+    screen_cursor_fn cursor;
 };
 
 extern const struct backend backend_headless, backend_x11, backend_drm;

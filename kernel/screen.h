@@ -41,6 +41,15 @@ uint32_t screen_present(void);
 #define SCREEN_OVERLAY_MAX 64
 void screen_set_overlay(const uint32_t *argb, int w, int h, int x, int y);
 
+/* A hardware cursor, when the display has one (the Linux build's DRM backend:
+ * the GPU draws the pointer, so moving it redraws nothing). show() gets the
+ * pointer's image, its click point and where the pointer is; argb = NULL
+ * hides it. 0 if it took it; otherwise the pointer is drawn as the overlay
+ * above. The kernel version has none. */
+typedef int (*screen_cursor_fn)(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y);
+void screen_set_hardware_cursor(screen_cursor_fn show);
+int screen_hardware_cursor(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y);
+
 /* The pending damage, for tests and diagnostics. */
 int screen_damage_count(void);
 struct gfx_rect screen_damage_rect(int i);

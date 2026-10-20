@@ -278,6 +278,8 @@ int main(int argc, char **argv)
     /* The same first frame as the kernel's (kernel/main.c). */
     if (screen_init(device_find("fb0")) < 0 || console_init((uint32_t)vga_font_8x16) < 0)
         kprintf("console: unavailable\n");
+    if (be->cursor)
+        screen_set_hardware_cursor(be->cursor);
     status_show(STATUS_READY);
     theme_set(theme_find_style(DEFAULT_STYLE), theme_find_accent(DEFAULT_ACCENT));
     splash_start();

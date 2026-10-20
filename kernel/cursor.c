@@ -22,6 +22,9 @@ const struct cursor_shape *cursor_find(const char *name)
 
 static void place(void)
 {
+    /* The display's own cursor if it has one (kernel/screen.h), else drawn. */
+    if (!screen_hardware_cursor(shape->px[0], shape->w, shape->h, shape->hot_x, shape->hot_y, cx, cy))
+        return;
     screen_set_overlay(shape->px[0], shape->w, shape->h, cx - shape->hot_x, cy - shape->hot_y);
     screen_present();
 }

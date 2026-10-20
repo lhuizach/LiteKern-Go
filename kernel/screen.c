@@ -126,8 +126,26 @@ uint32_t screen_present(void)
     return pixels;
 }
 
+static screen_cursor_fn hw_cursor;
+
+void screen_set_hardware_cursor(screen_cursor_fn show)
+{
+    hw_cursor = show;
+}
+
+int screen_hardware_cursor(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y)
+{
+    if (!hw_cursor || hw_cursor(argb, w, h, hot_x, hot_y, x, y))
+        return -1;
+    if (overlay_px)                         /* was drawn in software: wipe that */
+        screen_set_overlay(0, 0, 0, 0, 0);
+    return 0;
+}
+
 void screen_set_overlay(const uint32_t *argb, int w, int h, int x, int y)
 {
+    if (!argb && hw_cursor)
+        hw_cursor(0, 0, 0, 0, 0, 0, 0);     /* "no pointer" hides the hardware one too */
     if (w > SCREEN_OVERLAY_MAX || h > SCREEN_OVERLAY_MAX)
         return;
     if (overlay_px)

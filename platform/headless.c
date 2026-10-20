@@ -170,4 +170,4 @@ static void h_close(void)
 {
 }
 
-const struct backend backend_headless = { "headless", h_open, h_present, h_fd, h_due, h_pump, h_close };
+const struct backend backend_headless = { "headless", h_open, h_present, h_fd, h_due, h_pump, h_close, 0 };
