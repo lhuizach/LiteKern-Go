@@ -27,8 +27,20 @@ qemu)
         cp "$IMAGE" "$disk"
         echo "the VM's disk: a fresh copy of $IMAGE"
     fi
+    # Hardware virtualization when WSL lets us (KVM: many times faster than
+    # QEMU emulating the CPU). It needs this user in the kvm group:
+    #   wsl -u root usermod -aG kvm $USER   then   wsl --shutdown
+    accel=()
+    if [ -w /dev/kvm ]; then
+        accel=(-accel kvm)
+        echo "QEMU: KVM (hardware virtualization)"
+    else
+        echo "QEMU: no KVM, so the CPU is emulated: slow. To fix, from PowerShell:"
+        echo "  wsl -u root usermod -aG kvm $USER"
+        echo "  wsl --shutdown"
+    fi
     # QEMU's display offers the EeePC panel's 1024x600 first.
-    exec bash vm/qemu.sh --image "$disk" -- -global VGA.xres=1024 -global VGA.yres=600 -serial stdio
+    exec bash vm/qemu.sh --image "$disk" -- -global VGA.xres=1024 -global VGA.yres=600 "${accel[@]}"
     ;;
 vbox)
     shift
