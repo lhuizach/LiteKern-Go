@@ -82,6 +82,11 @@ for app in apps/*/; do
 done
 
 echo "== Linux and the system"
+# Buildroot doesn't notice a changed kernel.config by itself.
+if [ -f "$OUT/.lkx-kernel-config" ] && [ linux/kernel.config -nt "$OUT/.lkx-kernel-config" ]; then
+    make -s -C "$BR" O="$OUT" linux-reconfigure
+fi
+touch "$OUT/.lkx-kernel-config"
 make -s -C "$BR" O="$OUT"
 
 echo "== the image"

@@ -16,13 +16,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VBM=${VBOXMANAGE:-"/mnt/c/Program Files/Oracle/VirtualBox/VBoxManage.exe"}
-VM="LiteKern X"
-DISK_UUID=4c4b5800-0000-4000-8000-000000000001
+# The Linux port's VM (linux/vm.sh) sets these; the defaults are the kernel
+# version's.
+VM=${VM:-"LiteKern X"}
+DISK_UUID=${DISK_UUID:-4c4b5800-0000-4000-8000-000000000001}
+GRAPHICS=${GRAPHICS:-vboxvga}                       # vboxsvga: Linux's vboxvideo driver
+KEEP_DISK=${KEEP_DISK:-}                            # 1: keep the VM's disk (its settings, files)
+                                                    #   until the image is newer than it
 IMAGE=${IMAGE:-build/litekernx.img}                 # e.g. IMAGE=build/test-user/litekernx.img
 WAIT_FOR=${WAIT_FOR:-'^\[boot\] ready'}             # `test` passes once a log line matches
 TYPE=${TYPE:-}                                      # `test`: text to type once WAIT_FOR matched,
 TYPED=${TYPED:-}                                    #   then wait for this regex too
-DIR=build/vbox
+DIR=${DIR:-build/vbox}
 VDI=$DIR/litekernx.vdi
 SERIAL_LOG=$DIR/serial.log
 
@@ -64,7 +69,7 @@ create() {
     vbm modifyvm "$VM" \
         --memory 1024 --cpus 1 --chipset piix3 --firmware bios \
         --ioapic off --pae off --hwvirtex on \
-        --graphicscontroller vboxvga --vram 16 \
+        --graphicscontroller "$GRAPHICS" --vram 16 \
         --keyboard ps2 --mouse ps2 \
         --audio-enabled off --usb-ohci off --usb-ehci off --usb-xhci off \
         --nic1 none \
@@ -82,6 +87,10 @@ update() {
     need_off
     [ -f "$IMAGE" ] || { echo "$IMAGE missing. Run: make" >&2; exit 1; }
     mkdir -p "$DIR"
+    if [ -n "$KEEP_DISK" ] && [ -f "$VDI" ] && [ "$VDI" -nt "$IMAGE" ]; then
+        echo "keeping the VM's disk (its settings and files): the image hasn't changed"
+        return
+    fi
 
     # Detach and forget the old disk (ignore errors: it may not exist yet).
     "$VBM" storageattach "$VM" --storagectl IDE --port 0 --device 0 --medium none >/dev/null 2>&1 || true
