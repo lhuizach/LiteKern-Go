@@ -16,6 +16,7 @@
 #include "platform/platform.h"
 #include "kernel/input.h"
 #include "kernel/printk.h"
+#include "kernel/timing.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -182,8 +183,11 @@ static struct dev {
     int abs;                        /* a tablet: place the pointer */
     struct input_absinfo ax, ay;
     char name[64];
+    int num;                        /* its eventN */
 } devs[DEVS];
 static int px, py, dx, dy, moved;
+static uint8_t seen[256];           /* /dev/input/eventN looked at (scan_devices) */
+static uint32_t next_scan;
 static uint8_t buttons;
 
 #define BIT(arr, n) ((arr)[(n) / (8 * sizeof(long))] >> ((n) % (8 * sizeof(long))) & 1)
@@ -193,15 +197,19 @@ static void add_device(const char *path)
     int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
         return;
-    unsigned long ev[1] = { 0 }, keys[KEY_MAX / (8 * sizeof(long)) + 1] = { 0 }, abs[1] = { 0 }, rel[1] = { 0 };
+    unsigned long ev[8] = { 0 }, keys[KEY_MAX / (8 * sizeof(long)) + 1] = { 0 }, abs[8] = { 0 }, rel[8] = { 0 };
     ioctl(fd, EVIOCGBIT(0, sizeof(ev)), ev);
     ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
     ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs)), abs);
     ioctl(fd, EVIOCGBIT(EV_REL, sizeof(rel)), rel);
+    char name[64] = "";
+    ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
     int keyboard = BIT(ev, EV_KEY) && BIT(keys, KEY_A) && BIT(keys, KEY_ENTER);
     int mouse = BIT(ev, EV_REL) && BIT(rel, REL_X) && BIT(keys, BTN_LEFT);
-    int tablet = BIT(ev, EV_ABS) && BIT(abs, ABS_X) && BIT(abs, ABS_Y) && BIT(keys, BTN_LEFT);
+    int tablet = BIT(ev, EV_ABS) && BIT(abs, ABS_X) && BIT(abs, ABS_Y) &&
+                 (BIT(keys, BTN_LEFT) || BIT(keys, BTN_TOUCH));
     if (!keyboard && !mouse && !tablet) {
+        kprintf("input: %s left alone (not a keyboard or pointer)\n", *name ? name : path);
         close(fd);
         return;
     }
@@ -220,13 +228,19 @@ static void add_device(const char *path)
         ioctl(fd, EVIOCGABS(ABS_X), &d->ax);
         ioctl(fd, EVIOCGABS(ABS_Y), &d->ay);
     }
-    ioctl(fd, EVIOCGNAME(sizeof(d->name) - 1), d->name);
+    memcpy(d->name, name, sizeof(d->name));
+    d->num = atoi(strrchr(path, 't') + 1);
     ioctl(fd, EVIOCGRAB, 1);                /* ours: the text console behind doesn't get the keys */
     struct epoll_event e = { .events = EPOLLIN, .data.ptr = d };
     epoll_ctl(ep, EPOLL_CTL_ADD, fd, &e);
     kprintf("input: %s (%s%s%s)\n", d->name, keyboard ? "keyboard" : "", keyboard && (mouse || tablet) ? ", " : "",
             mouse ? "pointer" : tablet ? "tablet" : "");
 }
+
+/* Every eventN not looked at yet (seen[]: once each, kept or not). Called at
+ * start, for inotify's news, and every 2 s in case a node's creation was
+ * missed (a USB device can take seconds to appear). A device unplugged and
+ * plugged back gets a new N. */
 
 static void scan_devices(void)
 {
@@ -235,12 +249,17 @@ static void scan_devices(void)
     while (dir && (e = readdir(dir))) {
         if (strncmp(e->d_name, "event", 5))
             continue;
+        int n = atoi(e->d_name + 5);
+        if (n < 0 || n > 255 || seen[n])
+            continue;
+        seen[n] = 1;
         char path[300];
         snprintf(path, sizeof(path), "/dev/input/%s", e->d_name);
         add_device(path);
     }
     if (dir)
         closedir(dir);
+    next_scan = uptime_ms() + 2000;
 }
 
 static int scale(int v, const struct input_absinfo *a, int size)
@@ -289,6 +308,7 @@ gone:
     epoll_ctl(ep, EPOLL_CTL_DEL, d->fd, 0);
     close(d->fd);
     d->fd = 0;
+    seen[d->num & 255] = 0;             /* plugged back in, it may get the same N */
 }
 
 /* --- the backend ------------------------------------------------------------------------------- */
@@ -321,7 +341,8 @@ static int d_fd(void)
 
 static int d_due(void)
 {
-    return -1;
+    int32_t left = (int32_t)(next_scan - uptime_ms());
+    return left < 0 ? 0 : left;
 }
 
 static void d_pump(void)
@@ -335,18 +356,13 @@ static void d_pump(void)
         }
         /* Something new in /dev/input: a USB mouse or keyboard plugged in. */
         char buf[4096];
-        ssize_t k = read(ino, buf, sizeof(buf));
-        for (char *p = buf; k > 0 && p < buf + k;) {
-            struct inotify_event *ie = (struct inotify_event *)p;
-            if (ie->len && !strncmp(ie->name, "event", 5)) {
-                char path[300];
-                snprintf(path, sizeof(path), "/dev/input/%s", ie->name);
-                usleep(50000);              /* let devtmpfs finish the node */
-                add_device(path);
-            }
-            p += sizeof(*ie) + ie->len;
-        }
+        while (read(ino, buf, sizeof(buf)) > 0)
+            ;
+        usleep(50000);                      /* let devtmpfs finish the node */
+        scan_devices();
     }
+    if (d_due() == 0)
+        scan_devices();
 }
 
 static void d_close(void)

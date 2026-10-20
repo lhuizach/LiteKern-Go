@@ -39,8 +39,11 @@ qemu)
         echo "  wsl -u root usermod -aG kvm $USER"
         echo "  wsl --shutdown"
     fi
-    # QEMU's display offers the EeePC panel's 1024x600 first.
-    exec bash vm/qemu.sh --image "$disk" -- -global VGA.xres=1024 -global VGA.yres=600 "${accel[@]}"
+    # QEMU's display offers the EeePC panel's 1024x600 first. A USB tablet: the
+    # pointer goes where the PC's is, and QEMU's window hides the PC's own
+    # over it, so only LiteKern X's cursor shows (no grabbing the mouse).
+    exec bash vm/qemu.sh --image "$disk" -- -global VGA.xres=1024 -global VGA.yres=600 \
+        -usb -device usb-tablet "${accel[@]}"
     ;;
 vbox)
     shift
