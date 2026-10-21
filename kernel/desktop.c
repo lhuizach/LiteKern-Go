@@ -762,19 +762,15 @@ static void draw_net_icon(int cx, int cy, const struct k86_net *n, uint32_t bg)
         int up = n->wifi == K86_NET_UP;
         int bars = !up ? 0 : n->signal >= 66 ? 3 : n->signal >= 33 ? 2 : 1;
         int ox = cx, oy = cy + 6;
-        for (int k = 3; k >= 1; k--) {      /* rings, outside in, then cut to a fan */
-            gfx_fill_circle(VS, VX(ox), VY(oy), 3 + 3 * k, bars >= k ? lit : dim);
-            gfx_fill_circle(VS, VX(ox), VY(oy), 1 + 3 * k, bg);
-        }
-        for (int dy = -13; dy <= 13; dy++) {
-            int up_rows = dy <= 0 ? -dy : -1;           /* 45 degrees either side of up */
-            if (up_rows < 0) {
-                gfx_fill_rect(VS, VX(ox - 13), VY(oy + dy), 27, 1, bg);
-                continue;
+        /* Three arcs, 45 degrees either side of up, drawn pixel by pixel:
+         * only above the centre, so nothing spills below the top bar. */
+        for (int dy = -12; dy < 0; dy++)
+            for (int dx = dy; dx <= -dy; dx++) {
+                int d2 = dx * dx + dy * dy;
+                for (int k = 1; k <= 3; k++)
+                    if (d2 > (1 + 3 * k) * (1 + 3 * k) && d2 <= (3 + 3 * k) * (3 + 3 * k))
+                        gfx_fill_rect(VS, VX(ox + dx), VY(oy + dy), 1, 1, bars >= k ? lit : dim);
             }
-            gfx_fill_rect(VS, VX(ox - 13), VY(oy + dy), 13 - up_rows, 1, bg);
-            gfx_fill_rect(VS, VX(ox + up_rows + 1), VY(oy + dy), 13 - up_rows, 1, bg);
-        }
         gfx_fill_circle(VS, VX(ox), VY(oy - 1), 2, up ? lit : dim);
         return;
     }
@@ -874,9 +870,53 @@ static void log_clock(void)
     kprintf("shell: clock %s\n", text);
 }
 
+/* The clock's text and where it goes: centred, but never under a maximised
+ * window's buttons in the top bar (Settings' tabs): moved right of them, and
+ * only the time if even that doesn't fit. */
+static void clock_place(char text[24], int *x)
+{
+    clock_text(text);
+    int w = text_width(text, TEXT_BOLD);
+    *x = (S()->w - w) / 2;
+    struct wm_window *mw = merged();
+    if (!mw)
+        return;
+    struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
+    wbar_layout(mw, btn, ctl);
+    int left_end = 0, right_start = ctl[0].x;
+    for (int i = 0; i < WM_MAX_BUTTONS; i++) {
+        if (!btn[i].w)
+            continue;
+        if (btn[i].x < S()->w / 2 && btn[i].x + btn[i].w > left_end)
+            left_end = btn[i].x + btn[i].w;
+        else if (btn[i].x >= S()->w / 2 && btn[i].x < right_start)
+            right_start = btn[i].x;
+    }
+    if (*x < left_end + 16)
+        *x = left_end + 16;
+    if (*x + w > right_start - 16) {
+        const char *time = text;            /* the time follows the date's two spaces */
+        while (*time && !(time[0] == ' ' && time[1] == ' '))
+            time++;
+        if (*time) {
+            memmove(text, time + 2, strlen(time + 2) + 1);
+            w = text_width(text, TEXT_BOLD);
+        }
+        *x = (S()->w - w) / 2 < left_end + 16 ? left_end + 16 : (S()->w - w) / 2;
+        if (*x + w > right_start - 8)
+            text[0] = '\0';                /* no room at all: the buttons come first */
+    }
+}
+
 static struct gfx_rect clock_rect(void)
 {
-    return (struct gfx_rect){ (S()->w - 220) / 2, 0, 220, T()->topbar_h };
+    char text[24];
+    int x;
+    clock_place(text, &x);
+    int w = text_width(text, TEXT_BOLD);
+    int cx = (S()->w - 220) / 2;            /* covers the centred one too: it may have moved */
+    int l = x < cx ? x : cx, r = x + w > cx + 220 ? x + w : cx + 220;
+    return (struct gfx_rect){ l - 4, 0, r - l + 8, T()->topbar_h };
 }
 
 /* The name of the app in front, after Home. */
@@ -925,8 +965,10 @@ static void draw_topbar(void)
         }
     }
     char text[24];
-    clock_text(text);
-    text_draw(VS, VX((S()->w - text_width(text, TEXT_BOLD)) / 2), VY(ty), text, TEXT_BOLD, SHELL_FG);
+    int clock_x;
+    clock_place(text, &clock_x);
+    if (text[0])
+        text_draw(VS, VX(clock_x), VY(ty), text, TEXT_BOLD, SHELL_FG);
     struct gfx_rect r = home_rect();
     uint32_t bg = hit_bg((struct hit){ H_HOME, 0 }, t->topbar_bg);
     gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);

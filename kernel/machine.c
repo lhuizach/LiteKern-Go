@@ -10,7 +10,7 @@ void machine_init(void)
 
 void machine_status(struct k86_machine *out)
 {
-    *out = (struct k86_machine){ .battery = -1, .minutes = -1, .brightness = -1, .timezone = -1 };
+    *out = (struct k86_machine){ .battery = -1, .minutes = -1, .brightness = -1, .timezone = -1, .touchpad = -1 };
 }
 
 int machine_set_brightness(int percent)
@@ -22,5 +22,11 @@ int machine_set_brightness(int percent)
 int machine_set_timezone(int zone)
 {
     (void)zone;
+    return -ENODEV;
+}
+
+int machine_set_touchpad(int speed)
+{
+    (void)speed;
     return -ENODEV;
 }

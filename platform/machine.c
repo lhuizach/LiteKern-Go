@@ -14,9 +14,10 @@
  *               BIOS shows it: read in the zone at start (hwclock -s -l) and
  *               written back when the zone changes (net.c writes it back
  *               after the internet's time too)
+ *   touchpad    its speed (platform/drm.c moves the pointer by it)
  *
  * Kept on the stick, /LiteKern/machine.txt ("timezone London", "brightness
- * 80"): for everyone, not per user. The brightness and the clock only on the
+ * 80", "touchpad 50"): for everyone, not per user. The brightness and the clock only on the
  * EeePC (LKX_TARGET, set by lkx-start): on the PC they aren't ours. Tests on
  * the PC point LKX_POWER_SUPPLY and LKX_BACKLIGHT at folders of their own. */
 #define _GNU_SOURCE
@@ -25,6 +26,7 @@
 #include "kernel/printk.h"
 #include "kernel/settings.h"
 #include "kernel/timezones.h"
+#include "platform/platform.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -148,6 +150,7 @@ static void save(void)
     int n = snprintf(text, sizeof(text), "timezone %s\n", lkx_zones[zone].name);
     if (b >= 0)
         n += snprintf(text + n, sizeof(text) - (size_t)n, "brightness %d\n", b);
+    n += snprintf(text + n, sizeof(text) - (size_t)n, "touchpad %d\n", plat_touchpad_speed);
     settings_write_file(MACHINE_FILE, text, (uint32_t)n);
 }
 
@@ -166,6 +169,9 @@ static void load(void)
         } else if (!strncmp(l, "brightness ", 11)) {
             int b = atoi(l + 11);
             saved_brightness = b < 5 ? 5 : b > 100 ? 100 : b;
+        } else if (!strncmp(l, "touchpad ", 9)) {
+            int t = atoi(l + 9);
+            plat_touchpad_speed = t < 0 ? 0 : t > 100 ? 100 : t;
         }
     }
 }
@@ -201,7 +207,8 @@ void machine_init(void)
 
 void machine_status(struct k86_machine *out)
 {
-    *out = (struct k86_machine){ .battery = -1, .minutes = -1, .brightness = brightness_now(), .timezone = zone };
+    *out = (struct k86_machine){ .battery = -1, .minutes = -1, .brightness = brightness_now(), .timezone = zone,
+                                 .touchpad = plat_touchpad_present || getenv("LKX_FAKE_TOUCHPAD") ? plat_touchpad_speed : -1 };
     const char *dir = dir_of("LKX_POWER_SUPPLY", "/sys/class/power_supply");
     DIR *d = opendir(dir);
     struct dirent *e;
@@ -266,6 +273,16 @@ int machine_set_timezone(int z)
         run(argv);
     }
     kprintf("machine: time zone %s\n", lkx_zones[zone].name);
+    save();
+    return 0;
+}
+
+int machine_set_touchpad(int speed)
+{
+    if (speed < 0 || speed > 100)
+        return -EINVAL;
+    plat_touchpad_speed = speed;
+    kprintf("machine: touchpad speed %d\n", speed);
     save();
     return 0;
 }

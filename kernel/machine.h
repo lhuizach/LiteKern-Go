@@ -17,5 +17,6 @@ void machine_status(struct k86_machine *out);
 /* 0 or -errno (-EINVAL out of range, -ENODEV none). Both are saved. */
 int machine_set_brightness(int percent);
 int machine_set_timezone(int zone);
+int machine_set_touchpad(int speed);
 
 #endif

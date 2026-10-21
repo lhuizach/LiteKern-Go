@@ -250,6 +250,7 @@ struct k86_dirent {
 #define SYS_MACHINE         34  /* ebx: struct k86_machine * out */
 #define SYS_BRIGHTNESS_SET  35  /* ebx: the screen's brightness, 5-100 (%). Saved */
 #define SYS_TIMEZONE_SET    36  /* ebx: the time zone, an index in kernel/timezones.h. Saved */
+#define SYS_TOUCHPAD_SET    37  /* ebx: the touchpad's speed, 0-100 (50: the usual). Saved */
 
 #define K86_BATTERY_DISCHARGING 0
 #define K86_BATTERY_CHARGING    1
@@ -260,6 +261,7 @@ struct k86_machine {
     int32_t minutes;            /* until empty (discharging) or full (charging); -1: unknown */
     int32_t brightness;         /* 0-100 (%); -1: not adjustable here */
     int32_t timezone;           /* an index in kernel/timezones.h; -1: no time zones here */
+    int32_t touchpad;           /* its speed, 0-100; -1: no touchpad (of ours) */
 };
 
 #define K86_SSID_MAX        33          /* 32 bytes and a NUL */

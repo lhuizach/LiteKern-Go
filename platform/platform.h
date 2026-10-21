@@ -55,6 +55,9 @@ void plat_key(uint16_t key, int pressed);
 void plat_pointer(int x, int y, uint8_t buttons);
 /* The wheel turned: notches, > 0 down (towards you: the page moves up). */
 void plat_wheel(int notches);
+/* The touchpad (drm.c): whether there is one, and its speed, 0-100 (50:
+ * the usual), set by platform/machine.c from Settings. */
+extern int plat_touchpad_present, plat_touchpad_speed;
 /* Linux evdev key code (X11's key code - 8) to KEY_*; 0 if it has none. */
 uint16_t plat_evdev_key(unsigned code);
 /* The whole framebuffer, for screenshots. */

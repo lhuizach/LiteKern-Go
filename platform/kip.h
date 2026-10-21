@@ -110,6 +110,7 @@ static const struct kip_call kip_calls[] = {
     [SYS_MACHINE]         = { { OUT(sizeof(struct k86_machine)) } },
     [SYS_BRIGHTNESS_SET]  = { { V } },
     [SYS_TIMEZONE_SET]    = { { V } },
+    [SYS_TOUCHPAD_SET]    = { { V } },
 };
 #define KIP_CALLS (sizeof(kip_calls) / sizeof(kip_calls[0]))
 

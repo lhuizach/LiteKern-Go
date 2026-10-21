@@ -491,6 +491,31 @@ static int radio_blocked(void)
     return blocked;
 }
 
+/* wpa_supplicant writes a name's unusual bytes as \xNN (and \\, \"): back to
+ * the bytes, as the network sends them. 0 for a hidden network's: none, or
+ * only zeros. */
+static int unescape_ssid(char *s)
+{
+    char *in = s, *out = s;
+    int real = 0;
+    while (*in) {
+        unsigned v;
+        if (in[0] == '\\' && in[1] == 'x' && sscanf(in + 2, "%2x", &v) == 1) {
+            *out = (char)v;
+            in += 4;
+        } else if (in[0] == '\\' && (in[1] == '\\' || in[1] == '"')) {
+            *out = in[1];
+            in += 2;
+        } else {
+            *out = *in++;
+        }
+        real |= *out != '\0';
+        out++;
+    }
+    *out = '\0';
+    return real && s[0];
+}
+
 static void refresh_scan(void)
 {
     char r[16384];
@@ -501,8 +526,10 @@ static void refresh_scan(void)
     for (char *l = strtok(r, "\n"); l; l = strtok(0, "\n")) {
         char bssid[20], flags[160], ssid[K86_SSID_MAX] = "";
         int freq, dbm;
-        if (sscanf(l, "%19s %d %d %159s %32[^\n]", bssid, &freq, &dbm, flags, ssid) < 4 || !ssid[0])
-            continue;
+        char raw[4 * K86_SSID_MAX] = "";
+        if (sscanf(l, "%19s %d %d %159s %131[^\n]", bssid, &freq, &dbm, flags, raw) < 4 || !unescape_ssid(raw))
+            continue;                       /* hidden networks have no name to show */
+        snprintf(ssid, sizeof(ssid), "%s", raw);
         int pct = dbm >= -50 ? 100 : dbm <= -100 ? 0 : 2 * (dbm + 100);
         int k = 0;
         while (k < nfound && strcmp(found[k].ssid, ssid))
@@ -591,8 +618,10 @@ void net_poll(void)
             for (char *l = strtok(r, "\n"); l; l = strtok(0, "\n")) {
                 if (!strncmp(l, "wpa_state=", 10))
                     snprintf(wpa_state, sizeof(wpa_state), "%s", l + 10);
-                else if (!strncmp(l, "ssid=", 5))
+                else if (!strncmp(l, "ssid=", 5)) {
+                    unescape_ssid(l + 5);
                     snprintf(cur_ssid, sizeof(cur_ssid), "%s", l + 5);
+                }
             }
         if (!strcmp(wpa_state, "COMPLETED")) {
             remember();

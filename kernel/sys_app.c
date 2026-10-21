@@ -601,6 +601,7 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_MACHINE:        return machine_out(a1);
     case SYS_BRIGHTNESS_SET: return machine_set_brightness((int)a1);
     case SYS_TIMEZONE_SET:   return machine_set_timezone((int)a1);
+    case SYS_TOUCHPAD_SET:   return machine_set_touchpad((int)a1);
     default:                 return -ENOSYS;
     }
 }

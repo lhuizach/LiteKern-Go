@@ -251,6 +251,12 @@ static inline int k86_brightness_set(int percent)
     return k86_call(SYS_BRIGHTNESS_SET, (uint32_t)percent, 0, 0, 0);
 }
 
+/* speed: 0-100, 50 the usual. */
+static inline int k86_touchpad_set(int speed)
+{
+    return k86_call(SYS_TOUCHPAD_SET, (uint32_t)speed, 0, 0, 0);
+}
+
 /* zone: an index in kernel/timezones.h. */
 static inline int k86_timezone_set(int zone)
 {

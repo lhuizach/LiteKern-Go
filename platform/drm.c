@@ -270,6 +270,7 @@ static int px, py, dx, dy, moved;
 static uint8_t seen[256];           /* /dev/input/eventN looked at (scan_devices) */
 static uint32_t next_scan;
 static uint8_t buttons;
+int plat_touchpad_present, plat_touchpad_speed = 50;
 
 #define BIT(arr, n) ((arr)[(n) / (8 * sizeof(long))] >> ((n) % (8 * sizeof(long))) & 1)
 
@@ -306,6 +307,7 @@ static void add_device(const char *path)
     memset(d, 0, sizeof(*d));
     d->fd = fd;
     d->pad = touchpad;
+    plat_touchpad_present |= touchpad;
     d->abs = tablet && !mouse && !touchpad;
     if (d->abs || d->pad) {
         ioctl(fd, EVIOCGABS(ABS_X), &d->ax);
@@ -389,13 +391,20 @@ static void pad_report(struct dev *d)
                 plat_wheel(notches);
             }
         } else if (mx || my) {
-            /* Across the whole pad: 0.8 of the screen when slow, up to 2.5
-             * times that when fast. */
+            /* Across the whole pad, slowly: half the screen at the usual
+             * speed (50), from a quarter of that (0) to four times (100);
+             * moving fast, up to 1.8 times further. */
             int speed = abs(mx) + abs(my), slow = range / 250, fast = range / 50;
-            int gain = 256 + (speed > slow ? (speed - slow) * 384 / (fast > slow ? fast - slow : 1) : 0);
-            if (gain > 640)
-                gain = 640;
-            int64_t per = (int64_t)sw * 205 / range;    /* 1/256 px per unit, slow */
+            int gain = 256 + (speed > slow ? (speed - slow) * 205 / (fast > slow ? fast - slow : 1) : 0);
+            if (gain > 461)
+                gain = 461;
+            int mult = 256, q = plat_touchpad_speed - 50;  /* doubles every 25: 64 (0) to 1024 (100) */
+            for (; q >= 25; q -= 25)
+                mult *= 2;
+            for (; q < 0; q += 25)
+                mult /= 2;
+            mult = mult * (25 + q) / 25;
+            int64_t per = (int64_t)sw * 128 * mult / 256 / range;   /* 1/256 px a unit */
             d->fx += mx * per * gain / 256;
             d->fy += my * per * gain / 256;
             int ix = (int)(d->fx / 256), iy = (int)(d->fy / 256);
