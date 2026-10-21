@@ -106,6 +106,8 @@ static uint32_t step(const char *tok)
     } else if (!strncmp(tok, "press:", 6)) {
         buttons = (uint8_t)atoi(tok + 6);
         plat_pointer(x, y, buttons);
+    } else if (!strncmp(tok, "wheel:", 6)) {        /* notches, > 0 down */
+        plat_wheel(atoi(tok + 6));
     } else if (!strcmp(tok, "release")) {
         buttons = 0;
         plat_pointer(x, y, buttons);

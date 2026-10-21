@@ -4,23 +4,27 @@
 # (platform/nsfb_lkx.c). lkx-shell starts this with its socket on fd 3, which
 # exec keeps for netsurf-fb.
 #
-# Its cache and cookies live in RAM (/tmp: gone at a restart); the fonts are
-# DejaVu; it opens on LiteKern X's start page. NetSurf's own --options must
-# come first: it stops reading them at the first other argument (-f).
+# Its cache and cookies live in RAM (/tmp: gone at a restart); downloads go
+# to your Downloads folder on the stick; it opens on LiteKern X's start page.
+# The fonts: the desktop's, Ubuntu Sans (cut into plain faces:
+# linux/package/netsurf-lkx/make-fonts.py), with DejaVu for serif pages.
+# NetSurf's own --options must come first: it stops reading them at the
+# first other argument (-f).
 export HOME=/tmp/web
 mkdir -p "$HOME/.netsurf"
-F=/usr/share/fonts/dejavu
+U=/usr/share/fonts/ubuntu
+D=/usr/share/fonts/dejavu
 START=file:///usr/share/litekern/start.html
 exec /usr/bin/netsurf-fb \
-    --fb_face_sans_serif=$F/DejaVuSans.ttf \
-    --fb_face_sans_serif_bold=$F/DejaVuSans-Bold.ttf \
-    --fb_face_sans_serif_italic=$F/DejaVuSans-Oblique.ttf \
-    --fb_face_sans_serif_italic_bold=$F/DejaVuSans-BoldOblique.ttf \
-    --fb_face_serif=$F/DejaVuSerif.ttf \
-    --fb_face_serif_bold=$F/DejaVuSerif-Bold.ttf \
-    --fb_face_monospace=$F/DejaVuSansMono.ttf \
-    --fb_face_monospace_bold=$F/DejaVuSansMono-Bold.ttf \
-    --fb_face_cursive=$F/DejaVuSans-Oblique.ttf \
-    --fb_face_fantasy=$F/DejaVuSans.ttf \
+    --fb_face_sans_serif=$U/UbuntuSans-Regular.ttf \
+    --fb_face_sans_serif_bold=$U/UbuntuSans-Bold.ttf \
+    --fb_face_sans_serif_italic=$U/UbuntuSans-Italic.ttf \
+    --fb_face_sans_serif_italic_bold=$U/UbuntuSans-BoldItalic.ttf \
+    --fb_face_serif=$D/DejaVuSerif.ttf \
+    --fb_face_serif_bold=$D/DejaVuSerif-Bold.ttf \
+    --fb_face_monospace=$U/UbuntuSansMono-Regular.ttf \
+    --fb_face_monospace_bold=$U/UbuntuSansMono-Bold.ttf \
+    --fb_face_cursive=$U/UbuntuSans-Italic.ttf \
+    --fb_face_fantasy=$U/UbuntuSans-Regular.ttf \
     --homepage_url=$START \
     -f lkx "${1:-$START}"

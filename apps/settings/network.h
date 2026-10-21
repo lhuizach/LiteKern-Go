@@ -11,6 +11,7 @@ void network_page_draw(void);
 void network_page_layout(void);                     /* the window was resized */
 void network_page_tick(void);                       /* every 2 s while it shows: refresh */
 void network_page_pointer(const struct k86_event *ev);
+void network_page_scroll(const struct k86_event *ev);
 void network_page_key(const struct key_event *k);
 
 #endif

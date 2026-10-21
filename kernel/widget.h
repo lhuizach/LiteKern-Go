@@ -101,6 +101,10 @@ int wg_list_rows_shown(const struct wg_list *l);
 enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *p);
 /* Up/Down/Home/End/PgUp/PgDn move the selection; Enter activates. */
 enum wg_list_result wg_list_key(struct wg_list *l, const struct key_event *k);
+/* The wheel (K86_EVENT_SCROLL) at x, y: WG_SCROLL_ROWS rows a notch if over
+ * the list. 1 if it moved (dirty). */
+#define WG_SCROLL_ROWS 3
+int wg_list_scroll(struct wg_list *l, int x, int y, int notches);
 /* Change the row count (keeping the selection in range) / select a row and
  * scroll it into view. */
 void wg_list_set_count(struct wg_list *l, int count);

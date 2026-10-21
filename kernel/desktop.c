@@ -15,6 +15,7 @@
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
 #include "kernel/lockscreen.h"
+#include "kernel/machine.h"
 #include "kernel/net.h"
 #include "kernel/settings.h"
 #include "kernel/users.h"
@@ -497,7 +498,7 @@ static struct gfx_rect dock_icon_rect(int i)
 
 /* --- hit testing ---------------------------------------------------------------------- */
 
-enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_WBTN, H_WCTL, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
+enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_BATTERY, H_WBTN, H_WCTL, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_BAR };
 
 static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT };
@@ -536,6 +537,38 @@ static struct gfx_rect net_rect(void)
     return (struct gfx_rect){ p.x - BAR_BUTTON_W - 4, p.y, BAR_BUTTON_W, BAR_BUTTON_H };
 }
 
+/* The battery (kernel/machine.h), left of those: its icon and how full, "87%"
+ * (only with a battery). */
+static struct k86_machine machine_shown = { .battery = -1 };
+static int battery_present(void) { return machine_shown.battery >= 0; }
+
+static void battery_text(char out[8])
+{
+    int p = machine_shown.battery, n = 0;
+    if (p >= 100)
+        out[n++] = '1';
+    if (p >= 10)
+        out[n++] = (char)('0' + p / 10 % 10);
+    out[n++] = (char)('0' + p % 10);
+    out[n++] = '%';
+    out[n] = '\0';
+}
+
+static struct gfx_rect battery_rect(void)
+{
+    char text[8];
+    battery_text(text);
+    int w = 10 + 21 + 6 + text_width(text, TEXT_BOLD) + 10;
+    int right = (net_present() ? net_rect().x : power_rect().x) - 4;
+    return (struct gfx_rect){ right - w, power_rect().y, w, BAR_BUTTON_H };
+}
+
+/* Where the status icons start: what's left of it is the top bar's. */
+static int status_left(void)
+{
+    return battery_present() ? battery_rect().x : net_present() ? net_rect().x : power_rect().x;
+}
+
 /* --- a maximised window's header, in the top bar -------------------------------------------
  * The focused window, when it's maximised, has no header bar (kernel/wm.h:
  * wm_header_hidden): its buttons follow the app's name on the left (Settings'
@@ -561,7 +594,7 @@ static void wbar_layout(struct wm_window *w, struct gfx_rect btn[WM_MAX_BUTTONS]
     const struct theme *t = T();
     int y = (t->topbar_h - WBAR_H) / 2;
     int left = t->spacing + BAR_BUTTON_W + t->spacing * 2 + text_width(focused_name(), TEXT_BOLD) + 14;
-    int right = (net_present() ? net_rect().x : power_rect().x) - 10;
+    int right = status_left() - 10;
     for (int k = 2; k >= 0; k--) {
         ctl[k] = (struct gfx_rect){ right - WCTL_SIZE, (t->topbar_h - WCTL_SIZE) / 2, WCTL_SIZE, WCTL_SIZE };
         right -= WCTL_SIZE + WCTL_GAP;
@@ -640,6 +673,8 @@ static struct hit hit_at(int x, int y)
             return (struct hit){ H_POWER, 0 };
         if (net_present() && inside(net_rect(), x, y))
             return (struct hit){ H_NET, 0 };
+        if (battery_present() && inside(battery_rect(), x, y))
+            return (struct hit){ H_BATTERY, 0 };
         struct wm_window *w = merged();
         if (w) {
             struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
@@ -672,6 +707,7 @@ static void damage_hit(struct hit h)
     case H_HOME:     shell_damage(home_rect()); break;
     case H_POWER:    shell_damage(power_rect()); break;
     case H_NET:      shell_damage(net_rect()); break;
+    case H_BATTERY:  shell_damage(battery_rect()); break;
     case H_WBTN:
     case H_WCTL:     shell_damage((struct gfx_rect){ 0, 0, S()->w, T()->topbar_h }); break;
     case H_RESTART:
@@ -750,6 +786,37 @@ static void draw_net_icon(int cx, int cy, const struct k86_net *n, uint32_t bg)
     gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 15, 1, c);
     gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 1, 2, c);
     gfx_fill_rect(VS, VX(cx + 7), VY(cy + 1), 1, 2, c);
+}
+
+/* A battery on its side, filled as far as it's full (red when nearly empty),
+ * with a lightning bolt while it charges; then "87%". */
+static void draw_battery(struct gfx_rect r, const struct k86_machine *m, uint32_t bg)
+{
+    int x = r.x + 10, cy = r.y + r.h / 2, low = m->battery <= 10 && m->charging == K86_BATTERY_DISCHARGING;
+    uint32_t c = SHELL_FG, fill = low ? 0xff6b6b : SHELL_FG;
+    gfx_fill_round_rect(VS, VX(x), VY(cy - 6), 19, 12, 3, c);         /* the case */
+    gfx_fill_round_rect(VS, VX(x + 2), VY(cy - 4), 15, 8, 1, bg);
+    gfx_fill_rect(VS, VX(x + 19), VY(cy - 2), 2, 4, c);               /* the terminal */
+    int w = (m->battery * 13 + 50) / 100;
+    if (w > 0)
+        gfx_fill_rect(VS, VX(x + 3), VY(cy - 3), w, 6, fill);
+    if (m->charging == K86_BATTERY_CHARGING) {
+        /* The bolt, outlined in the bar's colour so it shows over the fill. */
+        static const char *const bolt[] = { "..##", ".##.", "####", ".##.", "##.." };
+        for (int pass = 0; pass < 2; pass++)
+            for (int j = 0; j < 5; j++)
+                for (int i = 0; i < 4; i++)
+                    if (bolt[j][i] == '#') {
+                        int bx = x + 8 + i, by = cy - 3 + j;
+                        if (pass == 0)
+                            gfx_fill_rect(VS, VX(bx - 1), VY(by - 1), 3, 3, bg);
+                        else
+                            gfx_fill_rect(VS, VX(bx), VY(by), 1, 1, c);
+                    }
+    }
+    char text[8];
+    battery_text(text);
+    text_draw(VS, VX(x + 27), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), text, TEXT_BOLD, SHELL_FG);
 }
 
 static void draw_power_icon(int cx, int cy, uint32_t c, uint32_t bg)
@@ -873,6 +940,12 @@ static void draw_topbar(void)
         bg = hit_bg((struct hit){ H_NET, 0 }, t->topbar_bg);
         gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
         draw_net_icon(r.x + r.w / 2, r.y + r.h / 2, &net_shown, bg);
+    }
+    if (battery_present()) {
+        r = battery_rect();
+        bg = hit_bg((struct hit){ H_BATTERY, 0 }, t->topbar_bg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+        draw_battery(r, &machine_shown, bg);
     }
 }
 
@@ -1331,9 +1404,10 @@ static void activate(struct hit h)
             wm_press_control(merged(), h.app);
         break;
     case H_NET:                             /* Settings, where the Network page is */
+    case H_BATTERY:                         /* ...and the System page */
         for (int i = 0; i < builtin_app_count; i++)
             if (!strcmp(builtin_apps[i].name, "Settings")) {
-                launch(i, net_rect());
+                launch(i, h.kind == H_NET ? net_rect() : battery_rect());
                 break;
             }
         break;
@@ -1501,6 +1575,13 @@ static void track_peek(int x, int y)
     }
 }
 
+void desktop_input_scroll(int x, int y, int notches)
+{
+    if (started && (menu_open || grid_open || hit_at(x, y).kind != H_NONE))
+        return;                 /* the shell's own parts don't scroll */
+    wm_input_scroll(x, y, notches);
+}
+
 void desktop_input_mouse(int x, int y, uint8_t buttons)
 {
     if (!started) {             /* the self-tests: just the windows */
@@ -1583,6 +1664,8 @@ int desktop_input_key(const struct key_event *k)
     return 1;
 }
 
+static int last_machine_tick;
+
 void desktop_tick(void)
 {
     if (!started)
@@ -1592,11 +1675,20 @@ void desktop_tick(void)
     if (!rtc || dev_ioctl(rtc, RTC_GET_TICKS, &ticks) < 0 || ticks == last_tick)
         return;
     last_tick = ticks;
-    struct k86_net n;                       /* the network icon: redrawn when it changes */
+    struct k86_net n;                       /* the network and battery icons: redrawn when they change */
     net_status(&n);
-    if (memcmp(&n, &net_shown, sizeof(n))) {
+    struct k86_machine m = machine_shown;
+    if (ticks % 5 == 0 || !last_machine_tick) {
+        machine_status(&m);
+        m.minutes = m.brightness = m.timezone = 0;     /* the icon shows only these */
+        last_machine_tick = 1;
+    }
+    if (memcmp(&n, &net_shown, sizeof(n)) || memcmp(&m, &machine_shown, sizeof(m))) {
+        int from = status_left();
         net_shown = n;
-        shell_damage((struct gfx_rect){ net_rect().x, 0, BAR_BUTTON_W, T()->topbar_h });
+        machine_shown = m;
+        int left = status_left() < from ? status_left() : from;
+        shell_damage((struct gfx_rect){ left - 200, 0, power_rect().x - left + 200, T()->topbar_h });
         shell_flush();
     }
     struct rtc_time now;

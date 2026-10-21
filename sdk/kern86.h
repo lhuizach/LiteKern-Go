@@ -240,4 +240,21 @@ static inline int k86_net_forget(const char *ssid)
     return k86_call(SYS_NET_FORGET, (uint32_t)ssid, 0, 0, 0);
 }
 
+/* The machine (the Linux port; the kernel version: no battery, -1s, -ENODEV). */
+static inline int k86_machine(struct k86_machine *out)
+{
+    return k86_call(SYS_MACHINE, (uint32_t)out, 0, 0, 0);
+}
+
+static inline int k86_brightness_set(int percent)
+{
+    return k86_call(SYS_BRIGHTNESS_SET, (uint32_t)percent, 0, 0, 0);
+}
+
+/* zone: an index in kernel/timezones.h. */
+static inline int k86_timezone_set(int zone)
+{
+    return k86_call(SYS_TIMEZONE_SET, (uint32_t)zone, 0, 0, 0);
+}
+
 #endif

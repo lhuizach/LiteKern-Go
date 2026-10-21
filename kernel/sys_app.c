@@ -8,6 +8,7 @@
 #include "kernel/font.h"
 #include "kernel/lkx.h"
 #include "kernel/lockscreen.h"
+#include "kernel/machine.h"
 #include "kernel/net.h"
 #include "kernel/users.h"
 #include "kernel/kern86_abi.h"
@@ -474,7 +475,7 @@ static int fs_write(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, 
     struct fat_volume *v;
     uint32_t dir;
     char name[K86_NAME_MAX];
-    if (len > 1024 * 1024 || user_check(buf, len, 0))
+    if (len > 32 * 1024 * 1024 || user_check(buf, len, 0))
         return -EFAULT;
     int err = resolve(vol, upath, &v, &dir);
     if (!err)
@@ -554,6 +555,16 @@ static int net_forget_user(uint32_t ussid)
     return err ? err : net_forget(ssid);
 }
 
+/* --- the machine (kernel/machine.h) ------------------------------------------------ */
+
+static int machine_out(uint32_t out)
+{
+    if (user_check(out, sizeof(struct k86_machine), 1))
+        return -EFAULT;
+    machine_status((struct k86_machine *)out);
+    return 0;
+}
+
 int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
 {
     switch (nr) {
@@ -587,6 +598,9 @@ int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uin
     case SYS_NET_SCAN:       return net_scan_out(a1, a2);
     case SYS_NET_JOIN:       return net_join_user(a1, a2);
     case SYS_NET_FORGET:     return net_forget_user(a1);
+    case SYS_MACHINE:        return machine_out(a1);
+    case SYS_BRIGHTNESS_SET: return machine_set_brightness((int)a1);
+    case SYS_TIMEZONE_SET:   return machine_set_timezone((int)a1);
     default:                 return -ENOSYS;
     }
 }

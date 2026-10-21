@@ -67,6 +67,8 @@ static void log_event(struct wm_window *w, const struct wm_event *ev)
     (void)w;
     if (ev->type == WM_EVENT_KEY)
         log_key(&ev->key);
+    else if (ev->type == WM_EVENT_SCROLL)
+        console_scroll(-3 * ev->id);    /* the wheel: three lines a notch */
     else if (ev->type == WM_EVENT_RESIZE || ev->type == WM_EVENT_THEME)
         log_target();               /* the new size or colours, redrawn */
 }

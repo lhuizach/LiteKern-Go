@@ -33,14 +33,9 @@ while [ -z "$disk" ] && [ $i -lt 100 ]; do
 done
 echo "lkx-start: disk ${disk:-not found} after $((i * 200)) ms" > "$out"
 
-# The time: the EeePC's clock keeps local time (as its BIOS shows it), in
-# England's time zone (GMT; British Summer Time from the last Sunday of March
-# to the last of October). Once connected, lkx-shell sets it from the internet
-# and writes it back (platform/net.c).
-export TZ=GMT0BST,M3.5.0/1,M10.5.0
-hwclock -s -l 2>/dev/null
-echo "lkx-start: the EeePC's clock says $(date '+%Y-%m-%d %H:%M')" > "$out"
-
+# The time: lkx-shell reads the EeePC's clock in the time zone Settings chose
+# (London unless changed: platform/machine.c), and sets it from the internet
+# once connected (platform/net.c).
 export LKX_APPS=/usr/lib/litekern
 export LKX_TARGET=1
 

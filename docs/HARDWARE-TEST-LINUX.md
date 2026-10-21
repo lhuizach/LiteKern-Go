@@ -18,13 +18,17 @@ What you'll see: a black screen for a few seconds while Linux starts (no text on
 | Check | What should happen |
 |---|---|
 | Boot | The desktop appears, filling the screen (1024x600, no black bars). Note roughly how many seconds from the ASUS logo to the desktop |
-| Touchpad | The pointer moves smoothly; tapping clicks (as on the kernel version) |
+| Touchpad | The pointer moves smoothly (faster when you move fast); a tap clicks, a two-finger tap right-clicks; the buttons work; **two fingers moving up and down scroll** (try Files, Settings → System's time zones, a web page). If the touchpad misbehaves, see below |
 | Keyboard | Open Calculator from the app menu and type `5+3` and Enter (AZERTY: the digits need Shift): it shows 8 |
-| A USB mouse | Plug one in: it works at once, **at full speed** (the BIOS slowdown is gone: Linux drives USB itself) |
+| A USB mouse | Plug one in: it works at once, **at full speed** (the BIOS slowdown is gone: Linux drives USB itself); its wheel scrolls |
 | Apps | Files, Settings (change the style; restart; still changed), Blocksmith (F5 runs the project) |
 | Power menu | Shut Down switches the EeePC off; Restart restarts it |
 | Wi-Fi | Settings → Network (its tab): your network is listed; Connect, type the password: "Connected", and the Wi-Fi icon lights up in the top bar. Restart: it joins by itself. If the list says Wi-Fi is switched off, press **Fn+F2** |
-| Web | With Wi-Fi or Ethernet connected: the app menu's **Web** opens the start page; Wikipedia and a DuckDuckGo search load. Note how long a page takes |
+| Web | With Wi-Fi or Ethernet connected: the app menu's **Web** opens the start page; Wikipedia and a DuckDuckGo search load (no "privacy error": the clock is set from the internet). Pages are in the desktop's font. Note how long a page takes |
+| Downloads | In Web, click a link to a file (a .zip or .pdf, under 32 MB): the status bar says "Downloading..." then "Saved /Downloads/..."; Files shows it in Downloads |
+| Battery | The top bar shows the battery and its %; unplug the charger: Settings → **System** says "on battery" and, after a minute, how long is left |
+| Brightness | Fn+F5 / Fn+F6 dim and brighten the screen; Settings → System's slider moves it too, and it's kept after a restart |
+| Time zone | Settings → System: London is chosen and the top bar's clock is right; pick another city, the clock follows |
 | Ethernet | Plug in a cable: the Network page says connected, with an address; unplug it: no cable |
 
 **Photo:** the **Log** app (the dock), scrolled to the top, then to these lines:
@@ -33,6 +37,8 @@ What you'll see: a black screen for a few seconds while Linux starts (no text on
 - every `input: ...` line — the keyboard and touchpad Linux found
 - `[boot] desktop t=...`
 - every `net: ...` line (which network chips Linux found, and Wi-Fi joining)
+- `input: touchpad ...` (its size) and the `machine: ...` lines (backlight, time zone)
+- the `linux: ...` lines: Linux's own warnings (anything red-flag looking is worth a photo)
 
 ## If something goes wrong
 | What you see | What to send |
@@ -41,3 +47,4 @@ What you'll see: a black screen for a few seconds while Linux starts (no text on
 | A black screen that stays black | Wait a minute, then a photo; then hold the power button |
 | The desktop, but no pointer movement or no keys | A photo of the Log's `input:` lines |
 | `lkx-start: disk not found` in the Log | Which USB port the stick is in; try another |
+| The touchpad jumps, doesn't click or doesn't move | A photo of the Log's `input:` lines. To use it the old way meanwhile (no scrolling): hold **Shift** as the stick starts, type `mouse` at `boot:` and press Enter |

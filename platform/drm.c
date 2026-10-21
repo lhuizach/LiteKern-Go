@@ -9,10 +9,13 @@
  *           ones plugged in later (inotify on /dev/input)
  *
  * Linux's evdev key codes become the kernel's (plat_evdev_key()); the layout
- * (AZERTY) is LiteKern X's own. Pointers: relative ones (the touchpad, as a
- * PS/2 mouse: psmouse.proto=exps, and USB mice) move the pointer by what they
- * send, as the kernel version's PS/2 driver did; absolute ones (tablets)
- * place it. */
+ * (AZERTY) is LiteKern X's own. Pointers: relative ones (USB mice; the
+ * touchpad when started as a plain PS/2 mouse, psmouse.proto=exps) move the
+ * pointer by what they send, their wheel scrolls; absolute ones (tablets)
+ * place it. A touchpad (Linux's own driver: the EeePC's Elantech) is ours to
+ * make sense of: one finger moves the pointer (faster when it moves fast), a
+ * tap clicks (two fingers: right click, three: middle), two fingers moving
+ * scroll, as the page follows them. */
 #include "platform/platform.h"
 #include "kernel/input.h"
 #include "kernel/printk.h"
@@ -253,7 +256,13 @@ static void flush(void)
 static struct dev {
     int fd;
     int abs;                        /* a tablet: place the pointer */
+    int pad;                        /* a touchpad: moves, taps and scrolls (below) */
     struct input_absinfo ax, ay;
+    /* The touchpad: what this report says, and the touch so far. */
+    int x, y, fingers, touching;
+    int was_touching, last_x, last_y, last_fingers, most_fingers, travel;
+    uint32_t touch_ms;
+    int64_t fx, fy, fs;             /* moves still to come: 1/256 px, 1/256 notch */
     char name[64];
     int num;                        /* its eventN */
 } devs[DEVS];
@@ -280,6 +289,7 @@ static void add_device(const char *path)
     int mouse = BIT(ev, EV_REL) && BIT(rel, REL_X) && BIT(keys, BTN_LEFT);
     int tablet = BIT(ev, EV_ABS) && BIT(abs, ABS_X) && BIT(abs, ABS_Y) &&
                  (BIT(keys, BTN_LEFT) || BIT(keys, BTN_TOUCH));
+    int touchpad = tablet && BIT(keys, BTN_TOOL_FINGER);
     if (!keyboard && !mouse && !tablet) {
         kprintf("input: %s left alone (not a keyboard or pointer)\n", *name ? name : path);
         close(fd);
@@ -295,8 +305,9 @@ static void add_device(const char *path)
     }
     memset(d, 0, sizeof(*d));
     d->fd = fd;
-    d->abs = tablet && !mouse;
-    if (d->abs) {
+    d->pad = touchpad;
+    d->abs = tablet && !mouse && !touchpad;
+    if (d->abs || d->pad) {
         ioctl(fd, EVIOCGABS(ABS_X), &d->ax);
         ioctl(fd, EVIOCGABS(ABS_Y), &d->ay);
     }
@@ -306,7 +317,9 @@ static void add_device(const char *path)
     struct epoll_event e = { .events = EPOLLIN, .data.ptr = d };
     epoll_ctl(ep, EPOLL_CTL_ADD, fd, &e);
     kprintf("input: %s (%s%s%s)\n", d->name, keyboard ? "keyboard" : "", keyboard && (mouse || tablet) ? ", " : "",
-            mouse ? "pointer" : tablet ? "tablet" : "");
+            mouse ? "pointer" : touchpad ? "touchpad pointer" : tablet ? "tablet" : "");
+    if (touchpad)
+        kprintf("input: touchpad %d-%d x %d-%d\n", d->ax.minimum, d->ax.maximum, d->ay.minimum, d->ay.maximum);
 }
 
 /* Every eventN not looked at yet (seen[]: once each, kept or not). Called at
@@ -340,6 +353,82 @@ static int scale(int v, const struct input_absinfo *a, int size)
     return range > 0 ? (int)((int64_t)(v - a->minimum) * (size - 1) / range) : 0;
 }
 
+/* --- the touchpad: sizes are fractions of the pad's width, so any pad feels the same */
+#define TAP_MS        180       /* a touch this short that hardly moved is a tap */
+#define TAP_TRAVEL    40        /* ...moving at most 1/40 of the width */
+#define SCROLL_NOTCH  25        /* two fingers moving 1/25 of the width: a notch */
+
+static void pad_click(uint8_t b)
+{
+    plat_pointer(px, py, buttons | b);
+    plat_pointer(px, py, buttons);
+}
+
+static void pad_report(struct dev *d)
+{
+    int range = d->ax.maximum - d->ax.minimum;
+    if (range <= 0)
+        range = 1000;
+    if (d->touching && !d->was_touching) {          /* a finger comes down */
+        d->touch_ms = uptime_ms();
+        d->travel = 0;
+        d->most_fingers = d->fingers;
+        d->fx = d->fy = d->fs = 0;
+    } else if (d->touching) {
+        int mx = d->x - d->last_x, my = d->y - d->last_y;
+        if (d->fingers != d->last_fingers)
+            mx = my = 0;                            /* fingers came or went: the spot jumps */
+        d->travel += abs(mx) + abs(my);
+        if (d->fingers > d->most_fingers)
+            d->most_fingers = d->fingers;
+        if (d->fingers >= 2) {
+            d->fs -= (int64_t)my * 256 * SCROLL_NOTCH / range;  /* the page follows: up scrolls down */
+            int notches = (int)(d->fs / 256);
+            if (notches) {
+                d->fs -= (int64_t)notches * 256;
+                plat_wheel(notches);
+            }
+        } else if (mx || my) {
+            /* Across the whole pad: 0.8 of the screen when slow, up to 2.5
+             * times that when fast. */
+            int speed = abs(mx) + abs(my), slow = range / 250, fast = range / 50;
+            int gain = 256 + (speed > slow ? (speed - slow) * 384 / (fast > slow ? fast - slow : 1) : 0);
+            if (gain > 640)
+                gain = 640;
+            int64_t per = (int64_t)sw * 205 / range;    /* 1/256 px per unit, slow */
+            d->fx += mx * per * gain / 256;
+            d->fy += my * per * gain / 256;
+            int ix = (int)(d->fx / 256), iy = (int)(d->fy / 256);
+            d->fx -= (int64_t)ix * 256;
+            d->fy -= (int64_t)iy * 256;
+            if (ix || iy) {
+                px += ix, py += iy;
+                px = px < 0 ? 0 : px >= sw ? sw - 1 : px;
+                py = py < 0 ? 0 : py >= sh ? sh - 1 : py;
+                plat_pointer(px, py, buttons);
+            }
+        }
+    } else if (d->was_touching) {                   /* lifted: was it a tap? */
+        if (uptime_ms() - d->touch_ms <= TAP_MS && d->travel * TAP_TRAVEL <= range)
+            pad_click(d->most_fingers >= 3 ? MOUSE_MIDDLE : d->most_fingers == 2 ? MOUSE_RIGHT : MOUSE_LEFT);
+    }
+    d->was_touching = d->touching;
+    d->last_x = d->x, d->last_y = d->y, d->last_fingers = d->fingers;
+}
+
+/* BTN_TOOL_*: how many fingers are down. */
+static int tool_fingers(int code)
+{
+    switch (code) {
+    case BTN_TOOL_FINGER:    return 1;
+    case BTN_TOOL_DOUBLETAP: return 2;
+    case BTN_TOOL_TRIPLETAP: return 3;
+    case BTN_TOOL_QUADTAP:   return 4;
+    case BTN_TOOL_QUINTTAP:  return 5;
+    default:                 return 0;
+    }
+}
+
 static void read_device(struct dev *d)
 {
     struct input_event evs[64];
@@ -352,7 +441,26 @@ static void read_device(struct dev *d)
         }
         for (int i = 0; i < n / (int)sizeof(evs[0]); i++) {
             struct input_event *e = &evs[i];
-            if (e->type == EV_KEY && e->code < BTN_MISC) {
+            if (d->pad && e->type == EV_KEY && tool_fingers(e->code)) {
+                if (e->value)
+                    d->fingers = tool_fingers(e->code);
+                else if (d->fingers == tool_fingers(e->code))
+                    d->fingers = 0;
+            } else if (d->pad && e->type == EV_KEY && e->code == BTN_TOUCH) {
+                d->touching = e->value != 0;
+            } else if (d->pad && e->type == EV_ABS && (e->code == ABS_X || e->code == ABS_Y)) {
+                *(e->code == ABS_X ? &d->x : &d->y) = e->value;
+            } else if (d->pad && e->type == EV_SYN && e->code == SYN_REPORT) {
+                if (!d->fingers && d->touching)
+                    d->fingers = 1;
+                pad_report(d);
+                if (moved) {                    /* its buttons changed */
+                    moved = 0;
+                    plat_pointer(px, py, buttons);
+                }
+            } else if (e->type == EV_REL && e->code == REL_WHEEL) {
+                plat_wheel(-e->value);          /* evdev: away from you is +1 */
+            } else if (e->type == EV_KEY && e->code < BTN_MISC) {
                 plat_key(plat_evdev_key(e->code), e->value != 0);
             } else if (e->type == EV_KEY && (e->code == BTN_LEFT || e->code == BTN_RIGHT || e->code == BTN_MIDDLE)) {
                 uint8_t b = e->code == BTN_LEFT ? MOUSE_LEFT : e->code == BTN_RIGHT ? MOUSE_RIGHT : MOUSE_MIDDLE;

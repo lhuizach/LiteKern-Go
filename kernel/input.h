@@ -56,7 +56,9 @@
 struct mouse_event {
     int16_t dx, dy;
     uint8_t buttons;    /* MOUSE_* held after this packet */
-    uint8_t reserved[3];
+    int8_t wheel;       /* scroll notches: > 0 down (the page moves up), < 0 up. The
+                         * Linux build: a mouse's wheel, two fingers on the touchpad */
+    uint8_t reserved[2];
 };
 
 struct key_event {

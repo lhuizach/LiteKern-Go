@@ -51,6 +51,8 @@ enum wm_event_type {
     WM_EVENT_THEME,         /* the style or accent changed: redraw */
     WM_EVENT_RESIZE,        /* x, y: the content's new width and height: lay out and
                              * redraw (the content surface already has the new size) */
+    WM_EVENT_SCROLL = 8,    /* x, y (content coordinates), id: wheel notches, > 0 down.
+                             * (7 is the apps' timer event, kernel/kern86_abi.h) */
 };
 
 struct wm_event {
@@ -158,6 +160,9 @@ struct gfx_rect wm_bounds(const struct wm_window *w);
  * returns 1 if a window took it (anything over a window, or a drag). */
 void wm_input_key(const struct key_event *key);
 int wm_input_mouse(int x, int y, uint8_t buttons);
+/* The wheel turned `notches` (> 0 down) with the pointer at x, y: to the
+ * window under it (focused or not), if over its content. 1 if one took it. */
+int wm_input_scroll(int x, int y, int notches);
 /* The pointer left the windows for the shell (the dock, the top bar). */
 void wm_pointer_gone(void);
 

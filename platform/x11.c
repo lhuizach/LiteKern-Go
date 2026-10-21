@@ -284,6 +284,10 @@ static void event(const uint8_t *e)
             plat_key(plat_evdev_key(e[1] - 8u), (e[0] & 0x7f) == 2);
         break;
     case 4:                                         /* ButtonPress */
+        if (e[1] == 4 || e[1] == 5) {               /* the wheel: up, down */
+            plat_wheel(e[1] == 4 ? -1 : 1);
+            break;
+        }
         buttons |= button_bit(e[1]);
         plat_pointer(ex, ey, buttons);
         break;

@@ -107,6 +107,9 @@ static const struct kip_call kip_calls[] = {
     [SYS_NET_SCAN]        = { { { KIP_OUT, 2, 0, sizeof(struct k86_wifi) }, V } },
     [SYS_NET_JOIN]        = { { S, S } },
     [SYS_NET_FORGET]      = { { S } },
+    [SYS_MACHINE]         = { { OUT(sizeof(struct k86_machine)) } },
+    [SYS_BRIGHTNESS_SET]  = { { V } },
+    [SYS_TIMEZONE_SET]    = { { V } },
 };
 #define KIP_CALLS (sizeof(kip_calls) / sizeof(kip_calls[0]))
 

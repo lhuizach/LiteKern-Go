@@ -189,6 +189,21 @@ static void scroll_to(struct wg_list *l, int i)
         l->top = 0;
 }
 
+int wg_list_scroll(struct wg_list *l, int x, int y, int notches)
+{
+    if (x < l->r.x || x >= l->r.x + l->r.w || y < l->r.y || y >= l->r.y + l->r.h)
+        return 0;
+    int top = l->top + notches * WG_SCROLL_ROWS;
+    top = top > max_top(l) ? max_top(l) : top;
+    top = top < 0 ? 0 : top;
+    if (top == l->top)
+        return 0;
+    l->top = top;
+    l->hover = -1;
+    l->dirty = 1;
+    return 1;
+}
+
 void wg_list_select(struct wg_list *l, int i)
 {
     if (i >= l->count)

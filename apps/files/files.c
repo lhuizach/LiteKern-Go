@@ -884,6 +884,10 @@ int main(void)
         switch (ev.type) {
         case K86_EVENT_KEY:     key(&ev.key); break;
         case K86_EVENT_POINTER: pointer(&ev); break;
+        case K86_EVENT_SCROLL:
+            if (!viewing && dialog_for == NONE && wg_list_scroll(&list, ev.x, ev.y, ev.id))
+                draw_dirty();
+            break;
         case K86_EVENT_HEADER:
             if (ev.id == BACK_ID)
                 go_back();

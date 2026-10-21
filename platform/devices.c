@@ -139,8 +139,8 @@ void plat_pointer(int x, int y, uint8_t buttons)
             mtail++;
             mdropped++;
         }
-        moves[mhead++ % QUEUE] = (struct mouse_event){ (int16_t)sx, (int16_t)sy,
-                                                       last ? buttons : held, { 0 } };
+        moves[mhead++ % QUEUE] = (struct mouse_event){ .dx = (int16_t)sx, .dy = (int16_t)sy,
+                                                       .buttons = last ? buttons : held };
         dx -= sx;
         dy -= sy;
         if (last)
@@ -148,6 +148,19 @@ void plat_pointer(int x, int y, uint8_t buttons)
     }
     px = x;
     py = y;
+}
+
+void plat_wheel(int notches)
+{
+    while (notches) {
+        int n = notches > 127 ? 127 : notches < -127 ? -127 : notches;
+        if (mhead - mtail == QUEUE) {
+            mtail++;
+            mdropped++;
+        }
+        moves[mhead++ % QUEUE] = (struct mouse_event){ .buttons = held, .wheel = (int8_t)n };
+        notches -= n;
+    }
 }
 
 static int no_init(device_t *dev)

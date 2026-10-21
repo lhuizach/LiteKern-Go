@@ -164,6 +164,21 @@ check "Wi-Fi: a remembered network is joined by itself after a restart" \
     '^net: Ethernet eth0, Wi-Fi wlan0 \(1 remembered\)$' \
     '^net: Wi-Fi connected to LiteKern Test, 192\.168\.77\.[0-9]+$'
 
+# --- the machine and scrolling (phase L4) -------------------------------------------------------
+# Linux's messages in the Log; London's time. Settings -> System (its tab at
+# 363,147): QEMU's wheel (a notch down: mouse_move's dz -1) reaches the time
+# zones through Linux (evdev) and scrolls three rows, so the first row
+# (700,307) is Paris.
+path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:1; go "$SETTINGS_TILE" $GRID_Y; click; add sleep:2
+go 363 147; click; add sleep:1.5; go 700 400; add sleep:0.3 move:0,0,-1 sleep:0.8; go 700 307; click; add sleep:1
+KEYS="$P" KEYS_DONE='^machine: time zone Paris' boot_until build-linux/test-image/disk.img "$ready_re" 120
+check "the Log has Linux's messages; QEMU's wheel scrolls Settings' time zones; one is picked" \
+    "^linux: \(Linux's warnings while starting; its news from now on\)$" \
+    '^machine: time zone London; the clock says ' \
+    '^user: settings: page system$' \
+    '^machine: time zone Paris, Brussels$' \
+    '!only [0-9]+MB will be used'
+
 # --- the browser (phase L6) ---------------------------------------------------------------------
 # The Web app (NetSurf, from the system image: its own kerns.json) in the app
 # menu (7 tiles at y 363: Web the fifth, x 623); it opens a LiteKern X window
@@ -194,6 +209,32 @@ if curl -s -m 5 -o /dev/null https://html.duckduckgo.com/html/; then
 else
     echo "SKIP  the Web app's HTTPS search (no internet here)"
 fi
+
+# A download (download_lkx.c): a file served from this machine (QEMU's 10.0.2.2),
+# its address typed into the Web app's address bar (URL_X, URL_Y; AZERTY by key
+# position: ":" is the dot key, "/" Shift+dot, "." Shift+comma, digits shifted).
+# It lands in Downloads on the stick, whole.
+mkdir -p build-linux/test-image/www
+head -c 300000 /dev/urandom > build-linux/test-image/www/t.bin
+python3 -m http.server 8123 --bind 127.0.0.1 --directory build-linux/test-image/www >/dev/null 2>&1 &
+www=$!
+sleep 0.5
+URL_X=500 URL_Y=180
+cp build-linux/litekernx-linux.img build-linux/test-image/download.img
+path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:1; go $WEB_X $GRID_Y; click; add sleep:7
+go $URL_X $URL_Y; click; add sleep:0.3 end; for i in $(seq 45); do add backspace; done
+add h t t p dot shift-dot shift-dot shift-1 shift-0 shift-comma shift-0 shift-comma shift-2 shift-comma shift-2 \
+    dot shift-8 shift-1 shift-2 shift-3 shift-dot t shift-comma b i n ret sleep:6
+KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=14 SCREEN="corner=" boot_until build-linux/test-image/download.img "$ready_re" 120
+cp build-linux/test-image/shot.png build-linux/test-image/download.png
+kill $www 2>/dev/null
+mcopy -o -i build-linux/test-image/download.img@@4194304 ::/Downloads/t.bin build-linux/test-image/got.bin 2>/dev/null
+out+=$'\n'"download: $(cmp -s build-linux/test-image/www/t.bin build-linux/test-image/got.bin && echo same || echo missing)"
+rm -f build-linux/test-image/got.bin
+check "the Web app downloads a file into Downloads on the stick" \
+    '^user: browser: open$' \
+    '^download: same$' \
+    '!lkx: Web (crashed|exited)'
 
 # The power menu's Shut Down (its second item, y 74-108): Linux switches the VM off.
 path; go 998 15; click; add sleep:0.5; go 930 91; click

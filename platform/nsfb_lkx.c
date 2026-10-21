@@ -17,6 +17,7 @@
 #define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -34,7 +35,7 @@ static struct k86_window win;
 static int opened, cur_w, cur_h;
 
 /* Events made from one LiteKern X event (a press is a move, then a button). */
-#define QUEUE 16
+#define QUEUE 32
 static nsfb_event_t queue[QUEUE];
 static int qhead, qtail;
 static uint8_t buttons;
@@ -216,6 +217,15 @@ static bool lkx_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
         case K86_EVENT_KEY:
             key(&ev.key);
             break;
+        case K86_EVENT_SCROLL: {            /* the wheel: X11's buttons 4 and 5, 100 px a notch */
+            push_move(ev.x, ev.y);
+            int n = ev.id < 0 ? -ev.id : ev.id, code = ev.id < 0 ? NSFB_KEY_MOUSE_4 : NSFB_KEY_MOUSE_5;
+            for (int i = 0; i < n && i < 8; i++) {
+                push(NSFB_EVENT_KEY_DOWN, code);
+                push(NSFB_EVENT_KEY_UP, code);
+            }
+            break;
+        }
         default:
             break;                          /* the theme, header buttons: nothing here */
         }
@@ -223,6 +233,37 @@ static bool lkx_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
     *event = queue[qtail];
     qtail = (qtail + 1) % QUEUE;
     return true;
+}
+
+/* The Web app's downloads (linux/package/netsurf-lkx/download_lkx.c, in
+ * NetSurf's front end): the file saved in the user's Downloads folder
+ * (made if it isn't there), as "name", or "name (2)"... when that's taken.
+ * 0 and the path in `saved`, or a negative errno. */
+int lkx_save_download(const char *name, const void *data, unsigned len, char *saved, int max);
+int lkx_save_download(const char *name, const void *data, unsigned len, char *saved, int max)
+{
+    char home[K86_PATH_MAX], folder[K86_PATH_MAX], file[K86_NAME_MAX];
+    int vol = k86_call(SYS_HOME, (uint32_t)home, 0, 0, 0);
+    if (vol < 0)
+        return vol;
+    k86_call(SYS_FS_CREATE, (uint32_t)vol, (uint32_t)home, (uint32_t)"Downloads", 1);    /* -EEXIST: fine */
+    snprintf(folder, sizeof(folder), "%s%sDownloads", home, strcmp(home, "/") ? "/" : "");
+    /* "report.pdf", then "report (2).pdf", "report (3).pdf"... */
+    const char *dot = strrchr(name, '.');
+    int stem = dot && dot != name ? (int)(dot - name) : (int)strlen(name);
+    char probe;
+    for (int n = 1; n < 100; n++) {
+        if (n == 1)
+            snprintf(file, sizeof(file), "%s", name);
+        else
+            snprintf(file, sizeof(file), "%.*s (%d)%s", stem > 48 ? 48 : stem, name, n, name + stem);
+        if (k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)folder, (uint32_t)file, (uint32_t)&probe, 1) < 0)
+            break;                              /* not there: this name */
+    }
+    int err = k86_call5(SYS_FS_WRITE, (uint32_t)vol, (uint32_t)folder, (uint32_t)file, (uint32_t)data, len);
+    if (err >= 0)
+        snprintf(saved, (size_t)max, "%s/%s", folder, file);
+    return err < 0 ? err : 0;
 }
 
 static int lkx_claim(nsfb_t *nsfb, nsfb_bbox_t *box)

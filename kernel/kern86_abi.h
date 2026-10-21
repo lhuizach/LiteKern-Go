@@ -48,7 +48,7 @@
 #define SYS_EC_READ         21  /* ebx: uint8_t[256] out: the embedded controller's RAM, read
                                  * only. -ENODEV if there is none */
 #define SYS_FS_WRITE        22  /* ebx: volume, ecx: folder path, edx: name, esi: buffer,
-                                 * edi: length (<= 1 MiB). Replaces the file's contents,
+                                 * edi: length (<= 32 MiB). Replaces the file's contents,
                                  * creating it if it isn't there; the old contents stay if
                                  * it fails */
 #define SYS_MEMORY          23  /* ebx: how many bytes the app's memory at K86_HEAP should be
@@ -127,6 +127,8 @@ struct k86_header {
                                  * fetched the new theme) */
 #define K86_EVENT_RESIZE    6   /* x, y: the canvas's new width and height: lay out, redraw */
 #define K86_EVENT_TIMER     7   /* SYS_TIMER_SET's interval is up */
+#define K86_EVENT_SCROLL    8   /* x, y in the canvas (the pointer); id: notches, > 0 down
+                                 * (the content moves up), < 0 up */
 
 struct k86_event {
     int32_t type;
@@ -241,6 +243,24 @@ struct k86_dirent {
 #define SYS_NET_JOIN        32  /* ebx: name (SSID), ecx: password ("": an open network).
                                  * Remembered, on the stick, for next time */
 #define SYS_NET_FORGET      33  /* ebx: name: no longer remembered (and left, if joined) */
+
+/* --- the machine (the Linux port's phase L4; kernel/machine.h) ------------------------------ *
+ * The kernel version has no battery or brightness driver yet and keeps the
+ * EeePC's clock as it is: SYS_MACHINE says so and the others return -ENODEV. */
+#define SYS_MACHINE         34  /* ebx: struct k86_machine * out */
+#define SYS_BRIGHTNESS_SET  35  /* ebx: the screen's brightness, 5-100 (%). Saved */
+#define SYS_TIMEZONE_SET    36  /* ebx: the time zone, an index in kernel/timezones.h. Saved */
+
+#define K86_BATTERY_DISCHARGING 0
+#define K86_BATTERY_CHARGING    1
+#define K86_BATTERY_FULL        2       /* on the charger, not charging */
+struct k86_machine {
+    int32_t battery;            /* 0-100 (%); -1: no battery */
+    int32_t charging;           /* K86_BATTERY_* */
+    int32_t minutes;            /* until empty (discharging) or full (charging); -1: unknown */
+    int32_t brightness;         /* 0-100 (%); -1: not adjustable here */
+    int32_t timezone;           /* an index in kernel/timezones.h; -1: no time zones here */
+};
 
 #define K86_SSID_MAX        33          /* 32 bytes and a NUL */
 #define K86_WIFI_MAX        32

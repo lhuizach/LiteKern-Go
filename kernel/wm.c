@@ -949,6 +949,26 @@ static void leave(struct wm_window *now, int x, int y, uint8_t buttons)
     ptr_win = now;
 }
 
+int wm_input_scroll(int x, int y, int notches)
+{
+    struct wm_window *w = window_at(x, y);
+    if (!w || drag_win || resize_win)
+        return 0;
+    struct gfx_rect c = content_rect(w, w->r);
+    if (!inside(c, x, y))
+        return 0;
+    /* Turns still waiting add up: a fast spin is one big scroll. */
+    if (w->qhead != w->qtail) {
+        struct wm_event *last = &w->queue[(w->qhead - 1) % QUEUE];
+        if (last->type == WM_EVENT_SCROLL) {
+            last->id += notches;
+            return 1;
+        }
+    }
+    push(w, (struct wm_event){ .type = WM_EVENT_SCROLL, .x = x - c.x, .y = y - c.y, .id = notches });
+    return 1;
+}
+
 void wm_pointer_gone(void)
 {
     set_hover(0, NONE);

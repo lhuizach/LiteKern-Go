@@ -224,6 +224,35 @@ check "a maximised window's tabs and buttons are in the top bar, and work there"
     '^screen: has 444448 in 240,4,310,26: yes$' \
     '^desktop: unmaximise Settings$'
 
+# The machine (phase L4), with a battery and backlight of our own (folders
+# shaped like Linux's /sys): the battery in the top bar; Settings' System tab
+# (271,63): the wheel scrolls the time zones three rows a notch, so the first
+# row (621,223) is then Paris; the brightness slider dragged to 60% writes
+# the backlight (9 of 15). Both are kept on the disk for the next start.
+F=build-linux/test/fake
+rm -rf $F; mkdir -p $F/ps/BAT0 $F/bl/acpi_video0
+printf 'Battery\n' >$F/ps/BAT0/type; printf '72\n' >$F/ps/BAT0/capacity; printf 'Discharging\n' >$F/ps/BAT0/status
+printf 'firmware\n' >$F/bl/acpi_video0/type; printf '15\n' >$F/bl/acpi_video0/max_brightness
+printf '3\n' >$F/bl/acpi_video0/brightness
+export LKX_POWER_SUPPLY=$PWD/$F/ps LKX_BACKLIGHT=$PWD/$F/bl
+cp build/litekernx.img build-linux/test/machine.img
+path; open_app 2; go 271 63; click; add sleep:1; go 700 400; add wheel:1 sleep:0.5; go 621 223; click; add sleep:0.5
+go 297 325; add sleep:0.2 press:1; go 317 325; go 337 325; add release sleep:1
+SCREEN="has=ffffff@900,5,965,25" run $SHELL_BIN build-linux/test/machine.img "$P"
+out+=$'\n'"backlight: $(cat $F/bl/acpi_video0/brightness)"
+check "the battery in the top bar; Settings' System page: the wheel, a time zone, the brightness" \
+    '^machine: backlight acpi_video0$' \
+    '^screen: has ffffff in 900,5,965,25: yes$' \
+    '^user: settings: page system$' \
+    '^machine: time zone Paris, Brussels$' \
+    '^user: settings: system brightness 60: set$' \
+    '^backlight: 9$' \
+    '!refused|crashed|PANIC'
+run $SHELL_BIN build-linux/test/machine.img "sleep:0.5"
+check "the time zone and brightness are kept across a restart" \
+    '^machine: time zone Paris, Brussels; the clock says '
+unset LKX_POWER_SUPPLY LKX_BACKLIGHT
+
 # Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
 # saves it as "Test" (SYS_FS_WRITE).
 cp build/litekernx.img build-linux/test/blocksmith.img

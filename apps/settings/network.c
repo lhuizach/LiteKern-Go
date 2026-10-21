@@ -319,6 +319,12 @@ void network_page_pointer(const struct k86_event *ev)
         network_page_draw();
 }
 
+void network_page_scroll(const struct k86_event *ev)
+{
+    if (!asking && wg_list_scroll(&list, ev->x, ev->y, ev->id))
+        network_page_draw();
+}
+
 void network_page_key(const struct key_event *k)
 {
     if (asking) {

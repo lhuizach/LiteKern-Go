@@ -53,6 +53,8 @@ void desktop_refresh(void);
 /* Pointer input, every packet: the shell's (top bar, menus, dock, app menu)
  * or passed on to the windows. */
 void desktop_input_mouse(int x, int y, uint8_t buttons);
+/* The wheel (kernel/input.h's mouse_event.wheel): to the window under the pointer. */
+void desktop_input_scroll(int x, int y, int notches);
 
 /* Keys the shell takes (Esc closes the power menu or the app menu). 1 if
  * taken. */

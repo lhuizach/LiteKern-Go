@@ -29,14 +29,27 @@ define NETSURF_LKX_ADD_SURFACE
 endef
 NETSURF_LKX_POST_EXTRACT_HOOKS += NETSURF_LKX_ADD_SURFACE
 
+# Downloads (download_lkx.c): a download table for the front end, which has
+# none, saving through the surface's lkx_save_download().
+define NETSURF_LKX_ADD_DOWNLOADS
+	cp $(NETSURF_LKX_PKGDIR)/download_lkx.c $(@D)/netsurf/frontends/framebuffer/
+	$(SED) 's/^S_FRONTEND := gui.c /S_FRONTEND := gui.c download_lkx.c /' $(@D)/netsurf/frontends/framebuffer/Makefile
+	$(SED) 's/^\tstruct netsurf_table framebuffer_table = {/\textern struct gui_download_table lkx_download_table;\n&/; s/^\t\t\.window = &framebuffer_window_table,/&\n\t\t.download = \&lkx_download_table,/' \
+		$(@D)/netsurf/frontends/framebuffer/gui.c
+endef
+NETSURF_LKX_POST_EXTRACT_HOOKS += NETSURF_LKX_ADD_DOWNLOADS
+
 # LiteKern X's look for the front end's own furniture: the header grey
-# (#2e2e32) for the toolbar and status bar, the button grey (#444448) for the
-# scroll bars, a dark address bar with white text, and white line icons
+# (#2e2e32) for the toolbar and status bar, scroll bars as the list's (a
+# darker track, #26262a, without the light outline, and a mid-grey thumb,
+# #6e6e72), a dark address bar with white text, and white line icons
 # (make-icons.py). libnsfb's colours are 0xAABBGGRR.
 define NETSURF_LKX_RESTYLE
 	cp $(NETSURF_LKX_PKGDIR)/icons/*.png $(@D)/netsurf/frontends/framebuffer/res/icons/
-	$(SED) 's/^#define FB_FRAME_COLOUR .*/#define FB_FRAME_COLOUR 0xFF322E2E/; s/^#define FB_SCROLL_COLOUR .*/#define FB_SCROLL_COLOUR 0xFF484444/' \
+	$(SED) 's/^#define FB_FRAME_COLOUR .*/#define FB_FRAME_COLOUR 0xFF322E2E/; s/^#define FB_SCROLL_COLOUR .*/#define FB_SCROLL_COLOUR 0xFF2A2626/' \
 		$(@D)/netsurf/frontends/framebuffer/fbtk.h
+	$(SED) '/0xFF999999, false, false);/d; /[vh]scroll + [vh]pos;/,/widget->bg);/ s/widget->bg);/0xFF726E6E);/' \
+		$(@D)/netsurf/frontends/framebuffer/fbtk/scroll.c
 	$(SED) 's/FB_COLOUR_WHITE/0xFF221E1E/g; s/FB_COLOUR_BLACK/0xFFFFFFFF/g' \
 		$(@D)/netsurf/frontends/framebuffer/gui.c
 endef

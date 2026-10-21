@@ -23,6 +23,7 @@
 #include "kernel/input.h"
 #include "kernel/lkx.h"
 #include "kernel/lockscreen.h"
+#include "kernel/machine.h"
 #include "kernel/printk.h"
 #include "kernel/screen.h"
 #include "kernel/screensaver.h"
@@ -149,6 +150,7 @@ void idle_step(int busy)
     lockscreen_tick();
     screensaver_poll();
     net_poll();
+    kmsg_poll();
     if (give_up_ms && uptime_ms() > give_up_ms) {
         kprintf("lkx-shell: --for ran out\n");
         plat_exit(1);
@@ -191,11 +193,16 @@ void idle_step(int busy)
         in.y += moves[i].dy;
         in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
         in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
-        if (i + 1 < npkt && moves[i + 1].buttons == moves[i].buttons && moves[i].buttons == in.buttons) {
+        if (i + 1 < npkt && moves[i + 1].buttons == moves[i].buttons && moves[i].buttons == in.buttons &&
+            !moves[i].wheel) {
             in.moved |= moves[i].dx || moves[i].dy;
             continue;
         }
         desktop_input_mouse(in.x, in.y, moves[i].buttons);
+        if (moves[i].wheel) {
+            desktop_input_scroll(in.x, in.y, moves[i].wheel);
+            lkx_schedule();
+        }
         in.moved |= moves[i].dx || moves[i].dy;
         if (moves[i].buttons != in.buttons) {
             in.buttons = moves[i].buttons;
@@ -302,6 +309,8 @@ int main(int argc, char **argv)
     storage_init();
     users_load();
     settings_load();
+    machine_init();
+    kmsg_init();
     net_init();
     splash_progress(45);
 

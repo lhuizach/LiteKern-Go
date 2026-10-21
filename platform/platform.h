@@ -53,6 +53,8 @@ extern const struct backend backend_headless, backend_x11, backend_drm;
 void plat_key(uint16_t key, int pressed);
 /* Where the pointer is now, in screen pixels, and the MOUSE_* buttons held. */
 void plat_pointer(int x, int y, uint8_t buttons);
+/* The wheel turned: notches, > 0 down (towards you: the page moves up). */
+void plat_wheel(int notches);
 /* Linux evdev key code (X11's key code - 8) to KEY_*; 0 if it has none. */
 uint16_t plat_evdev_key(unsigned code);
 /* The whole framebuffer, for screenshots. */
@@ -87,6 +89,11 @@ int lkx_next_ms(void);
  * from the loop (it rate-limits itself). */
 void net_init(void);
 void net_poll(void);
+
+/* Linux's own messages into the Log (platform/kmsg.c): its warnings from
+ * starting, then its news as it comes. */
+void kmsg_init(void);
+void kmsg_poll(void);
 
 /* How often something asked to be woken (RTC_SET_RATE), in Hz; 0: once a second. */
 uint32_t plat_wake_hz(void);
