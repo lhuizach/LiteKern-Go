@@ -2,3 +2,5 @@
 # udhcpd: the tests' simulated access point hands out addresses with it (lkx-start).
 CONFIG_UDHCPD=y
 CONFIG_FEATURE_UDHCPD_WRITE_LEASES_EARLY=y
+# ntpd: the clock from the internet once connected (platform/net.c); HTTPS needs the right date.
+CONFIG_NTPD=y

@@ -40,6 +40,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define RUN_DIR     "/run/lkx-net"
@@ -204,6 +205,53 @@ static void dhcp_stop(int i, const char *ifname)
     dhcp[i] = 0;
     const char *argv[] = { "/sbin/ip", "addr", "flush", "dev", ifname, 0 };
     run(argv);
+}
+
+/* --- the clock ----------------------------------------------------------------------------- */
+
+/* Once there's an address: the time from the internet (busybox ntpd, once),
+ * then written back to the EeePC's own clock (as local time, as its BIOS
+ * keeps it) so the next start is right even offline. HTTPS needs it: a
+ * certificate is refused when the date is wrong. Tried each minute until it
+ * works. */
+static pid_t ntp;
+static int clock_set;
+static uint32_t next_ntp;
+
+static void clock_poll(int online)
+{
+    if (ntp) {
+        int st;
+        if (waitpid(ntp, &st, WNOHANG) != ntp)
+            return;
+        ntp = 0;
+        if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+            clock_set = 1;
+            const char *argv[] = { "/sbin/hwclock", "-w", "-l", 0 };
+            run(argv);
+            time_t now = time(0);
+            struct tm tm;
+            localtime_r(&now, &tm);
+            kprintf("net: clock set from the internet: %04d-%02d-%02d %02d:%02d\n", tm.tm_year + 1900,
+                    tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min);
+        } else {
+            kprintf("net: clock: no answer from the time servers (trying again in a minute)\n");
+        }
+    }
+    if (clock_set || !online || (int32_t)(uptime_ms() - next_ntp) < 0)
+        return;
+    next_ntp = uptime_ms() + 60000;
+    pid_t pid = fork();
+    if (pid < 0)
+        return;
+    if (!pid) {
+        int null = open("/dev/null", O_RDWR);
+        dup2(null, 0), dup2(null, 1), dup2(null, 2);
+        /* -q: set the clock once and leave; -n: in the foreground. */
+        execl("/usr/sbin/ntpd", "ntpd", "-n", "-q", "-p", "pool.ntp.org", "-p", "time.google.com", (char *)0);
+        _exit(127);
+    }
+    ntp = pid;
 }
 
 /* --- wpa_supplicant ------------------------------------------------------------------------ */
@@ -559,6 +607,7 @@ void net_poll(void)
         }
     }
     log_changes();
+    clock_poll(shown.wired == K86_NET_UP || shown.wifi == K86_NET_UP);
 }
 
 /* --- kernel/net.h --------------------------------------------------------------------------- */
