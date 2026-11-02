@@ -40,8 +40,8 @@ open(sys.argv[1], "w").write(
     f"user admin 3584e4 {salt.hex()} {h(salt, b'apple')} User\n"
     f"user standard e45c84 {bytes(16).hex()} - Ann\n")
 EOF
-mmd -i build-linux/test/users.img@@4194304 ::/LiteKern 2>/dev/null
-mcopy -o -i build-linux/test/users.img@@4194304 build-linux/test/users.txt ::/LiteKern/users.txt || exit 1
+mmd -i build-linux/test/users.img@@8388608 ::/LiteKern 2>/dev/null
+mcopy -o -i build-linux/test/users.img@@8388608 build-linux/test/users.txt ::/LiteKern/users.txt || exit 1
 
 # run BINARY DISK "STEPS" [more lkx-shell args] -> $out: the log, plus the
 # screenshot's "screen: ..." lines when SCREEN="checks" (tests/lib/qemu_monitor.py)
@@ -91,7 +91,7 @@ SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "sleep:1"
 check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the wallpaper" \
     '^LiteKern X \(on Linux\)$' \
     '^dev boot0 driver=linux-disk bound$' \
-    '^storage: boot0 partition at 8192 \(FAT32\): FAT32, read/write$' \
+    '^storage: boot0 partition at 16384 \(FAT32\): FAT32, read/write$' \
     '^ramdisk: [0-9]+ files' \
     '^lkx: Files \(apps/files/files.lkx' \
     '^lkx: Blocksmith \(apps/blocksmith/blocksmith.lkx' \

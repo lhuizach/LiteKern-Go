@@ -2,15 +2,15 @@
 # LiteKern X on Linux: start the desktop (from /etc/inittab).
 #
 # The desktop opens the stick it was booted from as its disk: the ramdisk
-# (apps, wallpapers) at sector 1024 and the FAT32 partition (settings, users,
+# (apps, wallpapers) at sector 2048 and the FAT32 partition (settings, users,
 # files), as the kernel version did. USB disks can take a few seconds to
-# appear, so it waits for the one whose sector 1024 starts "LKXR".
+# appear, so it waits for the one whose sector 2048 starts "LKXR".
 
 find_disk() {
     for d in /sys/block/sd* /sys/block/vd* /sys/block/hd*; do
         [ -e "$d" ] || continue
         dev=/dev/${d##*/}
-        if [ "$(dd if="$dev" bs=512 skip=1024 count=1 2>/dev/null | head -c 4)" = "LKXR" ]; then
+        if [ "$(dd if="$dev" bs=512 skip=2048 count=1 2>/dev/null | head -c 4)" = "LKXR" ]; then
             echo "$dev"
             return 0
         fi

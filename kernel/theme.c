@@ -74,15 +74,16 @@ static void build(void)
     current.accent = light ? gfx_mix(0x000000, accents[accent].bg, 40)
                            : gfx_mix(0xffffff, accents[accent].bg, 90);
     current.row_selected = gfx_mix(accents[accent].bg, current.view_bg, light ? 46 : 64);
-    current.headerbar_h = 46;
-    current.button_size = 34;
-    current.radius = 6;
-    current.spacing = 6;
-    current.margin = 12;
-    current.row_h = 40;
-    current.topbar_h = 30;
-    current.tile_w = 112;
-    current.tile_h = 104;
+    /* LiteKern Go: 2x LiteKern X's sizes, for a finger on a 294 ppi screen (UI-PLAN.md). */
+    current.headerbar_h = 92;
+    current.button_size = 68;
+    current.radius = 12;
+    current.spacing = 12;
+    current.margin = 24;
+    current.row_h = 88;
+    current.topbar_h = 56;
+    current.tile_w = 168;
+    current.tile_h = 184;
     built = 1;
 }
 

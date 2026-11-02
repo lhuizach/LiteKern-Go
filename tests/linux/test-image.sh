@@ -96,7 +96,7 @@ check "boots: SYSLINUX, Linux, lkx-start finds the stick, the desktop on QEMU's 
     '^drm: [0-9]+x[0-9]+ on connector' \
     '^input: .*\(keyboard' \
     '^input: .*pointer' \
-    '^storage: boot0 partition at 8192 \(FAT32\): FAT32, read/write$' \
+    '^storage: boot0 partition at 16384 \(FAT32\): FAT32, read/write$' \
     '^ramdisk: [0-9]+ files' \
     '^lkx: Calculator ' \
     '^desktop: ready$' \
@@ -138,9 +138,9 @@ check "Ethernet: found, an address from DHCP, the icon in the top bar" \
 # remembered on the stick. AZERTY, by key position: "apple pie" is q p p l e.
 img=build-linux/test-image/wifi.img
 cp build-linux/litekern-go.img $img
-mtype -i $img@@4194304 ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' \
+mtype -i $img@@8388608 ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' \
     > build-linux/test-image/syslinux.cfg
-mcopy -o -i $img@@4194304 build-linux/test-image/syslinux.cfg ::/syslinux/syslinux.cfg
+mcopy -o -i $img@@8388608 build-linux/test-image/syslinux.cfg ::/syslinux/syslinux.cfg
 SETTINGS_TILE=$(tile 2)
 path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.8; go "$SETTINGS_TILE" $GRID_Y; click; add sleep:2
 go 284 147; click; add sleep:4; go 400 309; click; add sleep:0.5
@@ -228,7 +228,7 @@ add h t t p dot shift-dot shift-dot shift-1 shift-0 shift-comma shift-0 shift-co
 KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=14 SCREEN="corner=" boot_until build-linux/test-image/download.img "$ready_re" 120
 cp build-linux/test-image/shot.png build-linux/test-image/download.png
 kill $www 2>/dev/null
-mcopy -o -i build-linux/test-image/download.img@@4194304 ::/Downloads/t.bin build-linux/test-image/got.bin 2>/dev/null
+mcopy -o -i build-linux/test-image/download.img@@8388608 ::/Downloads/t.bin build-linux/test-image/got.bin 2>/dev/null
 out+=$'\n'"download: $(cmp -s build-linux/test-image/www/t.bin build-linux/test-image/got.bin && echo same || echo missing)"
 rm -f build-linux/test-image/got.bin
 check "the Web app downloads a file into Downloads on the stick" \

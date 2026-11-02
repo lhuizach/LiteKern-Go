@@ -19,11 +19,11 @@
 #define TEXT_EXTRA    4
 
 enum text_style {
-    TEXT_BODY,          /* 15 px regular: most text */
-    TEXT_BOLD,          /* 15 px bold: buttons, titles */
-    TEXT_SMALL,         /* 13 px regular: captions */
-    TEXT_HEADING,       /* 20 px bold: dialog and page headings */
-    TEXT_LARGE,         /* 32 px light: big numbers (Calculator) */
+    TEXT_BODY,          /* 30 px regular: most text */
+    TEXT_BOLD,          /* 30 px bold: buttons, titles */
+    TEXT_SMALL,         /* 26 px regular: captions */
+    TEXT_HEADING,       /* 40 px bold: dialog and page headings */
+    TEXT_LARGE,         /* 64 px light: big numbers (Calculator) */
     TEXT_FACES
 };
 

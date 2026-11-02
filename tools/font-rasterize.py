@@ -25,18 +25,18 @@ import sys
 from PIL import Image, ImageFont
 
 FACES = [                       # name, pixel size, weight (variable font's wght axis)
-    ("body", 15, 400),
-    ("bold", 15, 700),
-    ("small", 13, 400),
-    ("heading", 20, 700),
-    ("large", 32, 300),
+    ("body", 30, 400),          # LiteKern Go: 2x LiteKern X's sizes (UI-PLAN.md)
+    ("bold", 30, 700),
+    ("small", 26, 400),
+    ("heading", 40, 700),
+    ("large", 64, 300),
 ]
 CHARS = [chr(c) for c in range(32, 127)]
 # Beyond ASCII, after '~': these Unicode characters, reached in C as the bytes
 # 0x80, 0x81, ... (kernel/text.h's TEXT_MINUS etc.).
 EXTRA = ["−", "×", "÷", "…"]     # minus, times, divide, ellipsis
 CHARS += EXTRA
-CLOCK_FACE = ("clock", 112, 700)        # bold (the user asked, 2026-10-09)
+CLOCK_FACE = ("clock", 180, 700)        # bold (the user asked, 2026-10-09); 180 px on the phone
 CLOCK_CHARS = set("0123456789: AMP")
 
 
@@ -78,6 +78,8 @@ def main():
             mask, (xoff, yoff) = f.getmask2(ch, mode="L")
             w, h = mask.size
             img = Image.frombytes("L", (w, h), bytes(mask)) if w and h else None
+            if not img:                     # nothing drawn (space): offsets unused, and must fit an int8
+                xoff = yoff = 0
             info["glyphs"].append({"c": ord(ch), "w": w, "h": h, "xoff": xoff, "yoff": yoff,
                                    "adv64": round(f.getlength(ch) * 64)})
             rows.append((len(meta["faces"]), ch, img))

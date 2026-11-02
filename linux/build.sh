@@ -11,7 +11,7 @@
 # the Windows drive, and Buildroot won't build in a path with spaces).
 #
 # The stick keeps the kernel version's layout (the Makefile's): the ramdisk
-# (apps, wallpapers) at sector 1024 and the FAT32 partition at 8192, so
+# (apps, wallpapers) at sector 2048 and the FAT32 partition at 16384, so
 # lkx-shell opens the stick just as it opens build/litekernx.img on the PC.
 # What changes: the boot code. SYSLINUX's MBR starts the FAT32 partition's
 # SYSLINUX, which loads Linux and the system (an initramfs, run from RAM)
@@ -35,7 +35,7 @@ BR=$WORK/buildroot-$BR_VERSION
 OUT=$WORK/output-go-x86_64
 SYSLINUX=$WORK/syslinux-$SYSLINUX_VERSION
 IMAGE=build-linux/litekern-go.img
-FAT_OFFSET=$((8192 * 512))
+FAT_OFFSET=$((16384 * 512))
 
 step=${1:-all}
 mkdir -p "$WORK/dl"
@@ -110,10 +110,10 @@ img, mbr = sys.argv[1], open(sys.argv[2], "rb").read()
 with open(img, "r+b") as f:
     sector = bytearray(f.read(512))
     sector[:len(mbr)] = mbr                 # SYSLINUX's boot code; the partition table stays
-    for i in range(4):                      # the FAT32 partition (at 8192) is the one it starts
+    for i in range(4):                      # the FAT32 partition (at 16384) is the one it starts
         e = 446 + i * 16
         lba = int.from_bytes(sector[e + 8:e + 12], "little")
-        sector[e] = 0x80 if lba == 8192 else 0x00
+        sector[e] = 0x80 if lba == 16384 else 0x00
     f.seek(0)
     f.write(sector)
 EOF
