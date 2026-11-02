@@ -8,6 +8,6 @@
 
 /* The calls above SYS_UPTIME_MS (but SYS_WAIT_EVENT: kernel/lkx.h); -ENOSYS
  * for unknown numbers. */
-int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5);
+int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4, uintptr_t a5);
 
 #endif

@@ -108,7 +108,7 @@ void vkprintf(const char *fmt, va_list ap)
         }
         case 'p':
             put_str("0x");
-            put_uint((uint32_t)va_arg(ap, void *), 16, 8, '0');
+            put_uint((uint32_t)(uintptr_t)va_arg(ap, void *), 16, 8, '0');   /* low 32 bits on 64-bit */
             break;
         case '%':
             out('%');

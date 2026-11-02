@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 /* 0, or -ENODEV if there is no font or no screen (screen_init first). */
-int console_init(uint32_t font_addr);
+int console_init(uintptr_t font_addr);
 
 int console_active(void);
 void console_putc(char c);

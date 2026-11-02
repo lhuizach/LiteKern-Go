@@ -64,19 +64,19 @@ static struct {
 } bufs[KIP_ARGS];
 static int pending_fd = -1;         /* SYS_WINDOW_OPEN's canvas memory, for the reply */
 
-int user_check(uint32_t ptr, uint32_t len, int write)
+int user_check(uintptr_t ptr, uint32_t len, int write)
 {
     (void)write;
     if (ptr == K86_CANVAS)
         return running_proc && running_proc->canvas ? 0 : -EFAULT;
     for (int i = 0; i < KIP_ARGS; i++)
-        if (bufs[i].p && ptr >= (uint32_t)bufs[i].p && len <= bufs[i].len &&
-            ptr - (uint32_t)bufs[i].p <= bufs[i].len - len)
+        if (bufs[i].p && ptr >= (uintptr_t)bufs[i].p && len <= bufs[i].len &&
+            ptr - (uintptr_t)bufs[i].p <= bufs[i].len - len)
             return 0;
     return -EFAULT;
 }
 
-int user_map_shared(uint32_t virt, uint32_t phys, uint32_t bytes)
+int user_map_shared(uintptr_t virt, uintptr_t phys, uint32_t bytes)
 {
     (void)bytes;
     int fd = plat_memory_fd(phys);
@@ -290,8 +290,9 @@ static int handle(struct proc *p)
     if (req.nr >= KIP_CALLS)
         return -1;
     const struct kip_call *c = &kip_calls[req.nr];
-    uint32_t a[KIP_ARGS];
-    memcpy(a, req.a, sizeof(a));
+    uintptr_t a[KIP_ARGS];
+    for (int i = 0; i < KIP_ARGS; i++)
+        a[i] = (uintptr_t)req.a[i];
     for (int i = 0; i < KIP_ARGS; i++) {
         uint8_t kind = c->arg[i].kind;
         if (kind == KIP_VAL || !req.a[i])
@@ -315,7 +316,7 @@ static int handle(struct proc *p)
             free_bufs();
             return -1;
         }
-        a[i] = (uint32_t)bufs[i].p;
+        a[i] = (uintptr_t)bufs[i].p;
     }
 
     running_proc = p;

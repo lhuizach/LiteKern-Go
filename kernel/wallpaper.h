@@ -32,8 +32,8 @@ int wallpaper_set_image(const uint32_t *px, int w, int h, int stride);
 /* The custom wallpaper as an .lkxw file (filtered and deflated, as the
  * build packs the others): `len` bytes at physical `phys`, in a block of
  * `bytes` to give back with wallpaper_pack_free(). 0, -ENOENT or -ENOMEM. */
-int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len);
-void wallpaper_pack_free(uint32_t phys, uint32_t bytes);
+int wallpaper_pack(uintptr_t *phys, uint32_t *bytes, uint32_t *len);
+void wallpaper_pack_free(uintptr_t phys, uint32_t bytes);
 
 /* Show such a file as the custom wallpaper (scaled if the screen is
  * another size). 0, or -EINVAL if it's damaged. */
@@ -46,7 +46,7 @@ int wallpaper_set_packed(const void *data, uint32_t size);
  *   scale_cover    a picture scaled to fill dst, the middle kept */
 int wallpaper_render(const char *name, struct gfx_surface *dst);
 int wallpaper_render_packed(const void *data, uint32_t size, struct gfx_surface *dst);
-int wallpaper_pack_surface(const struct gfx_surface *src, uint32_t *phys, uint32_t *bytes, uint32_t *len);
+int wallpaper_pack_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len);
 void wallpaper_scale_cover(const uint32_t *px, int w, int h, int stride, struct gfx_surface *dst);
 const char *wallpaper_current(void);       /* "" for the plain colour */
 

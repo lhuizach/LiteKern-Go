@@ -9,10 +9,10 @@
 static uint8_t glyphs[K86_FONT_BYTES];
 static int loaded;
 
-int font_init(uint32_t font_addr)
+int font_init(uintptr_t font_addr)
 {
     (void)font_addr;
-    loaded = k86_call(SYS_FONT, (uint32_t)glyphs, 0, 0, 0) == 0;
+    loaded = k86_call(SYS_FONT, (uintptr_t)glyphs, 0, 0, 0) == 0;
     return loaded ? 0 : -1;
 }
 
@@ -29,13 +29,13 @@ const uint8_t *font_glyph(uint8_t c)
 static void fetch_theme(void)
 {
     static struct theme t;
-    if (k86_call(SYS_THEME_GET, (uint32_t)&t, 0, 0, 0) == 0)
+    if (k86_call(SYS_THEME_GET, (uintptr_t)&t, 0, 0, 0) == 0)
         theme_load(&t);
 }
 
 int k86_window_open(struct k86_window *w)
 {
-    int err = k86_call(SYS_WINDOW_OPEN, (uint32_t)w, 0, 0, 0);
+    int err = k86_call(SYS_WINDOW_OPEN, (uintptr_t)w, 0, 0, 0);
     if (!err) {
         font_init(0);
         fetch_theme();
@@ -45,7 +45,7 @@ int k86_window_open(struct k86_window *w)
 
 int k86_wait_event(struct k86_event *ev)
 {
-    int err = k86_call(SYS_WAIT_EVENT, (uint32_t)ev, 0, 0, 0);
+    int err = k86_call(SYS_WAIT_EVENT, (uintptr_t)ev, 0, 0, 0);
     if (!err && ev->type == K86_EVENT_THEME)
         fetch_theme();
     return err;
@@ -53,7 +53,7 @@ int k86_wait_event(struct k86_event *ev)
 
 int k86_log(const char *text)
 {
-    return k86_call(SYS_DEBUG_WRITE, (uint32_t)text, (uint32_t)strlen(text), 0, 0);
+    return k86_call(SYS_DEBUG_WRITE, (uintptr_t)text, (uintptr_t)strlen(text), 0, 0);
 }
 
 void k86_logf(const char *fmt, ...)

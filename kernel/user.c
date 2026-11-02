@@ -17,7 +17,7 @@ void user_return(int code) __attribute__((noreturn));
 static struct user_proc *current;
 static int ended;                   /* set before user_return: it ended, not yielded */
 
-int user_check(uint32_t ptr, uint32_t len, int write)
+int user_check(uintptr_t ptr, uint32_t len, int write)
 {
     /* ptr >= USER_TOP must be rejected first: otherwise USER_TOP - ptr
      * underflows and a pointer near 4 GiB passes the length check. */
@@ -145,7 +145,7 @@ int user_map(uint32_t virt, uint32_t bytes)
     return 0;
 }
 
-int user_map_shared(uint32_t virt, uint32_t phys, uint32_t bytes)
+int user_map_shared(uintptr_t virt, uintptr_t phys, uint32_t bytes)
 {
     if (!current || virt < USER_BASE || virt >= USER_TOP || bytes > USER_TOP - virt)
         return -EINVAL;

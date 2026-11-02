@@ -55,7 +55,7 @@ struct kip_call {
 
 struct kip_request {
     uint32_t nr;
-    uint32_t a[KIP_ARGS];
+    uint64_t a[KIP_ARGS];       /* 64 bits: an app's address on a 64-bit system */
     uint32_t len[KIP_ARGS];     /* each buffer's bytes (0 for values) */
 };
 
@@ -123,7 +123,7 @@ static const struct kip_call kip_calls[] = {
 /* A buffer argument's size from the request's values; 0 when the
  * multiplication would overflow or pass KIP_BUF_MAX (the shell then refuses
  * the call, as the kernel refuses a bad pointer). */
-static inline uint32_t kip_size(const struct kip_arg *g, const uint32_t *a)
+static inline uint32_t kip_size(const struct kip_arg *g, const uint64_t *a)
 {
     uint64_t n = g->size;
     if (g->count_arg)

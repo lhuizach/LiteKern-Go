@@ -23,7 +23,7 @@
 #include "kernel/wm.h"
 
 /* Copy a NUL-terminated string from the app, checking every byte's page. */
-static int user_string(char *dst, uint32_t src, int max)
+static int user_string(char *dst, uintptr_t src, int max)
 {
     for (int i = 0; i < max; i++) {
         if (user_check(src + (uint32_t)i, 1, 0))
@@ -40,7 +40,7 @@ static int user_string(char *dst, uint32_t src, int max)
 /* The app's window was opened for it when it started: map its pixels in as
  * the canvas. The buffer stays the window's (shared): the app's teardown
  * doesn't free it. */
-static int window_open(uint32_t out)
+static int window_open(uintptr_t out)
 {
     struct wm_window *w = lkx_window();
     if (!w)
@@ -49,11 +49,11 @@ static int window_open(uint32_t out)
         return -EFAULT;
     uint32_t bytes;
     uint32_t *buf = wm_buffer(w, &bytes);
-    int err = user_map_shared(K86_CANVAS, (uint32_t)buf, bytes);
+    int err = user_map_shared(K86_CANVAS, (uintptr_t)buf, bytes);
     if (err)
         return err;
     struct gfx_surface *c = wm_content(w);
-    *(struct k86_window *)out = (struct k86_window){ c->w, c->h, (uint32_t *)K86_CANVAS, c->stride };
+    *(struct k86_window *)out = (struct k86_window){ c->w, c->h, (uint32_t *)(uintptr_t)K86_CANVAS, c->stride };
     return 0;
 }
 
@@ -68,7 +68,7 @@ static int window_present(int x, int y, int w, int h)
     return 0;
 }
 
-static int window_header(uint32_t req)
+static int window_header(uintptr_t req)
 {
     struct wm_window *w = lkx_window();
     if (!w)
@@ -94,7 +94,7 @@ static int window_header(uint32_t req)
     return 0;
 }
 
-static int font(uint32_t out)
+static int font(uintptr_t out)
 {
     if (user_check(out, K86_FONT_BYTES, 1))
         return -EFAULT;
@@ -106,7 +106,7 @@ static int font(uint32_t out)
 
 /* --- files ---------------------------------------------------------------------- */
 
-static int volumes(uint32_t out, uint32_t max)
+static int volumes(uintptr_t out, uintptr_t max)
 {
     if (max > STORAGE_MAX || user_check(out, max * sizeof(struct k86_volume), 1))
         return -EFAULT;
@@ -142,7 +142,7 @@ static int private_entry(const char *name)
 }
 
 /* The volume, and the cluster of the folder at `upath` ("/", "/Documents"). */
-static int resolve(uint32_t vol, uint32_t upath, struct fat_volume **v, uint32_t *dir)
+static int resolve(uintptr_t vol, uintptr_t upath, struct fat_volume **v, uint32_t *dir)
 {
     struct storage *s = storage_get((int)vol);
     char path[K86_PATH_MAX];
@@ -206,7 +206,7 @@ static int list_fn(void *ctx, const struct fat_entry *e)
     return 0;
 }
 
-static int fs_list(uint32_t vol, uint32_t upath, uint32_t out, uint32_t max)
+static int fs_list(uintptr_t vol, uintptr_t upath, uintptr_t out, uintptr_t max)
 {
     struct fat_volume *v;
     uint32_t dir;
@@ -220,7 +220,7 @@ static int fs_list(uint32_t vol, uint32_t upath, uint32_t out, uint32_t max)
     return err < 0 ? err : (int)l.n;
 }
 
-static int fs_change(uint32_t nr, uint32_t vol, uint32_t upath, uint32_t uname, uint32_t arg)
+static int fs_change(uintptr_t nr, uintptr_t vol, uintptr_t upath, uintptr_t uname, uintptr_t arg)
 {
     struct fat_volume *v;
     uint32_t dir;
@@ -248,7 +248,7 @@ static int fs_change(uint32_t nr, uint32_t vol, uint32_t upath, uint32_t uname, 
 
 /* --- appearance (the Settings app) ------------------------------------------- */
 
-static int theme_out(uint32_t out)
+static int theme_out(uintptr_t out)
 {
     if (user_check(out, sizeof(struct theme), 1))
         return -EFAULT;
@@ -256,7 +256,7 @@ static int theme_out(uint32_t out)
     return 0;
 }
 
-static int appearance(uint32_t out)
+static int appearance(uintptr_t out)
 {
     if (user_check(out, sizeof(struct k86_appearance), 1))
         return -EFAULT;
@@ -280,7 +280,7 @@ static int appearance(uint32_t out)
     return 0;
 }
 
-static int screensaver_set(uint32_t seconds, uint32_t preview)
+static int screensaver_set(uintptr_t seconds, uintptr_t preview)
 {
     if (preview) {                      /* show it now; any input ends it */
         kprintf("appearance: screen saver preview\n");
@@ -291,14 +291,14 @@ static int screensaver_set(uint32_t seconds, uint32_t preview)
         return -EINVAL;
     screensaver_set_timeout(seconds);
     if (seconds)
-        kprintf("appearance: screen saver after %u s\n", seconds);
+        kprintf("appearance: screen saver after %u s\n", (uint32_t)seconds);
     else
         kprintf("appearance: screen saver off\n");
     settings_save();
     return 0;
 }
 
-static int appearance_set(int style, int accent, uint32_t uname)
+static int appearance_set(int style, int accent, uintptr_t uname)
 {
     char name[32];
     int err = 0;
@@ -319,7 +319,7 @@ static int appearance_set(int style, int accent, uint32_t uname)
     return err;
 }
 
-static int wallpaper_thumbnail(uint32_t uname, uint32_t out, int w, int h)
+static int wallpaper_thumbnail(uintptr_t uname, uintptr_t out, int w, int h)
 {
     char name[32];
     if (w <= 0 || h <= 0 || w > 256 || h > 160)
@@ -331,7 +331,7 @@ static int wallpaper_thumbnail(uint32_t uname, uint32_t out, int w, int h)
 }
 
 /* A picture from the app as the wallpaper: the desktop's, the lock screen's, or both. */
-static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t stride, uint32_t where)
+static int wallpaper_image_user(uintptr_t px, uintptr_t w, uintptr_t h, uintptr_t stride, uintptr_t where)
 {
     if (!w || !h || w > 4096 || h > 4096 || stride < w || stride > 4096 ||
         where > (K86_WALLPAPER_DESKTOP | K86_WALLPAPER_LOCK))
@@ -357,7 +357,7 @@ static int wallpaper_image_user(uint32_t px, uint32_t w, uint32_t h, uint32_t st
     return 0;
 }
 
-static int lock_settings(uint32_t u, uint32_t set)
+static int lock_settings(uintptr_t u, uintptr_t set)
 {
     if (user_check(u, sizeof(struct k86_lock), !set))
         return -EFAULT;
@@ -386,7 +386,7 @@ static int lock_settings(uint32_t u, uint32_t set)
 
 /* --- users (kernel/users.h) ----------------------------------------------------------------- */
 
-static int home_out(uint32_t out)
+static int home_out(uintptr_t out)
 {
     if (user_check(out, K86_PATH_MAX, 1))
         return -EFAULT;
@@ -394,7 +394,7 @@ static int home_out(uint32_t out)
     return settings_boot_volume();
 }
 
-static int users_out(uint32_t out)
+static int users_out(uintptr_t out)
 {
     if (user_check(out, sizeof(struct k86_users), 1))
         return -EFAULT;
@@ -412,7 +412,7 @@ static int users_out(uint32_t out)
     return 0;
 }
 
-static int user_change(uint32_t uc)
+static int user_change(uintptr_t uc)
 {
     static struct k86_user_change c;        /* copied in: the app can't change it while it's checked */
     if (user_check(uc, sizeof(c), 0))
@@ -447,7 +447,7 @@ static int user_change(uint32_t uc)
     return err;
 }
 
-static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, uint32_t len)
+static int fs_read(uintptr_t vol, uintptr_t upath, uintptr_t uname, uintptr_t buf, uintptr_t len)
 {
     struct fat_volume *v;
     uint32_t dir;
@@ -470,7 +470,7 @@ static int fs_read(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, u
 }
 
 /* Replace a file's contents, creating it if it isn't there. */
-static int fs_write(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, uint32_t len)
+static int fs_write(uintptr_t vol, uintptr_t upath, uintptr_t uname, uintptr_t buf, uintptr_t len)
 {
     struct fat_volume *v;
     uint32_t dir;
@@ -495,7 +495,7 @@ static int fs_write(uint32_t vol, uint32_t upath, uint32_t uname, uint32_t buf, 
     return fat_write(v, &e, (const void *)buf, len);
 }
 
-static int hw_probe(uint32_t out, uint32_t max, uint32_t flags)
+static int hw_probe(uintptr_t out, uintptr_t max, uintptr_t flags)
 {
     if (max > 1024 || user_check(out, max * (uint32_t)sizeof(struct k86_probe_item), 1))
         return -EFAULT;
@@ -503,7 +503,7 @@ static int hw_probe(uint32_t out, uint32_t max, uint32_t flags)
 }
 
 /* The embedded controller's 256 bytes, read only (the hardware probe's Watch). */
-static int ec_read(uint32_t out)
+static int ec_read(uintptr_t out)
 {
     static uint8_t ram[256];
     if (user_check(out, sizeof(ram), 1))
@@ -520,7 +520,7 @@ static int ec_read(uint32_t out)
 
 /* --- networking (kernel/net.h) ---------------------------------------------------- */
 
-static int net_status_out(uint32_t out)
+static int net_status_out(uintptr_t out)
 {
     if (user_check(out, sizeof(struct k86_net), 1))
         return -EFAULT;
@@ -528,14 +528,14 @@ static int net_status_out(uint32_t out)
     return 0;
 }
 
-static int net_scan_out(uint32_t out, uint32_t max)
+static int net_scan_out(uintptr_t out, uintptr_t max)
 {
     if (max > K86_WIFI_MAX || user_check(out, max * (uint32_t)sizeof(struct k86_wifi), 1))
         return -EFAULT;
     return net_scan((struct k86_wifi *)out, (int)max);
 }
 
-static int net_join_user(uint32_t ussid, uint32_t upassword)
+static int net_join_user(uintptr_t ussid, uintptr_t upassword)
 {
     char ssid[K86_SSID_MAX], password[K86_PASSWORD];
     int err = user_string(ssid, ussid, sizeof(ssid));
@@ -548,7 +548,7 @@ static int net_join_user(uint32_t ussid, uint32_t upassword)
     return net_join(ssid, password);
 }
 
-static int net_forget_user(uint32_t ussid)
+static int net_forget_user(uintptr_t ussid)
 {
     char ssid[K86_SSID_MAX];
     int err = user_string(ssid, ussid, sizeof(ssid));
@@ -557,7 +557,7 @@ static int net_forget_user(uint32_t ussid)
 
 /* --- the machine (kernel/machine.h) ------------------------------------------------ */
 
-static int machine_out(uint32_t out)
+static int machine_out(uintptr_t out)
 {
     if (user_check(out, sizeof(struct k86_machine), 1))
         return -EFAULT;
@@ -565,7 +565,7 @@ static int machine_out(uint32_t out)
     return 0;
 }
 
-int sys_app(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
+int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4, uintptr_t a5)
 {
     switch (nr) {
     case SYS_WINDOW_OPEN:    return window_open(a1);

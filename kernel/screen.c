@@ -16,7 +16,7 @@ int screen_init(device_t *dev)
     if (dev_ioctl(dev, FB_GET_INFO, &info) < 0)
         return -ENODEV;
     uint32_t bytes = info.width * info.height * 4;
-    uint32_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    uintptr_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys)
         return -ENOMEM;
     fb = dev;

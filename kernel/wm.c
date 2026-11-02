@@ -358,7 +358,7 @@ struct wm_window *wm_create(const char *title, int w, int h, int min_w, int min_
      * area, its header being in the top bar). */
     int bw = area.w, bh = area.h;
     uint32_t bytes = (uint32_t)(bw * bh * 4);
-    uint32_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    uintptr_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys)
         return 0;
     memset(win, 0, sizeof(*win));
@@ -408,9 +408,9 @@ void wm_destroy(struct wm_window *w)
     damage(w);
     z_remove(w);
     for (uint32_t off = 0; off < w->buf_bytes; off += PAGE_SIZE)
-        pmm_free((uint32_t)w->buf + off);
+        pmm_free((uintptr_t)w->buf + off);
     for (uint32_t off = 0; w->shadow && off < w->shadow_bytes; off += PAGE_SIZE)
-        pmm_free((uint32_t)w->shadow + off);
+        pmm_free((uintptr_t)w->shadow + off);
     w->used = 0;
     if (hover_win == w)
         hover_win = 0, hover_btn = NONE;

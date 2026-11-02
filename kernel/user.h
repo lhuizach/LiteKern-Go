@@ -60,7 +60,7 @@ int user_map(uint32_t virt, uint32_t bytes);
 /* Map `bytes` of kernel memory at `phys` (page-aligned, contiguous) into the
  * running program at `virt`, writable and shared: it stays the kernel's
  * (a window's pixels). */
-int user_map_shared(uint32_t virt, uint32_t phys, uint32_t bytes);
+int user_map_shared(uintptr_t virt, uintptr_t phys, uint32_t bytes);
 
 /* From a system call: save the caller's registers (f) and give the CPU
  * back; user_resume() returns 1. Resuming it later returns from the call
@@ -76,7 +76,7 @@ void user_watchdog(const struct int_frame *f);
 /* 0 if [ptr, ptr+len) lies in user space and every page is mapped for ring 3
  * (and writable, if `write`); -EFAULT otherwise. Check before touching any
  * pointer that came from user space. */
-int user_check(uint32_t ptr, uint32_t len, int write);
+int user_check(uintptr_t ptr, uint32_t len, int write);
 
 /* Called on a ring 3 fault after it has been reported: kill the program. */
 void user_kill(const struct int_frame *f) __attribute__((noreturn));

@@ -15,15 +15,15 @@
 void pmm_init(const struct boot_info *bi);
 
 /* A zero-filled frame, or 0 if memory is exhausted. */
-uint32_t pmm_alloc(void);
+uintptr_t pmm_alloc(void);
 
 /* `count` physically contiguous zero-filled frames, or 0. For buffers the
  * kernel addresses as one block through its identity map (the screen's back
  * buffer). */
-uint32_t pmm_alloc_contiguous(uint32_t count);
+uintptr_t pmm_alloc_contiguous(uint32_t count);
 
 /* Panics on a misaligned, unmanaged or already-free frame. */
-void pmm_free(uint32_t phys);
+void pmm_free(uintptr_t phys);
 
 uint32_t pmm_free_frames(void);
 uint32_t pmm_total_frames(void);

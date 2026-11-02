@@ -284,7 +284,7 @@ int main(int argc, char **argv)
     device_report();
 
     /* The same first frame as the kernel's (kernel/main.c). */
-    if (screen_init(device_find("fb0")) < 0 || console_init((uint32_t)vga_font_8x16) < 0)
+    if (screen_init(device_find("fb0")) < 0 || console_init((uintptr_t)vga_font_8x16) < 0)
         kprintf("console: unavailable\n");
     if (be->cursor)
         screen_set_hardware_cursor(be->cursor);

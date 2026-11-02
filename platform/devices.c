@@ -61,7 +61,7 @@ static int fb_ioctl(device_t *dev, unsigned cmd, void *arg)
     switch (cmd) {
     case FB_GET_INFO:
         *(struct fb_info *)arg = (struct fb_info){ (uint32_t)fw, (uint32_t)fh, (uint32_t)fw * 4, 32,
-                                                   (uint32_t)front, 0, 0, 0 };
+                                                   (uintptr_t)front, 0, 0, 0 };
         return 0;
     case FB_FILL_RECT: {
         const struct fb_rect *r = arg;

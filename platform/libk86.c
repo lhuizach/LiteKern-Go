@@ -87,10 +87,10 @@ static int memory(uint32_t bytes)
         heap_reserved = 1;
     }
     if (bytes < heap_bytes) {               /* shrink: those pages go (and come back zeroed) */
-        madvise((void *)(K86_HEAP + bytes), heap_bytes - bytes, MADV_DONTNEED);
-        mprotect((void *)(K86_HEAP + bytes), heap_bytes - bytes, PROT_NONE);
+        madvise((void *)((uintptr_t)K86_HEAP + bytes), heap_bytes - bytes, MADV_DONTNEED);
+        mprotect((void *)((uintptr_t)K86_HEAP + bytes), heap_bytes - bytes, PROT_NONE);
     } else if (bytes > heap_bytes &&
-               mprotect((void *)(K86_HEAP + heap_bytes), bytes - heap_bytes, PROT_READ | PROT_WRITE)) {
+               mprotect((void *)((uintptr_t)K86_HEAP + heap_bytes), bytes - heap_bytes, PROT_READ | PROT_WRITE)) {
         return -12;
     }
     heap_bytes = bytes;
@@ -105,7 +105,7 @@ static int memory(uint32_t bytes)
  * address rather than fault; a bad one is sent as KIP_BAD and the shell
  * hands kernel/sys_app.c a pointer its checks refuse, in their own order. */
 
-static size_t safe_read(void *dst, uint32_t src, size_t n)
+static size_t safe_read(void *dst, uintptr_t src, size_t n)
 {
     struct iovec local = { dst, n }, remote = { (void *)src, n };
     ssize_t k = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
@@ -113,7 +113,7 @@ static size_t safe_read(void *dst, uint32_t src, size_t n)
 }
 
 /* Can all n bytes at p be read (and, if `write`, written)? */
-static int usable(uint32_t p, uint32_t n, int write)
+static int usable(uintptr_t p, uint32_t n, int write)
 {
     uint8_t chunk[4096];
     for (uint32_t done = 0; done < n;) {
@@ -131,7 +131,7 @@ static int usable(uint32_t p, uint32_t n, int write)
 }
 
 /* A string's length with its NUL (at most 4096); 0 if it can't be read. */
-static uint32_t string_len(uint32_t p)
+static uint32_t string_len(uintptr_t p)
 {
     char chunk[64];
     for (uint32_t done = 0; done < 4096; done += sizeof(chunk)) {
@@ -152,15 +152,15 @@ static uint32_t string_len(uint32_t p)
 
 /* --- every other call goes to the shell ---------------------------------------------------- */
 
-int k86_linux_call(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
+int k86_linux_call(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4, uintptr_t a5)
 {
-    uint32_t a[KIP_ARGS] = { a1, a2, a3, a4, a5 };
+    uint64_t a[KIP_ARGS] = { a1, a2, a3, a4, a5 };
     if (nr == SYS_EXIT) {
         fflush(0);
         exit((int)a1);
     }
     if (nr == SYS_MEMORY)
-        return memory(a1);
+        return memory((uint32_t)a1);
     if (nr >= KIP_CALLS)
         return -38;                         /* -ENOSYS */
 
@@ -184,7 +184,7 @@ int k86_linux_call(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t 
     for (int i = 0; i < KIP_ARGS; i++) {
         uint8_t k = c->arg[i].kind;
         if (req.len[i] && req.len[i] != KIP_BAD && (k == KIP_STR || k == KIP_IN || k == KIP_INOUT))
-            send_all((const void *)a[i], req.len[i]);
+            send_all((const void *)(uintptr_t)a[i], req.len[i]);
     }
 
     struct kip_reply r;
@@ -194,7 +194,7 @@ int k86_linux_call(uint32_t nr, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t 
             continue;
         if (r.len[i] > req.len[i] || !a[i])
             broken();
-        recv_all((void *)a[i], r.len[i]);
+        recv_all((void *)(uintptr_t)a[i], r.len[i]);
     }
     if (r.ret == KIP_EXIT_NOW) {            /* told to close, and back for more: done */
         fflush(0);

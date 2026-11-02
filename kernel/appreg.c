@@ -96,7 +96,7 @@ static void register_json(const char *manifest_name, char *json, int outside)
         f->icon[0] = '\0';
     /* The program sits next to its kerns.json. */
     int dir = (int)strlen(manifest_name) - (int)strlen("kerns.json");
-    if (dir + (int)strlen(entry) >= PATH_MAX)
+    if (dir < 0 || dir + (int)strlen(entry) >= PATH_MAX)
         return;
     memcpy(f->path, manifest_name, (size_t)dir);
     memcpy(f->path + dir, entry, strlen(entry) + 1);

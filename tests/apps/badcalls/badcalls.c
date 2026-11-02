@@ -12,7 +12,7 @@ int main(void)
     k86_logf("badcalls: present before open %d", k86_present(0, 0, 10, 10));
     k86_logf("badcalls: unknown call %d", k86_call(99, 0, 0, 0, 0));
     k86_logf("badcalls: list into kernel memory %d",
-             k86_call(SYS_FS_LIST, 0, (uint32_t)"/", KERNEL_PTR, 4));
+             k86_call(SYS_FS_LIST, 0, (uintptr_t)"/", KERNEL_PTR, 4));
     k86_logf("badcalls: path in kernel memory %d", k86_list(0, (const char *)KERNEL_PTR, d, 4));
     k86_logf("badcalls: bad volume %d", k86_list(99, "/", d, 4));
     k86_logf("badcalls: dot-dot path %d", k86_list(0, "/../x", d, 4));

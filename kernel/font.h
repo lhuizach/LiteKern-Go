@@ -11,7 +11,7 @@
 #define FONT_H 16
 
 /* 0, or -ENODEV if stage 2 found no font. */
-int font_init(uint32_t font_addr);
+int font_init(uintptr_t font_addr);
 int font_available(void);
 
 /* 16 rows, bit 7 = leftmost pixel. */

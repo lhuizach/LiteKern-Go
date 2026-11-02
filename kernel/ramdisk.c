@@ -50,7 +50,7 @@ int ramdisk_init(void)
     /* The table may span sectors. */
     uint32_t bytes = 8 + n * sizeof(struct entry);
     uint32_t sectors = (bytes + BLK_SECTOR - 1) / BLK_SECTOR;
-    uint32_t phys = pmm_alloc_contiguous((sectors * BLK_SECTOR + PAGE_SIZE - 1) / PAGE_SIZE);
+    uintptr_t phys = pmm_alloc_contiguous((sectors * BLK_SECTOR + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys || read_sectors(RAMDISK_LBA, sectors, (void *)phys)) {
         disk = 0;
         return -ENOMEM;
@@ -91,7 +91,7 @@ static int load(int i)
     uint32_t sectors = (skip + table[i].size + BLK_SECTOR - 1) / BLK_SECTOR;
     if (!sectors)
         sectors = 1;
-    uint32_t phys = pmm_alloc_contiguous((sectors * BLK_SECTOR + PAGE_SIZE - 1) / PAGE_SIZE);
+    uintptr_t phys = pmm_alloc_contiguous((sectors * BLK_SECTOR + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys)
         return -ENOMEM;
     int err = read_sectors(RAMDISK_LBA + first, sectors, (void *)phys);

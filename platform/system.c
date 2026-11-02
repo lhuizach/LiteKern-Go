@@ -26,16 +26,17 @@
 
 #define REGIONS 4096
 static struct region {
-    uint32_t start, pages, left;
+    uintptr_t start;
+    uint32_t pages, left;
     int fd;
 } regions[REGIONS];
 
-uint32_t pmm_alloc(void)
+uintptr_t pmm_alloc(void)
 {
     return pmm_alloc_contiguous(1);
 }
 
-uint32_t pmm_alloc_contiguous(uint32_t count)
+uintptr_t pmm_alloc_contiguous(uint32_t count)
 {
     if (!count)
         return 0;
@@ -55,11 +56,11 @@ uint32_t pmm_alloc_contiguous(uint32_t count)
         close(fd);
         return 0;
     }
-    *r = (struct region){ (uint32_t)p, count, count, fd };
-    return (uint32_t)p;
+    *r = (struct region){ (uintptr_t)p, count, count, fd };
+    return (uintptr_t)p;
 }
 
-void pmm_free(uint32_t phys)
+void pmm_free(uintptr_t phys)
 {
     if (!phys)
         return;
@@ -76,7 +77,7 @@ void pmm_free(uint32_t phys)
     }
 }
 
-int plat_memory_fd(uint32_t start)
+int plat_memory_fd(uintptr_t start)
 {
     for (int i = 0; i < REGIONS; i++)
         if (regions[i].pages && regions[i].start == start)

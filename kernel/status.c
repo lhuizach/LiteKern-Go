@@ -15,7 +15,7 @@ void status_init(const struct boot_info *bi)
 {
     if (!(bi->flags & BI_FLAG_FB) || bi->fb_bpp != 32)
         return;
-    fb = (volatile uint8_t *)bi->fb_addr;
+    fb = (volatile uint8_t *)(uintptr_t)bi->fb_addr;
     fb_pitch = bi->fb_pitch;
     fb_width = bi->fb_width;
     fb_height = bi->fb_height;

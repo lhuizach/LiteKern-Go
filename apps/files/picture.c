@@ -33,7 +33,7 @@ static void *alloc(uint32_t n)
             return 0;
         mapped = grow;
     }
-    void *p = (void *)(K86_HEAP + used);
+    void *p = (void *)((uintptr_t)K86_HEAP + used);
     used = need;
     return p;                           /* new pages are zeroed (and freed ones go back) */
 }

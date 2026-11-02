@@ -19,10 +19,13 @@ SELFTEST ?=
 EXTRA_APPS ?=
 KERNEL_BUILD ?= 1
 CC     := gcc
-CFLAGS := -m32 -std=gnu11 -O2 -g -Wall -Wextra -Werror -fno-strict-aliasing \
+# LiteKern Go: ARCH_FLAGS= (empty) builds for the compiler's own CPU, 64-bit
+# (x86_64 for the VM, aarch64 for the phone).
+ARCH_FLAGS ?= -m32
+CFLAGS := $(ARCH_FLAGS) -std=gnu11 -O2 -g -Wall -Wextra -Werror -fno-strict-aliasing \
           -Iplatform/include -I. -I$(KBUILD)/gen -DLKX_LINUX \
           -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64   # 32-bit, but big files and inodes (Windows drives)
-LDFLAGS := -m32
+LDFLAGS := $(ARCH_FLAGS)
 
 # The kernel code that comes along unchanged.
 KERNEL_C := appreg apps console cursor deflate desktop driver errno fat32 font gfx icon \

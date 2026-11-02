@@ -5,7 +5,7 @@
 static uint8_t glyphs[256 * FONT_H];
 static int loaded;
 
-int font_init(uint32_t font_addr)
+int font_init(uintptr_t font_addr)
 {
     if (!font_addr)
         return -ENODEV;

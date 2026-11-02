@@ -19,19 +19,19 @@
 /* On Linux (the port's phase L2) an app is a Linux process: its calls go to
  * lkx-shell over a socket (platform/libk86.c), not through int 0x80, which
  * on Linux is Linux's own system call gate. */
-int k86_linux_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e);
+int k86_linux_call(uint32_t nr, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e);
 
-static inline int k86_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+static inline int k86_call(uint32_t nr, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d)
 {
     return k86_linux_call(nr, a, b, c, d, 0);
 }
 
-static inline int k86_call5(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e)
+static inline int k86_call5(uint32_t nr, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e)
 {
     return k86_linux_call(nr, a, b, c, d, e);
 }
 #else
-static inline int k86_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+static inline int k86_call(uint32_t nr, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d)
 {
     int ret;
     __asm__ volatile("int $0x80"
@@ -41,7 +41,7 @@ static inline int k86_call(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint
     return ret;
 }
 
-static inline int k86_call5(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e)
+static inline int k86_call5(uint32_t nr, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e)
 {
     int ret;
     __asm__ volatile("int $0x80"
@@ -54,7 +54,7 @@ static inline int k86_call5(uint32_t nr, uint32_t a, uint32_t b, uint32_t c, uin
 
 static inline __attribute__((noreturn)) void k86_exit(int code)
 {
-    k86_call(SYS_EXIT, (uint32_t)code, 0, 0, 0);
+    k86_call(SYS_EXIT, (uintptr_t)code, 0, 0, 0);
     __builtin_unreachable();
 }
 
@@ -73,12 +73,12 @@ int k86_window_open(struct k86_window *w);
 
 static inline int k86_present(int x, int y, int w, int h)
 {
-    return k86_call(SYS_WINDOW_PRESENT, (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h);
+    return k86_call(SYS_WINDOW_PRESENT, (uintptr_t)x, (uintptr_t)y, (uintptr_t)w, (uintptr_t)h);
 }
 
 static inline int k86_header(const struct k86_header *h)
 {
-    return k86_call(SYS_WINDOW_HEADER, (uint32_t)h, 0, 0, 0);
+    return k86_call(SYS_WINDOW_HEADER, (uintptr_t)h, 0, 0, 0);
 }
 
 /* Sleeps until an event comes. On K86_EVENT_THEME the app's copy of the
@@ -88,18 +88,18 @@ int k86_wait_event(struct k86_event *ev);
 /* Appearance (the Settings app). */
 static inline int k86_appearance(struct k86_appearance *out)
 {
-    return k86_call(SYS_APPEARANCE, (uint32_t)out, 0, 0, 0);
+    return k86_call(SYS_APPEARANCE, (uintptr_t)out, 0, 0, 0);
 }
 
 static inline int k86_appearance_set(int style, int accent, const char *wallpaper)
 {
-    return k86_call(SYS_APPEARANCE_SET, (uint32_t)style, (uint32_t)accent, (uint32_t)wallpaper, 0);
+    return k86_call(SYS_APPEARANCE_SET, (uintptr_t)style, (uintptr_t)accent, (uintptr_t)wallpaper, 0);
 }
 
 /* Seconds without input before the screen saver starts; 0 turns it off. */
 static inline int k86_screensaver_set(int seconds)
 {
-    return k86_call(SYS_SCREENSAVER_SET, (uint32_t)seconds, 0, 0, 0);
+    return k86_call(SYS_SCREENSAVER_SET, (uintptr_t)seconds, 0, 0, 0);
 }
 
 /* Show the screen saver now (any input ends it). */
@@ -110,7 +110,7 @@ static inline int k86_screensaver_preview(void)
 
 static inline int k86_wallpaper_thumb(const char *name, uint32_t *out, int w, int h)
 {
-    return k86_call(SYS_WALLPAPER_THUMB, (uint32_t)name, (uint32_t)out, (uint32_t)w, (uint32_t)h);
+    return k86_call(SYS_WALLPAPER_THUMB, (uintptr_t)name, (uintptr_t)out, (uintptr_t)w, (uintptr_t)h);
 }
 
 /* A K86_EVENT_TIMER every ms milliseconds (0: off). It's only checked when the
@@ -123,41 +123,41 @@ static inline int k86_timer_set(uint32_t ms)
 /* The embedded controller's 256 bytes into buf. 0, or a negative errno. */
 static inline int k86_ec_read(uint8_t *buf)
 {
-    return k86_call(SYS_EC_READ, (uint32_t)buf, 0, 0, 0);
+    return k86_call(SYS_EC_READ, (uintptr_t)buf, 0, 0, 0);
 }
 
 /* The hardware probe: up to max report lines into out; returns how many
  * there are. flags: K86_PROBE_EC_RAM to read the EC's RAM too. Reads only. */
 static inline int k86_hw_probe(struct k86_probe_item *out, int max, uint32_t flags)
 {
-    return k86_call(SYS_HW_PROBE, (uint32_t)out, (uint32_t)max, flags, 0);
+    return k86_call(SYS_HW_PROBE, (uintptr_t)out, (uintptr_t)max, flags, 0);
 }
 
 /* Files. Paths start with '/', inside a volume (index from k86_volumes). */
 static inline int k86_volumes(struct k86_volume *out, int max)
 {
-    return k86_call(SYS_FS_VOLUMES, (uint32_t)out, (uint32_t)max, 0, 0);
+    return k86_call(SYS_FS_VOLUMES, (uintptr_t)out, (uintptr_t)max, 0, 0);
 }
 
 static inline int k86_list(int vol, const char *path, struct k86_dirent *out, int max)
 {
-    return k86_call(SYS_FS_LIST, (uint32_t)vol, (uint32_t)path, (uint32_t)out, (uint32_t)max);
+    return k86_call(SYS_FS_LIST, (uintptr_t)vol, (uintptr_t)path, (uintptr_t)out, (uintptr_t)max);
 }
 
 static inline int k86_create(int vol, const char *dir, const char *name, int is_dir)
 {
-    return k86_call(SYS_FS_CREATE, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)is_dir);
+    return k86_call(SYS_FS_CREATE, (uintptr_t)vol, (uintptr_t)dir, (uintptr_t)name, (uintptr_t)is_dir);
 }
 
 static inline int k86_rename(int vol, const char *dir, const char *from, const char *to)
 {
-    return k86_call(SYS_FS_RENAME, (uint32_t)vol, (uint32_t)dir, (uint32_t)from, (uint32_t)to);
+    return k86_call(SYS_FS_RENAME, (uintptr_t)vol, (uintptr_t)dir, (uintptr_t)from, (uintptr_t)to);
 }
 
 /* Read a file from its start into buf (at most len bytes); the bytes read. */
 static inline int k86_read(int vol, const char *dir, const char *name, void *buf, uint32_t len)
 {
-    return k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
+    return k86_call5(SYS_FS_READ, (uintptr_t)vol, (uintptr_t)dir, (uintptr_t)name, (uintptr_t)buf, len);
 }
 
 /* Memory beyond the 1 MiB image, for big jobs: make the block at K86_HEAP
@@ -173,7 +173,7 @@ static inline int k86_memory(uint32_t bytes)
  * K86_WALLPAPER_LOCK, or both. */
 static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stride, int where)
 {
-    return k86_call5(SYS_WALLPAPER_IMAGE, (uint32_t)px, (uint32_t)w, (uint32_t)h, (uint32_t)stride,
+    return k86_call5(SYS_WALLPAPER_IMAGE, (uintptr_t)px, (uintptr_t)w, (uintptr_t)h, (uintptr_t)stride,
                      (uint32_t)where);
 }
 
@@ -182,18 +182,18 @@ static inline int k86_wallpaper_image(const uint32_t *px, int w, int h, int stri
  * negative errno. */
 static inline int k86_home(char *path)
 {
-    return k86_call(SYS_HOME, (uint32_t)path, 0, 0, 0);
+    return k86_call(SYS_HOME, (uintptr_t)path, 0, 0, 0);
 }
 
 /* The users (kernel/users.h): list them; change them (checked and saved by the kernel). */
 static inline int k86_users(struct k86_users *out)
 {
-    return k86_call(SYS_USERS, (uint32_t)out, 0, 0, 0);
+    return k86_call(SYS_USERS, (uintptr_t)out, 0, 0, 0);
 }
 
 static inline int k86_user_change(const struct k86_user_change *c)
 {
-    return k86_call(SYS_USER_CHANGE, (uint32_t)c, 0, 0, 0);
+    return k86_call(SYS_USER_CHANGE, (uintptr_t)c, 0, 0, 0);
 }
 
 /* The lock screen: lock now; read or change its choices (saved). */
@@ -204,63 +204,63 @@ static inline int k86_lock(void)
 
 static inline int k86_lock_settings(struct k86_lock *l, int set)
 {
-    return k86_call(SYS_LOCK_SETTINGS, (uint32_t)l, (uint32_t)set, 0, 0);
+    return k86_call(SYS_LOCK_SETTINGS, (uintptr_t)l, (uintptr_t)set, 0, 0);
 }
 
 /* Replace a file's contents with len bytes (creating it if needed). */
 static inline int k86_write(int vol, const char *dir, const char *name, const void *buf, uint32_t len)
 {
-    return k86_call5(SYS_FS_WRITE, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, (uint32_t)buf, len);
+    return k86_call5(SYS_FS_WRITE, (uintptr_t)vol, (uintptr_t)dir, (uintptr_t)name, (uintptr_t)buf, len);
 }
 
 static inline int k86_delete(int vol, const char *dir, const char *name)
 {
-    return k86_call(SYS_FS_DELETE, (uint32_t)vol, (uint32_t)dir, (uint32_t)name, 0);
+    return k86_call(SYS_FS_DELETE, (uintptr_t)vol, (uintptr_t)dir, (uintptr_t)name, 0);
 }
 
 /* Networking (the Linux port; the kernel version has none: K86_NET_NONE, -ENODEV). */
 static inline int k86_net_status(struct k86_net *out)
 {
-    return k86_call(SYS_NET_STATUS, (uint32_t)out, 0, 0, 0);
+    return k86_call(SYS_NET_STATUS, (uintptr_t)out, 0, 0, 0);
 }
 
 /* What the last Wi-Fi scan found (and a new one asked for): the count of all. */
 static inline int k86_net_scan(struct k86_wifi *out, int max)
 {
-    return k86_call(SYS_NET_SCAN, (uint32_t)out, (uint32_t)max, 0, 0);
+    return k86_call(SYS_NET_SCAN, (uintptr_t)out, (uintptr_t)max, 0, 0);
 }
 
 static inline int k86_net_join(const char *ssid, const char *password)
 {
-    return k86_call(SYS_NET_JOIN, (uint32_t)ssid, (uint32_t)password, 0, 0);
+    return k86_call(SYS_NET_JOIN, (uintptr_t)ssid, (uintptr_t)password, 0, 0);
 }
 
 static inline int k86_net_forget(const char *ssid)
 {
-    return k86_call(SYS_NET_FORGET, (uint32_t)ssid, 0, 0, 0);
+    return k86_call(SYS_NET_FORGET, (uintptr_t)ssid, 0, 0, 0);
 }
 
 /* The machine (the Linux port; the kernel version: no battery, -1s, -ENODEV). */
 static inline int k86_machine(struct k86_machine *out)
 {
-    return k86_call(SYS_MACHINE, (uint32_t)out, 0, 0, 0);
+    return k86_call(SYS_MACHINE, (uintptr_t)out, 0, 0, 0);
 }
 
 static inline int k86_brightness_set(int percent)
 {
-    return k86_call(SYS_BRIGHTNESS_SET, (uint32_t)percent, 0, 0, 0);
+    return k86_call(SYS_BRIGHTNESS_SET, (uintptr_t)percent, 0, 0, 0);
 }
 
 /* speed: 0-100, 50 the usual. */
 static inline int k86_touchpad_set(int speed)
 {
-    return k86_call(SYS_TOUCHPAD_SET, (uint32_t)speed, 0, 0, 0);
+    return k86_call(SYS_TOUCHPAD_SET, (uintptr_t)speed, 0, 0, 0);
 }
 
 /* zone: an index in kernel/timezones.h. */
 static inline int k86_timezone_set(int zone)
 {
-    return k86_call(SYS_TIMEZONE_SET, (uint32_t)zone, 0, 0, 0);
+    return k86_call(SYS_TIMEZONE_SET, (uintptr_t)zone, 0, 0, 0);
 }
 
 #endif

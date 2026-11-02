@@ -56,7 +56,7 @@ static uint32_t unfilter(uint8_t *raw, int w, int h, int *ok)
     return fnv;
 }
 
-static void free_frames(uint32_t phys, uint32_t bytes)
+static void free_frames(uintptr_t phys, uint32_t bytes)
 {
     for (uint32_t off = 0; off < bytes; off += PAGE_SIZE)
         pmm_free(phys + off);
@@ -64,7 +64,7 @@ static void free_frames(uint32_t phys, uint32_t bytes)
 
 /* Unpack an .lkxw file into a fresh buffer of unfiltered rows (1 filter
  * byte + 3 * w bytes each), checked. The caller frees it (free_frames). */
-static int unpack_data(const void *data, uint32_t size, const char *name, struct header *hd, uint32_t *raw,
+static int unpack_data(const void *data, uint32_t size, const char *name, struct header *hd, uintptr_t *raw,
                        uint32_t *raw_bytes)
 {
     if (size < sizeof(*hd))
@@ -90,7 +90,7 @@ static int unpack_data(const void *data, uint32_t size, const char *name, struct
 }
 
 /* The same for wallpapers/<name>.lkxw in the ramdisk. */
-static int unpack(const char *name, struct header *hd, uint32_t *raw, uint32_t *raw_bytes)
+static int unpack(const char *name, struct header *hd, uintptr_t *raw, uint32_t *raw_bytes)
 {
     char path[64] = "wallpapers/";
     int n = (int)strlen(path);
@@ -108,7 +108,7 @@ int wallpaper_init(const char *name)
 {
     struct gfx_surface *scr = screen_surface();
     uint32_t bytes = ((uint32_t)scr->w * scr->h * 4 + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    uint32_t img = pmm_alloc_contiguous(bytes / PAGE_SIZE);
+    uintptr_t img = pmm_alloc_contiguous(bytes / PAGE_SIZE);
     if (!img) {
         kprintf("wallpaper: out of memory; plain colour\n");
         return -ENOMEM;
@@ -125,7 +125,8 @@ int wallpaper_init(const char *name)
  * whatever it doesn't cover (a smaller dst shows its middle). */
 static int draw_preset(const char *name, struct gfx_surface *dst, struct header *hd)
 {
-    uint32_t raw, raw_bytes;
+    uintptr_t raw;
+    uint32_t raw_bytes;
     char variant[40];
     int n = 0;
     for (; name[n] && n < 30; n++)
@@ -269,7 +270,8 @@ const char *wallpaper_current(void)
 int wallpaper_thumb(const char *name, uint32_t *out, int w, int h)
 {
     struct header hd;
-    uint32_t raw, raw_bytes;
+    uintptr_t raw;
+    uint32_t raw_bytes;
     /* The build makes a small "<name>.thumb" for each: much quicker than
      * unpacking the whole wallpaper. Without one, the wallpaper itself. */
     char small[40];
@@ -347,23 +349,23 @@ static uint32_t filter_cost(const uint8_t *d, int n)
     return sum;
 }
 
-int wallpaper_pack(uint32_t *phys, uint32_t *bytes, uint32_t *len)
+int wallpaper_pack(uintptr_t *phys, uint32_t *bytes, uint32_t *len)
 {
     if (!custom || !shown)
         return -ENOENT;
     return wallpaper_pack_surface(&image, phys, bytes, len);
 }
 
-int wallpaper_pack_surface(const struct gfx_surface *src, uint32_t *phys, uint32_t *bytes, uint32_t *len)
+int wallpaper_pack_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len)
 {
     int w = src->w, h = src->h, stride = 1 + 3 * w;
     uint32_t raw_len = (uint32_t)h * (uint32_t)stride;
     uint32_t raw_bytes = (raw_len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     uint32_t cap = sizeof(struct header) + raw_len + raw_len / 64 + 1024;
     uint32_t out_bytes = (cap + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1), work_bytes = DEFLATE_WORK;
-    uint32_t raw = pmm_alloc_contiguous(raw_bytes / PAGE_SIZE);
-    uint32_t out = raw ? pmm_alloc_contiguous(out_bytes / PAGE_SIZE) : 0;
-    uint32_t work = out ? pmm_alloc_contiguous(work_bytes / PAGE_SIZE) : 0;
+    uintptr_t raw = pmm_alloc_contiguous(raw_bytes / PAGE_SIZE);
+    uintptr_t out = raw ? pmm_alloc_contiguous(out_bytes / PAGE_SIZE) : 0;
+    uintptr_t work = out ? pmm_alloc_contiguous(work_bytes / PAGE_SIZE) : 0;
     if (!work) {
         if (raw)
             free_frames(raw, raw_bytes);
@@ -420,7 +422,7 @@ int wallpaper_pack_surface(const struct gfx_surface *src, uint32_t *phys, uint32
     return 0;
 }
 
-void wallpaper_pack_free(uint32_t phys, uint32_t bytes)
+void wallpaper_pack_free(uintptr_t phys, uint32_t bytes)
 {
     free_frames(phys, bytes);
 }
@@ -428,12 +430,13 @@ void wallpaper_pack_free(uint32_t phys, uint32_t bytes)
 int wallpaper_render_packed(const void *data, uint32_t size, struct gfx_surface *dst)
 {
     struct header hd;
-    uint32_t raw, raw_bytes;
+    uintptr_t raw;
+    uint32_t raw_bytes;
     int err = unpack_data(data, size, WALLPAPER_CUSTOM, &hd, &raw, &raw_bytes);
     if (err)
         return err;
     uint32_t px_bytes = ((uint32_t)hd.w * hd.h * 4 + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    uint32_t px = pmm_alloc_contiguous(px_bytes / PAGE_SIZE);
+    uintptr_t px = pmm_alloc_contiguous(px_bytes / PAGE_SIZE);
     if (!px) {
         free_frames(raw, raw_bytes);
         return -ENOMEM;

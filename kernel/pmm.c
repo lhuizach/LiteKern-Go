@@ -56,7 +56,7 @@ void pmm_init(const struct boot_info *bi)
         panic("pmm: no free RAM above 1 MiB");
 }
 
-uint32_t pmm_alloc(void)
+uintptr_t pmm_alloc(void)
 {
     for (uint32_t n = 0; n < FRAMES; n++) {
         uint32_t frame = (next_hint + n) % FRAMES;
@@ -72,7 +72,7 @@ uint32_t pmm_alloc(void)
     return 0;
 }
 
-uint32_t pmm_alloc_contiguous(uint32_t count)
+uintptr_t pmm_alloc_contiguous(uint32_t count)
 {
     if (!count || count > free_count)
         return 0;
@@ -91,7 +91,7 @@ uint32_t pmm_alloc_contiguous(uint32_t count)
     return 0;
 }
 
-void pmm_free(uint32_t phys)
+void pmm_free(uintptr_t phys)
 {
     uint32_t frame = phys / PAGE_SIZE;
     if (phys % PAGE_SIZE || phys < LOW_LIMIT || phys >= PMM_LIMIT)

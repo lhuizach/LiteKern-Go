@@ -79,7 +79,7 @@ void plat_exit(int code) __attribute__((noreturn));
 void plat_devices_init(const struct backend *b, int w, int h, const char *disk, const char *layout);
 /* The memory file behind an allocation that starts at `start` (pmm_alloc*),
  * or -1: a window's pixels, shared with its app. */
-int plat_memory_fd(uint32_t start);
+int plat_memory_fd(uintptr_t start);
 
 /* --- apps (platform/lkx.c), for the loop's waiting ------------------------------------------- */
 struct pollfd;

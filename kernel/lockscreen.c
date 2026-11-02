@@ -128,7 +128,7 @@ static int screen_buffer(struct gfx_surface *s)
     if (s->px)
         return 0;
     uint32_t bytes = (uint32_t)S()->w * (uint32_t)S()->h * 4;
-    uint32_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    uintptr_t phys = pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!phys)
         return -ENOMEM;
     *s = (struct gfx_surface){ (uint32_t *)phys, S()->w, S()->h, S()->w };
@@ -850,7 +850,7 @@ int lockscreen_has_picture(void)
     return ls.pic.px != 0;
 }
 
-int lockscreen_pack_picture(uint32_t *phys, uint32_t *bytes, uint32_t *len)
+int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len)
 {
     if (!ls.pic.px)
         return -ENOENT;

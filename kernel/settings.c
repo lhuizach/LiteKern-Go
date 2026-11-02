@@ -309,7 +309,8 @@ static int load_packed(const char *file, const char *what, int (*show)(const voi
         return err;
     if (!e.size || e.size > 32 * 1024 * 1024)
         return -EINVAL;
-    uint32_t pages = (e.size + PAGE_SIZE - 1) / PAGE_SIZE, buf = pmm_alloc_contiguous(pages);
+    uint32_t pages = (e.size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uintptr_t buf = pmm_alloc_contiguous(pages);
     if (!buf)
         return -ENOMEM;
     int n = fat_read(v, &e, 0, (void *)buf, e.size);
@@ -356,9 +357,10 @@ void settings_save(void)
 }
 
 /* Pack a picture (pack()) and write it to file, then settings.txt. */
-static void save_packed(const char *file, const char *what, int (*pack)(uint32_t *, uint32_t *, uint32_t *))
+static void save_packed(const char *file, const char *what, int (*pack)(uintptr_t *, uint32_t *, uint32_t *))
 {
-    uint32_t phys, bytes, len, t0 = uptime_ms();
+    uintptr_t phys;
+    uint32_t bytes, len, t0 = uptime_ms();
     int err = pack(&phys, &bytes, &len);
     if (err) {
         kprintf("settings: couldn't pack the %s (%d)\n", what, err);

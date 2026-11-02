@@ -57,6 +57,6 @@ int lockscreen_load_picture(const void *data, uint32_t size);
 /* 1 if it has a picture of its own. */
 int lockscreen_has_picture(void);
 /* The picture packed for saving, as wallpaper_pack(). -ENOENT if none. */
-int lockscreen_pack_picture(uint32_t *phys, uint32_t *bytes, uint32_t *len);
+int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len);
 
 #endif

@@ -147,7 +147,7 @@ static void set_area(struct gfx_surface *s)
     scrollback = 0;
 }
 
-int console_init(uint32_t font_addr)
+int console_init(uintptr_t font_addr)
 {
     if (font_init(font_addr) < 0 || !screen_ready())
         return -ENODEV;
@@ -165,7 +165,7 @@ int console_init(uint32_t font_addr)
         put(log[i]);
     active = 1;
     redraw();
-    kprintf("console: %ux%u characters, video BIOS font at 0x%05x\n", cols, rows, font_addr);
+    kprintf("console: %ux%u characters, video BIOS font at 0x%05x\n", cols, rows, (uint32_t)font_addr);
     return 0;
 }
 
