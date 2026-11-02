@@ -44,6 +44,28 @@ static int sw, sh;
 
 /* --- the screen -------------------------------------------------------------------------------- */
 
+/* The size Linux was asked for (video=WxH or video=NAME:WxH on its command
+ * line: LiteKern Go's VM asks for the phone's 720x1280). 0 if none. Linux
+ * adds that mode to the output's list but may still prefer another. */
+static int wanted_mode(int *w, int *h)
+{
+    char line[1024];
+    FILE *f = fopen("/proc/cmdline", "r");
+    if (!f)
+        return 0;
+    int ok = 0;
+    if (fgets(line, sizeof(line), f)) {
+        for (char *t = strtok(line, " \n"); t && !ok; t = strtok(0, " \n")) {
+            if (strncmp(t, "video=", 6))
+                continue;
+            char *s = strchr(t + 6, ':');
+            ok = sscanf(s ? s + 1 : t + 6, "%dx%d", w, h) == 2 && *w > 0 && *h > 0;
+        }
+    }
+    fclose(f);
+    return ok;
+}
+
 static int open_display(int *w, int *h)
 {
     card = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
@@ -67,10 +89,12 @@ static int open_display(int *w, int *h)
     if (ioctl(card, DRM_IOCTL_MODE_GETRESOURCES, &res))
         return -1;
 
-    /* A connected output: the built-in panel (LVDS, eDP) first. */
+    /* A connected output: the built-in panel (LVDS, eDP) first. Its mode:
+     * the one video= asked for when it has it, else its preferred one. */
     struct drm_mode_get_connector best = { 0 };
     struct drm_mode_modeinfo mode = { 0 };
-    int found = 0;
+    int found = 0, want_w = 0, want_h = 0;
+    int want = wanted_mode(&want_w, &want_h);
     for (uint32_t i = 0; i < res.count_connectors; i++) {
         struct drm_mode_get_connector c = { .connector_id = conns[i] };
         if (ioctl(card, DRM_IOCTL_MODE_GETCONNECTOR, &c) || c.connection != 1 || !c.count_modes)
@@ -91,6 +115,11 @@ static int open_display(int *w, int *h)
         mode = modes[0];
         for (uint32_t m = 0; m < c.count_modes; m++)
             if (modes[m].type & DRM_MODE_TYPE_PREFERRED) {
+                mode = modes[m];
+                break;
+            }
+        for (uint32_t m = 0; want && m < c.count_modes; m++)
+            if (modes[m].hdisplay == want_w && modes[m].vdisplay == want_h) {
                 mode = modes[m];
                 break;
             }
