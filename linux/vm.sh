@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# LiteKern X on Linux — VMs for the USB stick image (linux/build.sh), so it can
-# be tried without the EeePC. In WSL, from the project folder:
+# LiteKern Go — VMs for the image (linux/build.sh), so the OS can be
+# tried before the phone. In WSL, from the project folder:
 #
-#   bash linux/vm.sh qemu           a QEMU window, the EeePC's 1024x600 screen
+#   bash linux/vm.sh qemu           a QEMU window, the phone's 720x1280 screen
 #   bash linux/vm.sh qemu --fresh   the same, starting again from the image
 #   (the VirtualBox VM "LiteKern Go": vm\create-vm.ps1, once, from PowerShell)
 #   bash linux/vm.sh vbox start     boot it in a window
@@ -16,7 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE=build-linux/litekernx-linux.img
+IMAGE=build-linux/litekern-go.img
 [ -f "$IMAGE" ] || { echo "$IMAGE missing: run linux/build.sh first" >&2; exit 1; }
 
 case "${1:-}" in
@@ -39,11 +39,11 @@ qemu)
         echo "  wsl -u root usermod -aG kvm $USER"
         echo "  wsl --shutdown"
     fi
-    # virtio-vga, offering the EeePC panel's 1024x600 first: its hardware
+    # virtio-vga, offering the phone's 720x1280 first: its hardware
     # cursor is LiteKern X's pointer, which QEMU's window shows as the PC's
     # own (drawn by Windows: no lag through WSL's display). A USB tablet: the
     # pointer goes where the PC's is, with no grabbing the mouse.
-    exec bash vm/qemu.sh --image "$disk" -- -vga none -device virtio-vga,xres=1024,yres=600 \
+    exec bash vm/qemu.sh --image "$disk" -- -vga none -device virtio-vga,xres=720,yres=1280 \
         -usb -device usb-tablet "${accel[@]}"
     ;;
 vbox)

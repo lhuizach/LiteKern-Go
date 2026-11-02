@@ -108,7 +108,7 @@ void users_page_draw(void)
     gfx_fill_rect(c, 0, 0, c->w, c->h, t->window_bg);
     text_draw(c, list.r.x, 20, "Users", TEXT_HEADING, t->fg);
     text_draw_fit(c, list.r.x, 20 + text_height(TEXT_HEADING) + 8,
-                  "A password keeps people off this EeePC. The USB stick itself isn't encrypted.", list.r.w,
+                  "A password keeps people off this phone. Its storage itself isn't encrypted.", list.r.w,
                   TEXT_BODY, t->fg_dim);
     wg_list_draw(c, &list);
     for (int i = 0; i < NBAR; i++)

@@ -6,7 +6,7 @@
 #   Snapdragon 410, 4x Cortex-A53  -> 4 x86_64 CPUs (not the same speed, see below)
 #   2 GB RAM                       -> 2048 MB
 #   16 GB storage                  -> 16 GB disk (dynamic, grows as used)
-#   720x1280 portrait screen       -> VMSVGA (Linux vmwgfx DRM driver), 720x1280 hint
+#   720x1280 portrait screen       -> VBoxSVGA (Linux vboxvideo DRM driver), 720x1280 hint
 #   touchscreen                    -> USB tablet (absolute pointer, a click is a tap)
 #   Wi-Fi                          -> NAT network card
 #
@@ -38,7 +38,7 @@ Run modifyvm $Name --cpus 4 --cpuexecutioncap $CpuCap --memory 2048 `
     --boot1 disk --boot2 dvd --boot3 none --boot4 none
 
 # Screen: 720x1280 portrait
-Run modifyvm $Name --graphicscontroller vmsvga --vram 32 --accelerate3d off
+Run modifyvm $Name --graphicscontroller vboxsvga --vram 32 --accelerate3d off
 Run setextradata $Name "CustomVideoMode1" "720x1280x32"
 Run setextradata $Name "GUI/LastGuestSizeHint" "720,1280"
 

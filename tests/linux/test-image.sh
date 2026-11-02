@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LiteKern X on Linux (LiteKernX-Roadmap/06, phase L3): the USB stick image,
-# build-linux/litekernx-linux.img (linux/build.sh), booted in QEMU as the
+# build-linux/litekern-go.img (linux/build.sh), booted in QEMU as the
 # kernel version's tests boot theirs: SYSLINUX, Linux, lkx-start, the desktop
 # on QEMU's screen (DRM) with its keyboard and mouse (evdev). Typing is
 # by key position, and the image is AZERTY, as on the EeePC.
@@ -10,7 +10,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 failures=0
-[ -f build-linux/litekernx-linux.img ] || { echo "no build-linux/litekernx-linux.img: run linux/build.sh"; exit 1; }
+[ -f build-linux/litekern-go.img ] || { echo "no build-linux/litekern-go.img: run linux/build.sh"; exit 1; }
 mkdir -p build-linux/test-image
 
 # boot_until IMAGE REGEX SECONDS -> $out holds the serial output (tests/kernel's)
@@ -88,7 +88,7 @@ DOCK_Y=728 SHOWAPPS_X=572 GRID_Y=363
 tile() { echo $(( (1024 - 7 * 112) / 2 + 56 + $1 * 112 )); }   # 7: Files, Calculator, Settings, Probe, Web, Blocksmith, Log
 ready_re='^desktop: ready'
 
-cp build-linux/litekernx-linux.img build-linux/test-image/disk.img
+cp build-linux/litekern-go.img build-linux/test-image/disk.img
 SCREEN="corner=" boot_until build-linux/test-image/disk.img "$ready_re" 120
 check "boots: SYSLINUX, Linux, lkx-start finds the stick, the desktop on QEMU's screen" \
     '^lkx-start: disk /dev/sda after [0-9]+ ms$' \
@@ -137,7 +137,7 @@ check "Ethernet: found, an address from DHCP, the icon in the top bar" \
 # kept, Connect asks again, the right one joins, gets an address, and is
 # remembered on the stick. AZERTY, by key position: "apple pie" is q p p l e.
 img=build-linux/test-image/wifi.img
-cp build-linux/litekernx-linux.img $img
+cp build-linux/litekern-go.img $img
 mtype -i $img@@4194304 ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' \
     > build-linux/test-image/syslinux.cfg
 mcopy -o -i $img@@4194304 build-linux/test-image/syslinux.cfg ::/syslinux/syslinux.cfg
@@ -220,7 +220,7 @@ python3 -m http.server 8123 --bind 127.0.0.1 --directory build-linux/test-image/
 www=$!
 sleep 0.5
 URL_X=500 URL_Y=180
-cp build-linux/litekernx-linux.img build-linux/test-image/download.img
+cp build-linux/litekern-go.img build-linux/test-image/download.img
 path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:1; go $WEB_X $GRID_Y; click; add sleep:7
 go $URL_X $URL_Y; click; add sleep:0.3 end; for i in $(seq 45); do add backspace; done
 add h t t p dot shift-dot shift-dot shift-1 shift-0 shift-comma shift-0 shift-comma shift-2 shift-comma shift-2 \

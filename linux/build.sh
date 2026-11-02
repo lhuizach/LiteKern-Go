@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# LiteKern X on Linux — builds the USB stick image, build-linux/litekernx-linux.img
-# (LiteKernX-Roadmap/06, phase L3). In WSL:
+# LiteKern Go — builds the VM image, build-linux/litekern-go.img
+# (from LiteKern X's Linux build; ROADMAP.md). In WSL:
 #
 #   bash linux/build.sh            everything (the first time: 1-2 hours)
 #   bash linux/build.sh toolchain  just Buildroot's compiler (the slow part)
@@ -34,7 +34,7 @@ WORK=$HOME/lkx-buildroot
 BR=$WORK/buildroot-$BR_VERSION
 OUT=$WORK/output-go-x86_64
 SYSLINUX=$WORK/syslinux-$SYSLINUX_VERSION
-IMAGE=build-linux/litekernx-linux.img
+IMAGE=build-linux/litekern-go.img
 FAT_OFFSET=$((8192 * 512))
 
 step=${1:-all}

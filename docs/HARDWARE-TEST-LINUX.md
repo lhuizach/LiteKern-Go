@@ -7,7 +7,7 @@ In the project folder (`C:\Users\lhuir\LiteKern-X-Linux`), from PowerShell:
 ```
 wsl bash linux/build.sh
 ```
-The first time takes 1–2 hours (Buildroot builds its compiler and Linux); after a change to the desktop or the apps, `wsl bash linux/build.sh image` takes minutes. It makes **`build-linux\litekernx-linux.img`** (65 MiB).
+The first time takes 1–2 hours (Buildroot builds its compiler and Linux); after a change to the desktop or the apps, `wsl bash linux/build.sh image` takes minutes. It makes **`build-linux\litekern-go.img`** (65 MiB).
 
 ## 2. Write it to the stick, boot the EeePC
 As before ([HARDWARE-TEST.md](HARDWARE-TEST.md) §2 and §3): Rufus or Etcher, DD image mode, the whole stick is erased; then **Esc** at the ASUS logo and pick the stick.

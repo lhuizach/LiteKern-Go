@@ -41,10 +41,10 @@ isn't, so most of the OS gets built there first.
 - [x] x86_64 Buildroot image boots in the VM at 720x1280
 - [x] Plans: UI-PLAN.md, this roadmap
 - [x] GitHub repo (private): github.com/lhuizach/LiteKern-Go
-- [ ] VM graphics: switch to VBoxSVGA (silence the vmwgfx warning)
-- [ ] Ethernet "no cable" in the VM
-- [ ] Rename `litekernx-linux.img` and other LiteKern X leftovers
-- [ ] Remove Eee PC parts from the build (drivers, Hardware Probe)
+- [x] VM graphics: switch to VBoxSVGA (silence the vmwgfx warning)
+- [x] Ethernet "no cable" in the VM (it was only the link coming up a moment late)
+- [x] Rename `litekernx-linux.img` and other LiteKern X leftovers
+- [x] Remove Eee PC parts from the build (drivers, Hardware Probe)
 - [ ] Rerun the 32-bit test suite once, then decide whether to keep 32-bit
 
 **Done when:** a clean build boots in the VM with no LiteKern X / Eee PC

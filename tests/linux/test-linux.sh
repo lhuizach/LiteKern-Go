@@ -168,9 +168,9 @@ check "the screen saver starts after the idle time, covers the desktop, a key en
     '^screensaver: off after [0-9]+ s: [1-9][0-9]* frames'
 
 # --- the apps, each its own Linux process (phase L2) ------------------------------------------
-# The app menu at 1024x600, one row of 6: Files, Calculator, Settings, Probe,
+# The app menu at 1024x600, one row of 5: Files, Calculator, Settings,
 # Blocksmith, Log (kernel/desktop.c's grid), at y 265.
-tile() { echo $(( (W - 6 * 112) / 2 + 56 + $1 * 112 )); }
+tile() { echo $(( (W - 5 * 112) / 2 + 56 + $1 * 112 )); }
 GRID_Y=265
 open_app() { go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go "$(tile "$1")" $GRID_Y; click; add sleep:1.5; }
 
@@ -256,7 +256,7 @@ unset LKX_POWER_SUPPLY LKX_BACKLIGHT
 # Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
 # saves it as "Test" (SYS_FS_WRITE).
 cp build/litekernx.img build-linux/test/blocksmith.img
-path; open_app 4; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
+path; open_app 3; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
 run $SHELL_BIN build-linux/test/blocksmith.img "$P" --keyboard qwerty
 check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: run$' \
@@ -264,13 +264,6 @@ check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: print You clicked at x = [0-9]+$' \
     '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
     '!blocksmith: error|crashed'
-
-path; open_app 3; add sleep:1
-run $SHELL_BIN build-linux/test/disk.img "$P"
-check "the Hardware Probe reads Linux's /proc and /sys" \
-    '^user: probe: open$' \
-    '^user: probe: [1-9][0-9]* items$' \
-    '!crashed'
 
 # Stability: Files opened and closed 15 times; each must end cleanly.
 path; add gap:0.1
@@ -285,9 +278,9 @@ check "Files opened and closed 15 times, ending cleanly each time" \
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their menu: 9 tiles (8 a row, y 213): Crash, Badcalls, Hang at 679, 791, 903.
+# Their menu: 8 tiles (one row, y 265): Crash, Badcalls, Hang at 568, 680, 792.
 path
-for x in 679 791 903; do go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go $x 213; click; add sleep:1.5; done
+for x in 568 680 792; do go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go $x 265; click; add sleep:1.5; done
 add sleep:11; go $FILES_X $DOCK_Y; click; add sleep:1.5
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
