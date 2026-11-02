@@ -40,7 +40,7 @@ isn't, so most of the OS gets built there first.
 - [x] 64-bit port, Linux test suite passes (23/23)
 - [x] x86_64 Buildroot image boots in the VM at 720x1280
 - [x] Plans: UI-PLAN.md, this roadmap
-- [x] GitHub repo (private)
+- [ ] GitHub repo (private)
 - [ ] VM graphics: switch to VBoxSVGA (silence the vmwgfx warning)
 - [ ] Ethernet "no cable" in the VM
 - [ ] Rename `litekernx-linux.img` and other LiteKern X leftovers
