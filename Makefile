@@ -46,7 +46,7 @@ WALLPAPER ?= crossing
 SPLASH    ?= logo
 # The screen saver starts after this many seconds without input (0: never).
 SCREENSAVER ?= 300
-KEYBOARD  ?= azerty         # azerty (French) or qwerty (US); the tests use qwerty
+KEYBOARD  ?= qwerty         # qwerty (US) or azerty (French); LiteKern Go: qwerty (the on-screen keyboard is UK, UI-PLAN.md)
 
 # Cursors: assets/cursors.json + PNGs -> C, at build time (docs/ASSET-PROMPTS.md §3).
 CURSOR_ASSETS := assets/cursors.json $(wildcard assets/cursors/*.png)

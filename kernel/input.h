@@ -38,6 +38,16 @@
 #define KEY_LSUPER      (KEY_EXTENDED | 0x05b)  /* the Windows keys */
 #define KEY_RSUPER      (KEY_EXTENDED | 0x05c)
 
+/* LiteKern Go: the phone's own keys, which no PC keyboard has (UI-PLAN.md).
+ * Back isn't here: it arrives as KEY_ESC, which apps already treat as "close
+ * this". In the VM, PC keys stand in (platform/devices.c, plat_evdev_key()). */
+#define KEY_PHONE           0x200
+#define KEY_PHONE_HOME      (KEY_PHONE | 1)
+#define KEY_PHONE_RECENTS   (KEY_PHONE | 2)
+#define KEY_PHONE_POWER     (KEY_PHONE | 3)
+#define KEY_VOLUME_UP       (KEY_PHONE | 4)
+#define KEY_VOLUME_DOWN     (KEY_PHONE | 5)
+
 /* kbd0 ioctl */
 #define KBD_GET_DROPPED 1       /* arg: uint32_t *, events lost to a full queue */
 

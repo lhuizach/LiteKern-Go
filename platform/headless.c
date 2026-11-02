@@ -51,6 +51,9 @@ static const struct { const char *name; uint16_t key; } names[] = {
     { "pgup", KEY_PAGEUP }, { "pgdn", KEY_PAGEDOWN }, { "insert", KEY_INSERT },
     { "delete", KEY_DELETE }, { "meta_l", KEY_LSUPER }, { "meta_r", KEY_RSUPER },
     { "kp_enter", KEY_EXTENDED | 0x1c },
+    /* LiteKern Go: the phone's keys (Back is "esc") */
+    { "phone_home", KEY_PHONE_HOME }, { "phone_recents", KEY_PHONE_RECENTS },
+    { "phone_power", KEY_PHONE_POWER }, { "vol_up", KEY_VOLUME_UP }, { "vol_down", KEY_VOLUME_DOWN },
 };
 
 static uint16_t key_named(const char *s, size_t n)
@@ -116,6 +119,14 @@ static uint32_t step(const char *tok)
             kprintf("headless: couldn't write %s\n", tok + 5);
         else
             kprintf("headless: screenshot %s\n", tok + 5);
+    } else if (!strncmp(tok, "keydown:", 8) || !strncmp(tok, "keyup:", 6)) {    /* a held key */
+        int down = tok[3] == 'd';
+        const char *name = tok + (down ? 8 : 6);
+        uint16_t k = key_named(name, strlen(name));
+        if (k)
+            plat_key(k, down);
+        else
+            kprintf("headless: unknown key \"%s\"\n", name);
     } else if (!strcmp(tok, "quit")) {
         plat_exit(0);
     } else {

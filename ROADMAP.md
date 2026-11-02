@@ -56,7 +56,7 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 
 - [x] 2.1 Theme scale (2x sizes). The desktop-era click tests (12 of 22) fail on the new
       positions: they get rewritten as each phone screen replaces the desktop one
-- [ ] 2.2 Key map: Back, Home, Recent apps, Power, volume (VM keys: Esc, Home,
+- [x] 2.2 Key map: Back, Home, Recent apps, Power, volume (VM keys: Esc, Home,
       F1, F12, PgUp/PgDn)
 - [ ] 2.3 Full-screen window manager, one app visible, background apps paused
 - [ ] 2.4 Home screen: icon pages and All apps, no dock or top bar

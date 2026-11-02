@@ -221,9 +221,29 @@ static const driver_t mouse_driver = {
 };
 
 /* Linux evdev key codes are set 1 scancodes for the main block (1-88); the
- * rest are the E0-prefixed keys. */
+ * rest are the E0-prefixed keys.
+ *
+ * LiteKern Go: the phone's keys, and the PC keys that stand in for them in
+ * the VM (UI-PLAN.md): Home -> Home, F1 -> Recent apps, F12 -> Power,
+ * Page Up/Down -> volume. Back is Esc on both. Unverified: the codes the A5
+ * really sends (expected KEY_BACK, KEY_HOMEPAGE, KEY_APPSELECT or KEY_MENU);
+ * check with evtest on the phone (ROADMAP.md, phase 5). */
 uint16_t plat_evdev_key(unsigned code)
 {
+    switch (code) {
+    case 158: return KEY_ESC;               /* KEY_BACK */
+    case 172:                               /* KEY_HOMEPAGE */
+    case 102: return KEY_PHONE_HOME;        /* the VM: Home */
+    case 580:                               /* KEY_APPSELECT */
+    case 139:                               /* KEY_MENU */
+    case 59:  return KEY_PHONE_RECENTS;     /* the VM: F1 */
+    case 116:                               /* KEY_POWER (the VM's ACPI button too) */
+    case 88:  return KEY_PHONE_POWER;       /* the VM: F12 */
+    case 115:                               /* KEY_VOLUMEUP */
+    case 104: return KEY_VOLUME_UP;         /* the VM: Page Up */
+    case 114:                               /* KEY_VOLUMEDOWN */
+    case 109: return KEY_VOLUME_DOWN;       /* the VM: Page Down */
+    }
     if (code >= 1 && code <= 88 && code != 84)
         return (uint16_t)code;
     switch (code) {
@@ -231,14 +251,11 @@ uint16_t plat_evdev_key(unsigned code)
     case 97:  return KEY_RCTRL;
     case 98:  return KEY_EXTENDED | 0x35;   /* keypad / */
     case 100: return KEY_RALT;              /* AltGr */
-    case 102: return KEY_HOME;
     case 103: return KEY_UP;
-    case 104: return KEY_PAGEUP;
     case 105: return KEY_LEFT;
     case 106: return KEY_RIGHT;
     case 107: return KEY_END;
     case 108: return KEY_DOWN;
-    case 109: return KEY_PAGEDOWN;
     case 110: return KEY_INSERT;
     case 111: return KEY_DELETE;
     case 125: return KEY_LSUPER;

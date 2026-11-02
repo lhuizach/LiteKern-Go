@@ -1678,8 +1678,86 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
     /* No redraw here: the input loop does one per batch of packets. */
 }
 
+/* LiteKern Go's keys (UI-PLAN.md). Until the phone screens exist they drive
+ * the desktop's own: Home shows the desktop, Recent apps switches to the
+ * previous app (the switcher is phase 2.10), Power locks (held: the power
+ * menu), volume is only logged (no sound yet). */
+#define POWER_HOLD_MS 500
+static uint32_t power_down_ms;          /* Power is held since (0: it isn't) */
+static int power_held;                  /* ... and the power menu opened for it */
+
+static void recent_app(void)
+{
+    struct wm_window *now = wm_focused();
+    for (int i = wm_count() - 1; i >= 0; i--) {
+        struct wm_window *w = wm_at(i);
+        if (w == now && !wm_is_minimised(w))
+            continue;
+        kprintf("desktop: recent app %s\n", name_of(w));
+        if (wm_is_minimised(w))
+            restore_window(w);
+        else
+            wm_focus(w);
+        return;
+    }
+    kprintf("desktop: no recent apps\n");
+}
+
+static int phone_key(const struct key_event *k)
+{
+    if (k->key == KEY_PHONE_POWER) {
+        if (k->pressed && !power_down_ms) {
+            power_down_ms = uptime_ms() | 1;
+        } else if (!k->pressed) {
+            if (power_down_ms && !power_held) {
+                menu_set(0);
+                shell_flush();
+                kprintf("shell: lock (Power)\n");
+                lockscreen_lock();
+            }
+            power_down_ms = 0;
+            power_held = 0;
+        }
+        return 1;
+    }
+    if (!k->pressed)
+        return 1;
+    switch (k->key) {
+    case KEY_PHONE_HOME:
+        kprintf("shell: Home\n");
+        menu_set(0);
+        set_grid(0);
+        show_desktop();
+        break;
+    case KEY_PHONE_RECENTS:
+        kprintf("shell: Recent apps\n");
+        menu_set(0);
+        set_grid(0);
+        recent_app();
+        break;
+    case KEY_VOLUME_UP:
+    case KEY_VOLUME_DOWN:
+        kprintf("shell: volume %s\n", k->key == KEY_VOLUME_UP ? "up" : "down");
+        break;
+    }
+    shell_flush();
+    return 1;
+}
+
+static void power_tick(void)
+{
+    if (power_down_ms && !power_held && uptime_ms() - power_down_ms >= POWER_HOLD_MS) {
+        power_held = 1;
+        kprintf("shell: power menu (Power held)\n");
+        menu_set(1);
+        shell_flush();
+    }
+}
+
 int desktop_input_key(const struct key_event *k)
 {
+    if (k->key & KEY_PHONE)
+        return phone_key(k);
     /* Super+L locks, as in GNOME and Windows. */
     static int super;
     if (k->key == KEY_LSUPER || k->key == KEY_RSUPER) {
@@ -1713,6 +1791,7 @@ void desktop_tick(void)
     if (!started)
         return;
     dock_tick();
+    power_tick();
     uint32_t ticks;
     if (!rtc || dev_ioctl(rtc, RTC_GET_TICKS, &ticks) < 0 || ticks == last_tick)
         return;

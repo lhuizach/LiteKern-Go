@@ -133,6 +133,23 @@ check "Super+L locks: the big clock" \
     '^shell: lock \(Super\+L\)$' \
     '^screen: has ffffff in 380,140,660,250: yes$'
 
+# LiteKern Go's phone keys (UI-PLAN.md): Home, Recent apps, volume; Power
+# locks, held it opens the power menu instead.
+run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 vol_up vol_down phone_home phone_recents sleep:0.3 phone_power sleep:1"
+check "the phone keys: Home, Recent apps, volume; Power locks" \
+    '^shell: volume up$' \
+    '^shell: volume down$' \
+    '^shell: Home$' \
+    '^desktop: show desktop$' \
+    '^shell: Recent apps$' \
+    '^desktop: no recent apps$' \
+    '^shell: lock \(Power\)$' \
+    '^lock: locked'
+run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.5"
+check "holding Power opens the power menu, and doesn't lock" \
+    '^shell: power menu \(Power held\)$' \
+    '!shell: lock \(Power\)'
+
 # Two users: the login screen; User (first, Enter), a wrong password, the right one.
 run $SHELL_BIN build-linux/test/users.img "sleep:0.6 ret sleep:0.5 p e a r ret sleep:1.5 a p p l e ret sleep:2" \
     --keyboard qwerty
@@ -151,13 +168,13 @@ check "someone without a password logs straight in, with settings of their own t
     '^settings: Ann has none of their own yet$' \
     '!lock: password for Ann'
 
-# The AZERTY layout (the build's): the keys QEMU calls q, 1 and m type a, & and ,.
+# The QWERTY layout (the build's, LiteKern Go): the keys q, 1 and m type q, 1 and m.
 run $SHELL_BIN build-linux/test/disk.img "sleep:0.3 q 1 m"
-check "the build's AZERTY layout" \
-    '^kbd: layout azerty$' \
-    "^kbd: key 0x010 'a'$" \
-    "^kbd: key 0x002 '&'$" \
-    "^kbd: key 0x032 ','$"
+check "the build's QWERTY layout" \
+    '^kbd: layout qwerty$' \
+    "^kbd: key 0x010 'q'$" \
+    "^kbd: key 0x002 '1'$" \
+    "^kbd: key 0x032 'm'$"
 
 # The screen saver (SCREENSAVER=2): on after 2 s, a key ends it.
 SCREEN="corner=" run build-linux/saver/lkx-shell build/test-saver/litekernx.img "sleep:3.5 shot:build-linux/test/saver.png a sleep:1"
