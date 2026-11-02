@@ -18,13 +18,21 @@
 # from its /syslinux folder.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# LiteKern Go's folder has a space in its name ("LiteKern Go"), which
+# Buildroot refuses: build through a link without one.
+if [[ "$(pwd)" == *" "* ]]; then
+    ln -sfn "$(pwd)" "$HOME/litekern-go"
+    cd "$HOME/litekern-go"
+fi
 REPO=$(pwd)
 
 BR_VERSION=2026.02.3
 SYSLINUX_VERSION=6.03
+# Buildroot itself and its downloads are shared with LiteKern X's build;
+# LiteKern Go's output (x86_64, for the VM) is its own.
 WORK=$HOME/lkx-buildroot
 BR=$WORK/buildroot-$BR_VERSION
-OUT=$WORK/output
+OUT=$WORK/output-go-x86_64
 SYSLINUX=$WORK/syslinux-$SYSLINUX_VERSION
 IMAGE=build-linux/litekernx-linux.img
 FAT_OFFSET=$((8192 * 512))
@@ -69,9 +77,9 @@ echo "== the host build (build/litekernx.img)"
 make -s build/litekernx.img
 
 # lkx-shell and the apps, with Buildroot's compiler, into the overlay.
-echo "== lkx-shell and the apps, for the EeePC"
-CROSS=$OUT/host/bin/i686-buildroot-linux-gnu-gcc
-make -s -f platform/Makefile CC="$CROSS" LBUILD=build-target KERNEL_BUILD=0
+echo "== lkx-shell and the apps, for the VM (x86_64)"
+CROSS=$OUT/host/bin/x86_64-buildroot-linux-gnu-gcc
+make -s -f platform/Makefile CC="$CROSS" ARCH_FLAGS= LBUILD=build-target KERNEL_BUILD=0
 rm -rf "$OUT/lkx-overlay"
 mkdir -p "$OUT/lkx-overlay/usr/bin" "$OUT/lkx-overlay/usr/lib/litekern/apps"
 cp build-target/lkx-shell "$OUT/lkx-overlay/usr/bin/"

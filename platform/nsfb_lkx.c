@@ -67,13 +67,13 @@ static int open_window(void)
 {
     if (opened)
         return 0;
-    if (k86_call(SYS_WINDOW_OPEN, (uint32_t)&win, 0, 0, 0))
+    if (k86_call(SYS_WINDOW_OPEN, (uintptr_t)&win, 0, 0, 0))
         return -1;
     opened = 1;
     cur_w = win.w;
     cur_h = win.h;
     static const char hello[] = "browser: open";
-    k86_call(SYS_DEBUG_WRITE, (uint32_t)hello, sizeof(hello) - 1, 0, 0);
+    k86_call(SYS_DEBUG_WRITE, (uintptr_t)hello, sizeof(hello) - 1, 0, 0);
     return 0;
 }
 
@@ -190,7 +190,7 @@ static bool lkx_input(nsfb_t *nsfb, nsfb_event_t *event, int timeout)
         if (timeout >= 0)
             k86_timer_set(timeout > 0 ? (uint32_t)timeout : 1);
         struct k86_event ev;
-        int err = k86_call(SYS_WAIT_EVENT, (uint32_t)&ev, 0, 0, 0);
+        int err = k86_call(SYS_WAIT_EVENT, (uintptr_t)&ev, 0, 0, 0);
         if (timeout >= 0)
             k86_timer_set(0);
         if (err)
@@ -243,10 +243,10 @@ int lkx_save_download(const char *name, const void *data, unsigned len, char *sa
 int lkx_save_download(const char *name, const void *data, unsigned len, char *saved, int max)
 {
     char home[K86_PATH_MAX], folder[K86_PATH_MAX], file[K86_NAME_MAX];
-    int vol = k86_call(SYS_HOME, (uint32_t)home, 0, 0, 0);
+    int vol = k86_call(SYS_HOME, (uintptr_t)home, 0, 0, 0);
     if (vol < 0)
         return vol;
-    k86_call(SYS_FS_CREATE, (uint32_t)vol, (uint32_t)home, (uint32_t)"Downloads", 1);    /* -EEXIST: fine */
+    k86_call(SYS_FS_CREATE, (uintptr_t)vol, (uintptr_t)home, (uintptr_t)"Downloads", 1);    /* -EEXIST: fine */
     snprintf(folder, sizeof(folder), "%s%sDownloads", home, strcmp(home, "/") ? "/" : "");
     /* "report.pdf", then "report (2).pdf", "report (3).pdf"... */
     const char *dot = strrchr(name, '.');
@@ -257,10 +257,10 @@ int lkx_save_download(const char *name, const void *data, unsigned len, char *sa
             snprintf(file, sizeof(file), "%s", name);
         else
             snprintf(file, sizeof(file), "%.*s (%d)%s", stem > 48 ? 48 : stem, name, n, name + stem);
-        if (k86_call5(SYS_FS_READ, (uint32_t)vol, (uint32_t)folder, (uint32_t)file, (uint32_t)&probe, 1) < 0)
+        if (k86_call5(SYS_FS_READ, (uintptr_t)vol, (uintptr_t)folder, (uintptr_t)file, (uintptr_t)&probe, 1) < 0)
             break;                              /* not there: this name */
     }
-    int err = k86_call5(SYS_FS_WRITE, (uint32_t)vol, (uint32_t)folder, (uint32_t)file, (uint32_t)data, len);
+    int err = k86_call5(SYS_FS_WRITE, (uintptr_t)vol, (uintptr_t)folder, (uintptr_t)file, (uintptr_t)data, len);
     if (err >= 0)
         snprintf(saved, (size_t)max, "%s/%s", folder, file);
     return err < 0 ? err : 0;

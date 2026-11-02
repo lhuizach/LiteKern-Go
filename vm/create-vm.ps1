@@ -35,7 +35,7 @@ Run createvm --name $Name --ostype Linux_64 --register
 # CPU, memory, firmware
 Run modifyvm $Name --cpus 4 --cpuexecutioncap $CpuCap --memory 2048 `
     --firmware bios --ioapic on --pae on --longmode on --rtcuseutc on `
-    --boot1 dvd --boot2 disk --boot3 none --boot4 none
+    --boot1 disk --boot2 dvd --boot3 none --boot4 none
 
 # Screen: 720x1280 portrait
 Run modifyvm $Name --graphicscontroller vmsvga --vram 32 --accelerate3d off
@@ -48,10 +48,16 @@ Run modifyvm $Name --usbohci on --mouse usbtablet --keyboard ps2
 # Network (stands in for Wi-Fi), no audio for now
 Run modifyvm $Name --nic1 nat --nictype1 82540EM --audio-enabled off
 
-# Storage: a 16 GB disk, and an empty optical drive for the boot ISO
+# Storage: port 0 is the system image (linux/vm.sh vbox start puts it there),
+# port 1 an empty optical drive, port 2 a 16 GB disk like the phone's storage.
 Run createmedium disk --filename $disk --size 16384 --format VDI --variant Standard
-Run storagectl $Name --name SATA --add sata --controller IntelAhci --portcount 2 --bootable on
-Run storageattach $Name --storagectl SATA --port 0 --device 0 --type hdd --medium $disk
+Run storagectl $Name --name SATA --add sata --controller IntelAhci --portcount 3 --bootable on
 Run storageattach $Name --storagectl SATA --port 1 --device 0 --type dvddrive --medium emptydrive
+Run storageattach $Name --storagectl SATA --port 2 --device 0 --type hdd --medium $disk
 
-Write-Host "Created '$Name' ($disk). It has no OS yet: attach a LiteKern Go ISO to the optical drive."
+# The boot log: COM1 to build-linux\vbox\serial.log (linux/vm.sh vbox test reads it)
+$serial = Join-Path (Split-Path $PSScriptRoot -Parent) "build-linux\vbox\serial.log"
+New-Item -ItemType Directory -Force (Split-Path $serial) | Out-Null
+Run modifyvm $Name --uart1 0x3F8 4 --uart-mode1 file $serial
+
+Write-Host "Created '$Name'. Boot it with: wsl bash linux/vm.sh vbox start"

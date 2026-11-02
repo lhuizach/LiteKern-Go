@@ -28,6 +28,7 @@ WAIT_FOR=${WAIT_FOR:-'^\[boot\] ready'}             # `test` passes once a log l
 TYPE=${TYPE:-}                                      # `test`: text to type once WAIT_FOR matched,
 TYPED=${TYPED:-}                                    #   then wait for this regex too
 DIR=${DIR:-build/vbox}
+STORAGECTL=${STORAGECTL:-IDE}                       # the controller the image goes on (port 0)
 VDI=$DIR/litekernx.vdi
 SERIAL_LOG=$DIR/serial.log
 
@@ -93,7 +94,7 @@ update() {
     fi
 
     # Detach and forget the old disk (ignore errors: it may not exist yet).
-    "$VBM" storageattach "$VM" --storagectl IDE --port 0 --device 0 --medium none >/dev/null 2>&1 || true
+    "$VBM" storageattach "$VM" --storagectl "$STORAGECTL" --port 0 --device 0 --medium none >/dev/null 2>&1 || true
     "$VBM" closemedium disk "$DISK_UUID" --delete >/dev/null 2>&1 || true
     rm -f "$VDI"
 
@@ -102,7 +103,7 @@ update() {
     [ "$(stat -c %s "$DIR/disk.raw")" -ge 1048576 ] || truncate -s 1M "$DIR/disk.raw"
     vbm convertfromraw "$(win "$DIR/disk.raw")" "$(win "$VDI")" --format VDI --uuid "$DISK_UUID" >/dev/null
     rm -f "$DIR/disk.raw"
-    vbm storageattach "$VM" --storagectl IDE --port 0 --device 0 --type hdd --medium "$(win "$VDI")"
+    vbm storageattach "$VM" --storagectl "$STORAGECTL" --port 0 --device 0 --type hdd --medium "$(win "$VDI")"
     echo "disk updated from $IMAGE"
 }
 

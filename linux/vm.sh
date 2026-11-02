@@ -4,7 +4,7 @@
 #
 #   bash linux/vm.sh qemu           a QEMU window, the EeePC's 1024x600 screen
 #   bash linux/vm.sh qemu --fresh   the same, starting again from the image
-#   bash linux/vm.sh vbox create    make the VirtualBox VM "LiteKern X (Linux)" (once)
+#   (the VirtualBox VM "LiteKern Go": vm\create-vm.ps1, once, from PowerShell)
 #   bash linux/vm.sh vbox start     boot it in a window
 #   bash linux/vm.sh vbox test      boot it headless until the desktop is up
 #   bash linux/vm.sh vbox stop | status | destroy
@@ -48,8 +48,14 @@ qemu)
     ;;
 vbox)
     shift
-    export VM="LiteKern X (Linux)" DISK_UUID=4c4b5800-0000-4000-8000-000000000002
-    export GRAPHICS=vboxsvga KEEP_DISK=1 IMAGE DIR=build-linux/vbox MOUSE=usbtablet
+    # LiteKern Go's VM, sized like the phone, is made by vm/create-vm.ps1
+    # (SATA: the image on port 0, the 16 GB disk on port 2).
+    if [ "${1:-}" = create ]; then
+        echo "From PowerShell: powershell -ExecutionPolicy Bypass -File vm\\create-vm.ps1" >&2
+        exit 1
+    fi
+    export VM="LiteKern Go" DISK_UUID=4c4b5800-0000-4000-8000-000000000003 STORAGECTL=SATA
+    export KEEP_DISK=1 IMAGE DIR=build-linux/vbox MOUSE=usbtablet
     export WAIT_FOR="${WAIT_FOR:-^desktop: ready}"
     exec bash vm/vbox.sh "$@"
     ;;
