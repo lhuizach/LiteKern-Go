@@ -312,8 +312,6 @@ codes and backlight, brightness, vibration, speed on the Snapdragon 410.
 
 ## Open questions
 
-- **The Recent apps key (right):** should it open the app switcher (like
-  stock Android, the plan above), or the All apps list?
 - **What extras the brother wants.** They may add apps or home screen features.
 - **Camera:** works or not? Decides whether Camera and Gallery's "take photo"
   exist.
