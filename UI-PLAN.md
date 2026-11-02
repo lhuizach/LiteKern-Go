@@ -9,7 +9,7 @@ desktop shell. Built and tested in the VM first (see "Testing in the VM").
   do without being told. No desktop habits: no windows, no pointer, no hover.
 - **LiteKern X's look.** Same Adwaita-based theme (dark/light, accent colours),
   same fonts, icons, wallpapers and springy animations, sized for a finger.
-- **The hardware keys do the navigating.** The A5 has Recent apps, Home and Back
+- **The hardware keys do the navigating.** The A5 has Back, Home and Recent apps
   keys under the screen, so there is **no on-screen navigation bar or
   taskbar**. All 1280 px of height go to the status bar and the app.
 - **Light on memory.** 2 GB total. One app on screen at a time, background apps
@@ -19,8 +19,8 @@ desktop shell. Built and tested in the VM first (see "Testing in the VM").
 
 ## The hardware keys
 
-Under the screen, left to right: **Recent apps** (touch key), **Home**
-(physical button), **Back** (touch key). On the side: Power, Volume Up and
+Under the screen, left to right: **Back** (touch key), **Home**
+(physical button), **Recent apps** (touch key). On the side: Power, Volume Up and
 Volume Down.
 
 | Key | Short press | Long press (500 ms) |
@@ -40,7 +40,7 @@ The touch keys have backlights. They turn on with any touch and off after a
 few seconds, like on stock Android.
 
 **Unverified:** what key codes Linux gives these keys on the A5. Expected:
-`KEY_HOMEPAGE` (Home), `KEY_APPSELECT` or `KEY_MENU` (left key), `KEY_BACK`,
+`KEY_HOMEPAGE` (Home), `KEY_BACK` (left key), `KEY_APPSELECT` or `KEY_MENU` (right key),
 `KEY_POWER`, `KEY_VOLUMEUP/DOWN`. Check with `evtest` on the first Nura boot,
 then put the real codes in the key map. The touch-key backlight driver is also
 unverified.
@@ -71,7 +71,7 @@ sized for a 1024x600 netbook at about 118 ppi, so everything gets bigger.
 │                          │
 │                          │
 └──────────────────────────┘
-   [Recent]  (Home)  [Back]    hardware keys, not drawn
+    [Back]   (Home)  [Recent]    hardware keys, not drawn
 ```
 
 ## Screens
@@ -312,8 +312,8 @@ codes and backlight, brightness, vibration, speed on the Snapdragon 410.
 
 ## Open questions
 
-- **The left key:** it's the Recent apps key on the A5. Should it open the app
-  switcher (like stock Android, the plan above), or the All apps list?
+- **The Recent apps key (right):** should it open the app switcher (like
+  stock Android, the plan above), or the All apps list?
 - **What extras the brother wants.** They may add apps or home screen features.
 - **Camera:** works or not? Decides whether Camera and Gallery's "take photo"
   exist.
