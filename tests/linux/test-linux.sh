@@ -231,6 +231,23 @@ check "the on-screen keyboard: up for a text field, Files above it, taps type, S
     '^osk: hidden$' \
     '!crashed|PANIC'
 
+# The app switcher: Calculator, then Files; Recent apps shows both, Files
+# in the middle, Calculator's card to its left (50,620): a tap goes to it.
+# Again: Calculator's card (now in the middle, 360,620) swiped up closes it;
+# the switcher stays, and its Close all (360,1196) closes Files.
+path; open_app 1; add phone_home sleep:0.8; open_app 0; add phone_recents sleep:0.8; go 50 620; click; add sleep:1.5
+add phone_recents sleep:0.8; go 360 620; add press:1; go 360 520; go 360 320; go 360 120; add release sleep:1.5
+go 360 1196; click; add sleep:1.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the app switcher: a tap goes to an app, a swipe up closes one, Close all the rest" \
+    '^switcher: open, 2 apps$' \
+    '^switcher: to Calculator$' \
+    '^switcher: close Calculator$' \
+    '^lkx: Calculator exited \(0\)$' \
+    '^switcher: close all$' \
+    '^lkx: Files exited \(0\)$' \
+    '!crashed|PANIC'
+
 # Back closes an app with nothing to go back to.
 path; open_app 1; add phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"

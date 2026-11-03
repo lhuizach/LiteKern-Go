@@ -78,7 +78,8 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       notifications from apps (SYS_NOTIFY), in the panel and the status bar. Not yet:
       the Wi-Fi tile tried on real Wi-Fi, volume, the brightness slider on a screen
       with a backlight
-- [ ] 2.10 App switcher
+- [x] 2.10 App switcher: cards of the open apps, tap to go, swipe up to close, Close
+      all. Not yet: animations in and out, live pictures (they're taken on opening)
 - [ ] 2.11 Lock screen: swipe to unlock, PIN pad
 - [ ] 2.12 Power menu, volume pop-up, screenshots
 

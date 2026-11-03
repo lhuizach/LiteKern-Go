@@ -149,6 +149,9 @@ static void damage_all(void)
 
 static void draw_home(void);
 static void draw_qs(void);
+static void draw_switcher(void);
+static void sw_forget(struct wm_window *w);
+static int sw_open;                     /* the app switcher (the Recent apps key) */
 static int qs_shown(void);
 static void draw_note_icons(int x, int cy, uint32_t bg);
 static int home_shown(void);
@@ -162,11 +165,13 @@ static void compose(struct gfx_rect r)
     struct gfx_view *outer = V;
     V = &v;
     wallpaper_draw(VS, v.ox, v.oy, 0);
-    if (home_shown())
+    if (sw_open)
+        draw_switcher();
+    else if (home_shown())
         draw_home();
     else
         wm_draw(VS, v.ox, v.oy);
-    if (started && !home_shown())
+    if (started && !home_shown() && !sw_open)
         osk_draw(VS, v.ox, v.oy);
     if (started) {
         draw_qs();                      /* under the status bar, which stays on top */
@@ -1463,6 +1468,7 @@ static void close_window(struct wm_window *w)
 void desktop_app_ended(const struct app *a, struct wm_window *w)
 {
     (void)a;
+    sw_forget(w);
     close_window(w);
 }
 
@@ -1712,6 +1718,189 @@ static void track_peek(int x, int y)
     if (reveal.t != t) {
         reveal.t = t;
         dock_moving = 1;
+    }
+}
+
+/* --- the app switcher (LiteKern Go, UI-PLAN.md) -----------------------------------------
+ *
+ * The Recent apps key: every open app as a card (a picture of it as it was),
+ * oldest on the left, the one in front in the middle. Swipe sideways to look
+ * along them; tap one to go to it; swipe one up to close the app; Close all
+ * closes them all. Recent apps, Back or Home leave it. */
+
+#define SW_GAP 40
+#define SW_RADIUS 24
+#define SW_LABEL_H 64           /* the app's icon and name above its card */
+
+
+static int sw_n;
+static struct wm_window *sw_win[WM_MAX];        /* oldest first */
+static struct gfx_surface sw_snap[WM_MAX];
+static int sw_scroll;                           /* px: 0 has the last card in the middle */
+static int sw_x0, sw_y0, sw_scroll0, sw_card = -1, sw_mode, sw_lift;
+enum { SWM_NONE, SWM_PRESS, SWM_SCROLL, SWM_LIFT };
+
+static int sw_card_w(void) { return S()->w * 3 / 5; }
+static int sw_card_h(void) { return sw_card_w() * (S()->h - T()->topbar_h) / S()->w; }
+
+static struct gfx_rect sw_card_rect(int i)
+{
+    int w = sw_card_w(), h = sw_card_h();
+    int x = (S()->w - w) / 2 + (i - (sw_n - 1)) * (w + SW_GAP) + sw_scroll;
+    int y = T()->topbar_h + SW_LABEL_H + (S()->h - T()->topbar_h - SW_LABEL_H - 160 - h) / 2;
+    if (i == sw_card && sw_mode == SWM_LIFT)
+        y += sw_lift;
+    return (struct gfx_rect){ x, y, w, h };
+}
+
+static struct gfx_rect sw_clear_rect(void)
+{
+    return (struct gfx_rect){ S()->w / 2 - 120, S()->h - 120, 240, 72 };
+}
+
+static void sw_set(int open)
+{
+    if (sw_open == open)
+        return;
+    sw_open = open;
+    sw_mode = SWM_NONE;
+    sw_card = -1;
+    if (open) {
+        sw_n = 0;
+        for (int i = 0; i < wm_count() && sw_n < WM_MAX; i++)
+            if (snapshot(sw_n, wm_at(i), &sw_snap[sw_n]))
+                sw_win[sw_n++] = wm_at(i);
+        sw_scroll = 0;
+        wm_pointer_gone();
+        kprintf("switcher: open, %d app%s\n", sw_n, sw_n == 1 ? "" : "s");
+        if (!sw_n)
+            kprintf("desktop: no recent apps\n");
+    } else {
+        kprintf("switcher: closed\n");
+    }
+    damage_all();
+}
+
+/* An app went away (closed here, or it ended by itself). */
+static void sw_forget(struct wm_window *w)
+{
+    for (int i = 0; i < sw_n; i++)
+        if (sw_win[i] == w) {
+            for (int k = i; k < sw_n - 1; k++) {
+                sw_win[k] = sw_win[k + 1];
+                sw_snap[k] = sw_snap[k + 1];
+            }
+            sw_n--;
+
+            break;
+        }
+    if (sw_scroll > 0 && sw_n)
+        sw_scroll = 0;
+    damage_all();
+}
+
+static void sw_close_app(int i)
+{
+    struct wm_window *w = sw_win[i];
+    kprintf("switcher: close %s\n", name_of(w));
+    sw_forget(w);
+    wm_request_close(w);
+}
+
+static void sw_go(int i)
+{
+    struct wm_window *w = sw_win[i];
+    kprintf("switcher: to %s\n", name_of(w));
+    sw_set(0);
+    shell_flush();
+    if (wm_is_minimised(w))
+        restore_window(w);
+    else
+        wm_focus(w);
+    shell_flush();
+}
+
+static void draw_switcher(void)
+{
+    const struct theme *t = T();
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, 120);
+    if (!sw_n) {
+        const char *none = "No recent apps";
+        text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(S()->h / 2), none, TEXT_BODY, SHELL_FG);
+        return;
+    }
+    for (int i = 0; i < sw_n; i++) {
+        struct gfx_rect r = sw_card_rect(i);
+        if (!visible((struct gfx_rect){ r.x, r.y - SW_LABEL_H, r.w, r.h + SW_LABEL_H }))
+            continue;
+        const struct app *a = wm_owner(sw_win[i]);
+        if (a)
+            draw_icon(a, (struct gfx_rect){ r.x, r.y - SW_LABEL_H + 8, 44, 44 }, 255);
+        text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
+                      name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
+        gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
+                        (struct gfx_rect){ 0, 0, sw_snap[i].w, sw_snap[i].h }, 255, SW_RADIUS);
+    }
+    struct gfx_rect c = sw_clear_rect();
+    gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg);
+    text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2), VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2),
+              "Close all", TEXT_BOLD, t->fg);
+}
+
+static void sw_pointer(int x, int y, uint8_t buttons, int down)
+{
+    if (down) {
+        sw_x0 = x;
+        sw_y0 = y;
+        sw_scroll0 = sw_scroll;
+        sw_mode = SWM_PRESS;
+        sw_card = -1;
+        for (int i = 0; i < sw_n; i++)
+            if (inside(sw_card_rect(i), x, y))
+                sw_card = i;
+        return;
+    }
+    if (sw_mode == SWM_NONE)
+        return;
+    int dx = x - sw_x0, dy = y - sw_y0, held = buttons & MOUSE_LEFT;
+    if (sw_mode == SWM_PRESS && held) {
+        if (dx > SWIPE_SLOP || dx < -SWIPE_SLOP)
+            sw_mode = SWM_SCROLL;
+        else if (dy < -SWIPE_SLOP && sw_card >= 0)
+            sw_mode = SWM_LIFT;
+    }
+    if (sw_mode == SWM_SCROLL) {
+        int max = (sw_n - 1) * (sw_card_w() + SW_GAP);
+        sw_scroll = sw_scroll0 + dx;
+        sw_scroll = sw_scroll < 0 ? 0 : sw_scroll > max ? max : sw_scroll;
+        damage_all();
+    } else if (sw_mode == SWM_LIFT) {
+        sw_lift = dy < 0 ? dy : 0;
+        damage_all();
+    }
+    if (held)
+        return;
+    int mode = sw_mode, card = sw_card;
+    sw_mode = SWM_NONE;
+    sw_card = -1;
+    sw_lift = 0;
+    damage_all();
+    if (mode == SWM_LIFT) {
+        if (-dy > sw_card_h() / 4)
+            sw_close_app(card);         /* swiped up: the app closes */
+        return;
+    }
+    if (mode != SWM_PRESS)
+        return;
+    if (card >= 0) {
+        sw_go(card);
+    } else if (sw_n && inside(sw_clear_rect(), x, y)) {
+        kprintf("switcher: close all\n");
+        while (sw_n)
+            sw_close_app(sw_n - 1);
+        sw_set(0);
+    } else {
+        sw_set(0);                      /* a tap on nothing: back where it was */
     }
 }
 
@@ -2262,6 +2451,10 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         return;                 /* the on-screen keyboard's */
     if (!wm_grabbed() && qs_pointer(x, y, buttons, down))
         return;                 /* quick settings', or the status bar pulled */
+    if (sw_open) {
+        sw_pointer(x, y, buttons, down);
+        return;
+    }
     if (home_swipe(x, buttons, down, up))
         return;
     if (wm_grabbed() && !pressed.kind) {    /* a drag or a press in a window */
@@ -2308,29 +2501,12 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
 }
 
 /* LiteKern Go's keys (UI-PLAN.md). Until the phone screens exist they drive
- * the desktop's own: Home shows the desktop, Recent apps switches to the
- * previous app (the switcher is phase 2.10), Power locks (held: the power
+ * the desktop's own: Home shows the desktop, Recent apps opens the app
+ * switcher, Power locks (held: the power
  * menu), volume is only logged (no sound yet). */
 #define POWER_HOLD_MS 500
 static uint32_t power_down_ms;          /* Power is held since (0: it isn't) */
 static int power_held;                  /* ... and the power menu opened for it */
-
-static void recent_app(void)
-{
-    struct wm_window *now = wm_focused();
-    for (int i = wm_count() - 1; i >= 0; i--) {
-        struct wm_window *w = wm_at(i);
-        if (w == now && !wm_is_minimised(w))
-            continue;
-        kprintf("desktop: recent app %s\n", name_of(w));
-        if (wm_is_minimised(w))
-            restore_window(w);
-        else
-            wm_focus(w);
-        return;
-    }
-    kprintf("desktop: no recent apps\n");
-}
 
 /* Home: a press goes home (or closes quick settings); held, quick settings. */
 static uint32_t home_down_ms;
@@ -2345,6 +2521,7 @@ static void home_key(void)
         qs_set(0, 0);
         return;
     }
+    sw_set(0);
     show_desktop();
     turn_to(0, 0);                      /* on the home screen already: back to its first page */
 }
@@ -2388,6 +2565,8 @@ static int phone_key(const struct key_event *k)
         struct wm_window *w = wm_top_visible();
         if (menu_open) {
             menu_set(0);
+        } else if (sw_open) {
+            sw_set(0);
         } else if (qs_shown()) {
             qs_set(0, 0);
         } else if (!w) {
@@ -2408,7 +2587,9 @@ static int phone_key(const struct key_event *k)
         kprintf("shell: Recent apps\n");
         menu_set(0);
         set_grid(0);
-        recent_app();
+        if (qs_shown())
+            qs_set(0, 1);
+        sw_set(!sw_open);
         break;
     case KEY_VOLUME_UP:
     case KEY_VOLUME_DOWN:
@@ -2430,7 +2611,7 @@ void shell_osk_key(const struct key_event *k)
 static void keyboard_follow(void)
 {
     struct wm_window *w = wm_top_visible();
-    int want = w && !covered && wm_keyboard_wanted(w);
+    int want = w && !covered && !sw_open && wm_keyboard_wanted(w);
     if (want == osk_shown())
         return;
     osk_show(want);
