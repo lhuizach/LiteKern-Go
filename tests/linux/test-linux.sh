@@ -269,6 +269,33 @@ check "Files lists the disk; Back goes up a folder, then closes Files" \
     '^lkx: Files exited \(0\)$' \
     '!crashed|stopped|PANIC'
 
+# A long press on README.TXT (its third row, 300,437): the sheet; Rename
+# (its second choice, 300,1123) to README.md (three Backspaces, md, Enter). Again on
+# it: Delete (300,1211), confirmed. A press held only briefly opens nothing.
+cp build/litekernx.img build-linux/test/files.img
+path; open_app 0; go 300 437; add press:1 sleep:0.8 release sleep:0.5; go 300 1123; click
+add sleep:0.8 backspace backspace backspace m d ret sleep:1; go 300 437; add press:1 sleep:0.8 release sleep:0.5; go 300 1211; click
+add sleep:0.8 ret sleep:1
+run $SHELL_BIN build-linux/test/files.img "$P" --keyboard qwerty
+check "Files: a long press brings up Open, Rename, Delete" \
+    '^user: files: sheet README.TXT$' \
+    '^user: files: rename README.TXT -> README.md$' \
+    '^user: files: sheet README.md$' \
+    '^user: files: delete README.md$' \
+    '!crashed|stopped|PANIC'
+
+# Pictures: a screenshot (Power + Volume Down), then Files: Pictures (300,349),
+# Screenshots (300,261), the picture (300,261) shown; Set on Lock Screen (192,1222).
+cp build/litekernx.img build-linux/test/pics.img
+path; add sleep:1 keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1; open_app 0
+go 300 349; click; add sleep:1; go 300 261; click; add sleep:1; click; add sleep:2.5; go 192 1222; click; add sleep:1.5
+run $SHELL_BIN build-linux/test/pics.img "$P"
+check "Files shows a screenshot; its button puts it on the lock screen" \
+    '^user: files: open folder Screenshots$' \
+    '^user: files: picture Screenshot_[0-9_]+\.png 720x1280 PNG' \
+    '^user: files: lock screen set$' \
+    '!crashed|stopped|PANIC'
+
 # The on-screen keyboard: Files' New Folder (146,1229) opens a dialog with a
 # text field, so it comes up and Files shrinks above it; h (435,1010), i
 # (540,904), Shift then i: "hiI"; Enter (645,1222) creates it, and it goes.

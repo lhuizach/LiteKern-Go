@@ -366,6 +366,20 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
     return WG_LIST_CHANGED;
 }
 
+int wg_list_long_press(struct wg_list *l, uint32_t now_ms)
+{
+    if (l->last_click_row < 0 || l->dragging || (int32_t)(now_ms - l->last_click_ms) < WG_LONG_PRESS_MS)
+        return -1;
+    int row = l->last_click_row;
+    l->last_click_row = -1;
+    return row;
+}
+
+int wg_list_pressing(const struct wg_list *l)
+{
+    return l->last_click_row >= 0 && !l->dragging;
+}
+
 enum wg_list_result wg_list_key(struct wg_list *l, const struct key_event *k)
 {
     if (!k->pressed || !l->count)

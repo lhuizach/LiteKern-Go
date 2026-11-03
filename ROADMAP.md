@@ -100,7 +100,11 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       Set/Change/Remove PIN, clock, background) scroll with a drag; PIN dialogs open
       the keyboard on its numbers. Users page hidden (one user). Not yet: Sound (no
       audio), Home screen (clock widget on/off), Storage
-- [ ] Files reworked for portrait
+- [x] Files reworked for portrait: full-width list, New Folder and New File along
+      the bottom, a long press for Open, Rename and Delete (a sheet; the list widget
+      has long press now), text dragged to scroll, pictures fitted with Set as
+      Wallpaper / Set on Lock Screen under them and a swipe to the next one. Not yet:
+      thumbnails, copy and move, sharing
 - [ ] Calculator reworked for portrait
 - [ ] Blocksmith checked with touch
 - [ ] Clock: alarms, timer, stopwatch

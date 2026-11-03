@@ -1,16 +1,21 @@
-/* LiteKern X — Files, a KERN86 app (ring 3; Phase 2 §5 and §5a).
+/* LiteKern X — Files, a KERN86 app (ring 3; Phase 2 §5 and §5a), reworked
+ * for LiteKern Go's portrait touch screen.
  *
  * Browse the disks' FAT32 partitions, and create, rename and delete files
  * and folders on them. It starts at Places (the partitions the kernel found)
- * or straight in the only one. Folders open with a double-click or Enter;
- * the header's back button or Backspace goes up. Unsupported partitions are
- * listed but won't open; read-only ones can't be changed.
+ * or straight in the only one. A tap opens a folder or file; the header's
+ * back arrow or the phone's Back goes up. New Folder and New File are along
+ * the bottom; a long press on a file or folder brings up a sheet with Open,
+ * Rename and Delete (F2 and Delete do the same from a keyboard).
+ * Unsupported partitions are listed but won't open; read-only ones can't be
+ * changed.
  *
- * Text files (up to 64 KB) open in a simple viewer: wrapped lines, the arrow
- * keys and Page Up/Down to scroll, Backspace, Esc or the back button to
- * return. Pictures (PNG, JPEG, BMP: picture.c) open fitted to the window,
- * Left/Right going to the folder's previous/next one, and Set Wallpaper
- * makes one the desktop's (Set Lock Screen, the lock screen's). Other files say they can't be shown yet.
+ * Text files (up to 64 KB) open in a simple viewer: wrapped lines, dragged
+ * (or the arrow keys and Page Up/Down) to scroll. Pictures (PNG, JPEG, BMP:
+ * picture.c) open fitted to the screen; a swipe sideways (or Left/Right)
+ * goes to the folder's next or previous one, and the buttons under it make
+ * it the wallpaper or the lock screen's. Other files say they can't be
+ * shown yet.
  *
  * Everything goes through sdk/kern86.h: the window is a canvas it draws with
  * the kernel's widgets, and the disks are reached by path. Actions are
@@ -26,11 +31,10 @@
 
 #define MAX_ITEMS 256
 #define MAX_VOLUMES 8
-#define LIST_MAX_W 720
-#define BAR_GAP 16
+#define MARGIN 32
+#define BAR_GAP 24
+#define SWIPE 80                        /* px sideways that turn to the next picture */
 #define BACK_ID 1
-#define WALLPAPER_ID 2
-#define LOCK_ID 3
 
 struct item {
     struct k86_dirent e;
@@ -55,8 +59,18 @@ static char status[96];
 static int status_error;
 
 static struct wg_list list;
-static struct wg_button b_new_folder, b_new_file, b_rename, b_delete;
-static struct wg_button *const bar[] = { &b_new_folder, &b_new_file, &b_rename, &b_delete };
+static struct wg_button b_new_folder, b_new_file;
+static struct wg_button *const bar[] = { &b_new_folder, &b_new_file };
+#define NBAR 2
+static struct wg_button b_wallpaper, b_lock;     /* under a picture */
+
+/* The sheet a long press brings up: the item, and its choices. */
+enum { SHEET_OPEN, SHEET_RENAME, SHEET_DELETE, NSHEET };
+static int sheet = -1;                  /* the item, or -1: no sheet */
+static int sheet_pressed = -1;
+
+/* A finger on a viewer: where it went down (dragging text, swiping pictures). */
+static int view_y0, view_x0, view_top0, view_held;
 
 enum action { NONE, NEW_FILE, NEW_FOLDER, RENAME, DELETE };
 static struct wg_dialog dialog;
@@ -196,7 +210,7 @@ static void where(void)
 {
     char *end = status + sizeof(status), *p = status;
     if (vol < 0) {
-        append(status, "Places: the disks LiteKern X can see", end);
+        append(status, "Places: the storage this phone can see", end);
     } else {
         p = append(p, volumes[vol].name, end);
         if (depth)
@@ -266,21 +280,59 @@ static void show(struct gfx_rect r)
 static void layout(void)
 {
     const struct theme *t = theme_get();
-    int w = canvas.w - 4 * t->margin < LIST_MAX_W ? canvas.w - 4 * t->margin : LIST_MAX_W;
-    int x = (canvas.w - w) / 2, bar_y = canvas.h - BAR_GAP - t->button_size;
+    int w = canvas.w - 2 * MARGIN, x = MARGIN, bar_y = canvas.h - BAR_GAP - t->button_size;
     int top = 20 + wg_label_height(WG_TEXT_BODY) + 12;
     list.r = (struct gfx_rect){ x, top, w, (bar_y - BAR_GAP - top) / t->row_h * t->row_h };
-    int lx = x, rx = x + w;
-    for (int i = 0; i < 4; i++) {
-        struct wg_button *b = bar[i];
-        int bw = wg_button_width(b->label);
-        if (i < 2) {
-            b->r = (struct gfx_rect){ lx, bar_y, bw, t->button_size };
-            lx += bw + t->spacing * 2;
-        } else {
-            b->r = (struct gfx_rect){ rx - bw, bar_y, bw, t->button_size };
-            rx -= bw + t->spacing * 2;
-        }
+    int bw = (w - 16) / 2;
+    for (int i = 0; i < NBAR; i++)
+        bar[i]->r = (struct gfx_rect){ x + i * (bw + 16), bar_y, bw, t->button_size };
+    b_lock.r = (struct gfx_rect){ x, bar_y, bw, t->button_size };
+    b_wallpaper.r = (struct gfx_rect){ x + bw + 16, bar_y, bw, t->button_size };
+}
+
+/* --- the long-press sheet ---------------------------------------------------------- */
+
+static int writable(void);
+
+static const char *sheet_label(int k)
+{
+    static const char *const labels[NSHEET] = { "Open", "Rename", "Delete" };
+    return labels[k];
+}
+
+static int sheet_enabled(int k)
+{
+    return k == SHEET_OPEN || (writable() && sheet >= 0);
+}
+
+static struct gfx_rect sheet_rect(void)
+{
+    const struct theme *t = theme_get();
+    int h = 24 + text_height(TEXT_BOLD) + 16 + NSHEET * t->row_h + 24;
+    return (struct gfx_rect){ 0, canvas.h - h, canvas.w, h };
+}
+
+static struct gfx_rect sheet_item(int k)
+{
+    const struct theme *t = theme_get();
+    struct gfx_rect r = sheet_rect();
+    return (struct gfx_rect){ MARGIN, r.y + 24 + text_height(TEXT_BOLD) + 16 + k * t->row_h, canvas.w - 2 * MARGIN,
+                              t->row_h };
+}
+
+static void draw_sheet(void)
+{
+    const struct theme *t = theme_get();
+    gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, 120);
+    struct gfx_rect r = sheet_rect();
+    gfx_fill_round_rect(&canvas, r.x, r.y, r.w, r.h + 32, 32, t->dialog_bg);
+    text_draw_fit(&canvas, MARGIN, r.y + 24, items[sheet].e.name, canvas.w - 2 * MARGIN, TEXT_BOLD, t->fg);
+    for (int k = 0; k < NSHEET; k++) {
+        struct gfx_rect it = sheet_item(k);
+        if (k == sheet_pressed && sheet_enabled(k))
+            gfx_fill_round_rect(&canvas, it.x - 12, it.y, it.w + 24, it.h, t->radius, t->button_hover);
+        uint32_t fg = !sheet_enabled(k) ? t->fg_dim : k == SHEET_DELETE ? t->destructive : t->fg;
+        text_draw(&canvas, it.x, it.y + (it.h - text_height(TEXT_BODY)) / 2, sheet_label(k), TEXT_BODY, fg);
     }
 }
 
@@ -293,8 +345,6 @@ static void update_buttons(void)
 {
     wg_button_set_disabled(&b_new_folder, !writable());
     wg_button_set_disabled(&b_new_file, !writable());
-    wg_button_set_disabled(&b_rename, !writable() || list.selected < 0);
-    wg_button_set_disabled(&b_delete, !writable() || list.selected < 0);
 }
 
 static void draw_status(void)
@@ -315,8 +365,10 @@ static void draw_all(void)
     if (!nitems)
         wg_label_centred(&canvas, list.r.x + list.r.w / 2, list.r.y + 60,
                          vol >= 0 ? "This folder is empty." : "No disks found.", WG_TEXT_DIM);
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < NBAR; i++)
         wg_button_draw(&canvas, bar[i]);
+    if (sheet >= 0)
+        draw_sheet();
     if (dialog_for != NONE) {
         wg_dialog_layout(&dialog, canvas.w, canvas.h);
         wg_dialog_show(&canvas, &dialog);
@@ -333,12 +385,16 @@ static void draw_dirty(void)
         }
         return;
     }
+    if (sheet >= 0) {
+        draw_all();
+        return;
+    }
     update_buttons();
     if (list.dirty) {
         wg_list_draw(&canvas, &list);
         show(list.r);
     }
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < NBAR; i++)
         if (bar[i]->dirty) {
             wg_button_draw(&canvas, bar[i]);
             show(bar[i]->r);
@@ -357,16 +413,6 @@ static void show_header(void)
         h.buttons[0].side = 0;
         h.buttons[0].icon = 1;              /* back */
         h.buttons[0].id = BACK_ID;
-    }
-    if (viewing == 2) {
-        static const struct { int id; const char *label; } pb[] = {
-            { WALLPAPER_ID, "Set Wallpaper" }, { LOCK_ID, "Set Lock Screen" } };   /* right to left */
-        for (int i = 0; i < 2; i++) {
-            h.buttons[h.nbuttons].side = 1;
-            h.buttons[h.nbuttons].id = pb[i].id;
-            append(h.buttons[h.nbuttons].label, pb[i].label, h.buttons[h.nbuttons].label + 16);
-            h.nbuttons++;
-        }
     }
     k86_header(&h);
 }
@@ -475,12 +521,16 @@ static struct gfx_rect view_rect(void)
     return (struct gfx_rect){ list.r.x, list.r.y, list.r.w, canvas.h - list.r.y - 16 };
 }
 
+/* A picture: fitted above its two buttons (the lock screen's, the wallpaper). */
 static void draw_picture(void)
 {
-    struct gfx_rect r = view_rect();
     gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, theme_get()->window_bg);
+    wg_label_centred(&canvas, canvas.w / 2, 20, status, status_error ? WG_TEXT_ERROR : WG_TEXT_DIM);
+    wg_button_draw(&canvas, &b_lock);
+    wg_button_draw(&canvas, &b_wallpaper);
     k86_present(0, 0, canvas.w, canvas.h);
-    picture_draw(&canvas, (struct gfx_rect){ 16, 16, canvas.w - 32, r.y + r.h - 16 });
+    int top = 20 + wg_label_height(WG_TEXT_BODY) + 12;
+    picture_draw(&canvas, (struct gfx_rect){ 0, top, canvas.w, b_lock.r.y - BAR_GAP - top });
 }
 
 static void open_picture(const struct k86_dirent *e)
@@ -522,6 +572,7 @@ static void set_wallpaper(int where)
     int ok = !picture_wallpaper(where, &why);
     set_status(ok ? (where == K86_WALLPAPER_LOCK ? "It's on the lock screen now." : "It's the wallpaper now.") : why,
                !ok);
+    k86_logf("files: %s %s", where == K86_WALLPAPER_LOCK ? "lock screen" : "wallpaper", ok ? "set" : "refused");
     draw_status();
 }
 
@@ -555,7 +606,7 @@ static void open_file(const struct k86_dirent *e)
     }
     if (odd > n / 20) {
         k86_logf("files: %s isn't text", e->name);
-        set_status("This isn't a text file: LiteKern X can't show it yet.", 1);
+        set_status("This isn't a text file: Files can't show it yet.", 1);
         draw_status();
         return;
     }
@@ -612,7 +663,7 @@ static void activate(int i)
         int v = items[i].volume;
         if (!volumes[v].supported) {
             k86_logf("files: %s is not supported (%s)", volumes[v].name, volumes[v].why_not);
-            set_status("LiteKern X can only open FAT32 disks; this one is left alone.", 1);
+            set_status("Only FAT32 storage opens here; this one is left alone.", 1);
             draw_status();
             return;
         }
@@ -775,11 +826,115 @@ static void dialog_choice(int choice)
 
 /* --- events ---------------------------------------------------------------------------- */
 
+static void open_sheet(int i)
+{
+    if (i < 0 || i >= nitems || vol < 0)
+        return;
+    k86_timer_set(0);
+    sheet = i;
+    sheet_pressed = -1;
+    wg_list_select(&list, i);
+    k86_logf("files: sheet %s", items[i].e.name);
+    draw_all();
+}
+
+static void close_sheet(void)
+{
+    sheet = -1;
+    draw_all();
+}
+
+static void sheet_choose(int k)
+{
+    int i = sheet;
+    sheet = -1;
+    list.selected = i;
+    if (k == SHEET_OPEN)
+        activate(i);
+    else
+        open_dialog(k == SHEET_RENAME ? RENAME : DELETE);
+    if (dialog_for == NONE && k != SHEET_OPEN)
+        draw_all();
+}
+
+static void sheet_pointer(const struct wg_pointer *p)
+{
+    int at = -1;
+    for (int k = 0; k < NSHEET; k++) {
+        struct gfx_rect r = sheet_item(k);
+        if (p->x >= 0 && p->x < canvas.w && p->y >= r.y && p->y < r.y + r.h)
+            at = k;
+    }
+    struct gfx_rect sr = sheet_rect();
+    if (p->down) {
+        sheet_pressed = at;
+        if (at < 0 && p->y < sr.y)
+            sheet_pressed = -2;             /* above it: a tap there closes it */
+        draw_all();
+        return;
+    }
+    if (!p->up)
+        return;
+    int was = sheet_pressed;
+    sheet_pressed = -1;
+    if (was == -2 && p->y < sr.y)
+        close_sheet();
+    else if (was >= 0 && was == at && sheet_enabled(at))
+        sheet_choose(at);
+    else
+        draw_all();
+}
+
+/* A finger on the text viewer drags it; on a picture, a swipe sideways
+ * turns to the next or previous one, and its buttons are under it. */
+static void view_pointer(const struct wg_pointer *p)
+{
+    if (viewing == 2) {
+        if (wg_button_pointer(&b_wallpaper, p)) {
+            set_wallpaper(K86_WALLPAPER_DESKTOP);
+            return;
+        }
+        if (wg_button_pointer(&b_lock, p)) {
+            set_wallpaper(K86_WALLPAPER_LOCK);
+            return;
+        }
+        if (b_wallpaper.dirty || b_lock.dirty) {
+            wg_button_draw(&canvas, &b_wallpaper);
+            wg_button_draw(&canvas, &b_lock);
+            show((struct gfx_rect){ 0, b_lock.r.y, canvas.w, b_lock.r.h });
+        }
+        if (p->down && p->y < b_lock.r.y - BAR_GAP) {
+            view_x0 = p->x;
+            view_held = 1;
+        } else if (p->up && view_held) {
+            view_held = 0;
+            int dx = p->x - view_x0;
+            if (dx < -SWIPE || dx > SWIPE)
+                next_picture(dx < 0 ? 1 : -1);  /* a swipe left: the next one */
+        }
+        return;
+    }
+    if (p->down) {
+        view_y0 = p->y;
+        view_top0 = view_top;
+        view_held = 1;
+    } else if (view_held && p->held) {
+        view_scroll(view_top0 - (p->y - view_y0) / (text_height(TEXT_BODY) + 2));
+    } else if (p->up) {
+        view_held = 0;
+    }
+}
+
 static void key(const struct key_event *k)
 {
     if (viewing) {
         if (k->pressed)
             view_key(k);
+        return;
+    }
+    if (sheet >= 0) {
+        if (k->pressed && k->key == KEY_ESC)
+            close_sheet();                  /* Back closes it */
         return;
     }
     if (dialog_for != NONE) {
@@ -804,24 +959,30 @@ static void key(const struct key_event *k)
 
 static void pointer(const struct k86_event *ev)
 {
-    if (viewing)
-        return;
     struct wg_pointer p = wg_pointer_make(ev->x, ev->y, ev->buttons, ev->changed, ev->time_ms);
+    if (viewing) {
+        view_pointer(&p);
+        return;
+    }
+    if (sheet >= 0) {
+        sheet_pointer(&p);
+        return;
+    }
     if (dialog_for != NONE) {
         dialog_choice(wg_dialog_pointer(&dialog, &p));
         if (dialog_for != NONE)
             draw_dirty();
         return;
     }
-    if (wg_list_pointer(&list, &p) == WG_LIST_ACTIVATE) {
+    enum wg_list_result r = wg_list_pointer(&list, &p);
+    k86_timer_set(wg_list_pressing(&list) && vol >= 0 ? 100 : 0);     /* watching for a long press */
+    if (r == WG_LIST_ACTIVATE) {
         activate(list.selected);
         return;
     }
     enum action a = NONE;
     if (wg_button_pointer(&b_new_folder, &p)) a = NEW_FOLDER;
     if (wg_button_pointer(&b_new_file, &p))   a = NEW_FILE;
-    if (wg_button_pointer(&b_rename, &p))     a = RENAME;
-    if (wg_button_pointer(&b_delete, &p))     a = DELETE;
     if (a != NONE)
         open_dialog(a);
     else
@@ -855,8 +1016,8 @@ int main(void)
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
     b_new_folder = (struct wg_button){ .label = "New Folder" };
     b_new_file = (struct wg_button){ .label = "New File", .style = WG_BUTTON_SUGGESTED };
-    b_rename = (struct wg_button){ .label = "Rename" };
-    b_delete = (struct wg_button){ .label = "Delete", .style = WG_BUTTON_DESTRUCTIVE };
+    b_wallpaper = (struct wg_button){ .label = "Set as Wallpaper", .style = WG_BUTTON_SUGGESTED };
+    b_lock = (struct wg_button){ .label = "Set on Lock Screen" };
     list = (struct wg_list){ .selected = -1, .hover = -1, .row = row, .last_click_row = -1 };
     layout();
 
@@ -881,7 +1042,7 @@ int main(void)
         struct k86_event ev;
         /* The phone's Back: a viewer or dialog to close, or a folder to go
          * up from; at the top, Back closes Files. */
-        k86_back_wanted(viewing || dialog_for != NONE || (vol >= 0 && (depth > 0 || nvolumes > 1)));
+        k86_back_wanted(viewing || sheet >= 0 || dialog_for != NONE || (vol >= 0 && (depth > 0 || nvolumes > 1)));
         k86_keyboard_wanted(dialog_for != NONE && dialog.has_entry);      /* a name to type */
         if (k86_wait_event(&ev))
             return 1;
@@ -895,11 +1056,15 @@ int main(void)
         case K86_EVENT_HEADER:
             if (ev.id == BACK_ID)
                 go_back();
-            else if (ev.id == WALLPAPER_ID && viewing == 2)
-                set_wallpaper(K86_WALLPAPER_DESKTOP);
-            else if (ev.id == LOCK_ID && viewing == 2)
-                set_wallpaper(K86_WALLPAPER_LOCK);
             break;
+        case K86_EVENT_TIMER: {             /* a finger held on a row: a long press? */
+            int row = wg_list_long_press(&list, k86_uptime_ms());
+            if (row >= 0)
+                open_sheet(row);
+            else if (!wg_list_pressing(&list))
+                k86_timer_set(0);
+            break;
+        }
         case K86_EVENT_THEME:
             if (viewing == 2)
                 draw_picture();

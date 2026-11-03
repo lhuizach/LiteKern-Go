@@ -112,6 +112,13 @@ enum wg_list_result wg_list_key(struct wg_list *l, const struct key_event *k);
  * the list. 1 if it moved (dirty). */
 #define WG_SCROLL_ROWS 1             /* LiteKern Go: rows are 88 px tall */
 int wg_list_scroll(struct wg_list *l, int x, int y, int notches);
+/* A long press: the finger held on a row, still, WG_LONG_PRESS_MS. Call it
+ * while a press is under way (a timer): the row, once (its lift then does
+ * nothing), or -1. */
+#define WG_LONG_PRESS_MS 500
+int wg_list_long_press(struct wg_list *l, uint32_t now_ms);
+/* A press is under way on a row (a long press could come). */
+int wg_list_pressing(const struct wg_list *l);
 /* Change the row count (keeping the selection in range) / select a row and
  * scroll it into view. */
 void wg_list_set_count(struct wg_list *l, int count);
