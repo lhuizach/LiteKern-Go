@@ -11,7 +11,12 @@
  *
  * It locks from the power menu's Lock, Super+L, SYS_LOCK, or when the
  * screen saver ends if lock-on-wake is set. Its choices are kept with the
- * other settings (kernel/settings.h). */
+ * other settings (kernel/settings.h).
+ *
+ * LiteKern Go (UI-PLAN.md): a swipe up unlocks, or with a password shows
+ * the PIN pad (a password is the PIN). Notifications show as cards under
+ * the clock, titles only. The picker and the power button are hidden: one
+ * user, and holding Power opens the power menu (Restart, Power off). */
 #ifndef LKX_LOCKSCREEN_H
 #define LKX_LOCKSCREEN_H
 

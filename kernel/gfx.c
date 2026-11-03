@@ -87,7 +87,7 @@ void gfx_line(struct gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t co
 /* Anti-aliased corners (Phase 3 §1): how much of each pixel of a radius-r
  * corner is inside the curve, from 4x4 samples, 0..255. Indexed from the
  * corner's outer edge, so all four corners share it by mirroring. */
-#define AA_MAX_R 64
+#define AA_MAX_R 96                     /* LiteKern Go: 2x sizes, so bigger curves (the PIN pad's keys) */
 static uint8_t cov_tab[AA_MAX_R][AA_MAX_R];
 static int cov_r = -1;
 

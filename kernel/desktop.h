@@ -51,6 +51,9 @@ int desktop_log_out(void);
 void desktop_refresh(void);
 /* LiteKern Go: an app's notification (SYS_NOTIFY; owner: its struct app). */
 void desktop_notify(const void *owner, const char *title, const char *body);
+/* The notifications, newest first, for the lock screen (titles only). */
+int desktop_note_count(void);
+const char *desktop_note_title(int i);
 
 /* Pointer input, every packet: the shell's (top bar, menus, dock, app menu)
  * or passed on to the windows. */

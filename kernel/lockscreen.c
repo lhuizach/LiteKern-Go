@@ -23,11 +23,18 @@
 #define WARN        0xf8e45cu           /* Caps Lock */
 #define BAD         0xff7b63u           /* a wrong password */
 #define DIM         96                  /* how much the wallpaper is darkened */
-#define BUTTON_W    40
-#define BUTTON_H    24
-#define MENU_W      180
-#define ITEM_H      34
-#define MENU_PAD    6
+#define MENU_W      520                 /* the power menu (Power held): a sheet in the middle */
+#define ITEM_H      100
+#define MENU_PAD    16
+#define POWER_HOLD_MS 500
+#define SWIPE_UNLOCK 200                /* px up that unlock; less springs back */
+#define PAD_R       72                  /* the PIN pad's keys */
+#define PAD_DX      210
+#define PAD_DY      176
+#define PAD_BOTTOM  170                 /* its last row's centre, from the bottom */
+#define PAD_KEYS    12                  /* 1-9, Del, 0, OK */
+#define NOTES_SHOWN 4
+#define NOTE_H      88
 #define QUIET_MS    400                 /* input just after locking is ignored */
 #define SLIDE_MS    320                 /* the curtain sliding down (locking) or up (unlocking) */
 #define SHADOW      28                  /* the soft shadow along its bottom edge */
@@ -65,9 +72,14 @@ static struct {
     int fails;
     uint32_t wait_until;                /* after wrong passwords: no tries until then */
     const char *message;                /* under the field: what went wrong */
-} ls = { .set = { "desktop", 1, 0 } };
+    int swiping, y0, lift;              /* a swipe up: where it started, how far (<= 0) */
+    int pad_held;                       /* the PIN pad's key under the finger, or -1 */
+    uint32_t power_down_ms;             /* Power is held since (0: it isn't) */
+    int power_held;
+} ls = { .set = { "desktop", 1, 0 }, .pad_held = -1 };
 
-enum { H_NONE, H_POWER, H_RESTART, H_SHUTDOWN, H_AVATAR };   /* H_AVATAR + i: the picker's i-th */
+/* H_PAD + k: the PIN pad's k-th key; H_AVATAR + i: the picker's i-th. */
+enum { H_NONE, H_RESTART, H_SHUTDOWN, H_PAD, H_AVATAR = H_PAD + PAD_KEYS };
 
 static struct gfx_surface *S(void) { return screen_surface(); }
 
@@ -204,14 +216,10 @@ static void date_text(const struct rtc_time *t, char *out)
 
 /* --- layout -------------------------------------------------------------------------------- */
 
-static struct gfx_rect power_rect(void)
-{
-    return (struct gfx_rect){ S()->w - 8 - BUTTON_W, 3, BUTTON_W, BUTTON_H };
-}
-
 static struct gfx_rect menu_rect(void)
 {
-    return (struct gfx_rect){ S()->w - 8 - MENU_W, BUTTON_H + 8, MENU_W, 2 * ITEM_H + 2 * MENU_PAD };
+    int h = 2 * ITEM_H + 2 * MENU_PAD;
+    return (struct gfx_rect){ (S()->w - MENU_W) / 2, (S()->h - h) / 2, MENU_W, h };
 }
 
 static struct gfx_rect item_rect(int k)
@@ -234,21 +242,30 @@ static struct gfx_rect clock_rect(void)
     return (struct gfx_rect){ 0, clock_y(), S()->w, h };
 }
 
-/* Under the clock, where the prompt or the users are: everything they draw. */
+/* The PIN's dots, the title over them and the message under them (in the
+ * picker, which LiteKern Go hides: the users). */
 static struct gfx_rect middle_rect(void)
 {
-    return (struct gfx_rect){ 0, S()->h * 42 / 100, S()->w, S()->h * 48 / 100 };
+    if (ls.view == V_PICK)
+        return (struct gfx_rect){ 0, S()->h * 42 / 100, S()->w, S()->h * 48 / 100 };
+    return (struct gfx_rect){ 0, S()->h * 17 / 100, S()->w, 240 };
 }
 
-static int prompt_cy(void)                  /* the prompt's avatar centre */
+static int dots_cy(void)
 {
-    return S()->h * 52 / 100;
+    return S()->h * 28 / 100;
 }
 
-static struct gfx_rect field_rect(void)
+static void pad_centre(int k, int *cx, int *cy)
 {
-    int y = prompt_cy() + AVATAR_R + 14 + text_height(TEXT_HEADING) + 18;
-    return (struct gfx_rect){ (S()->w - FIELD_W) / 2 + ls.shake, y, FIELD_W, FIELD_H };
+    *cx = S()->w / 2 + (k % 3 - 1) * PAD_DX;
+    *cy = S()->h - PAD_BOTTOM - (3 - k / 3) * PAD_DY;
+}
+
+static const char *pad_label(int k)
+{
+    static const char *const labels[PAD_KEYS] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "Del", "0", "OK" };
+    return labels[k];
 }
 
 static int pick_x(int i)                    /* the picker's i-th avatar centre */
@@ -269,8 +286,13 @@ static int hit_at(int x, int y)
             if (inside(item_rect(k), x, y))
                 return H_RESTART + k;
     }
-    if (inside(power_rect(), x, y))
-        return H_POWER;
+    if (ls.view == V_PROMPT)
+        for (int k = 0; k < PAD_KEYS; k++) {
+            int cx, cy;
+            pad_centre(k, &cx, &cy);
+            if (x >= cx - PAD_DX / 2 && x < cx + PAD_DX / 2 && y >= cy - PAD_DY / 2 && y < cy + PAD_DY / 2)
+                return H_PAD + k;
+        }
     if (ls.view == V_PICK)
         for (int i = 0; i < users_count(); i++) {
             int dx = x - pick_x(i), dy = y - pick_cy();
@@ -281,14 +303,6 @@ static int hit_at(int x, int y)
 }
 
 /* --- drawing ------------------------------------------------------------------------------- */
-
-static void draw_power_icon(struct gfx_surface *s, int cx, int cy, uint32_t c, uint32_t bg)
-{
-    gfx_fill_circle(s, cx, cy + 1, 7, c);
-    gfx_fill_circle(s, cx, cy + 1, 5, bg);
-    gfx_fill_rect(s, cx - 3, cy - 7, 7, 5, bg);
-    gfx_fill_rect(s, cx - 1, cy - 8, 2, 8, c);
-}
 
 /* A user's avatar: their colour, their name's first letter. */
 static void draw_avatar(struct gfx_surface *s, int cx, int cy, int r, const struct user *u, int ring)
@@ -324,32 +338,54 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
     centred(s, ox, oy, y + f->ascent + f->descent + 16, date, TEXT_HEADING, WHITE);
 }
 
+/* The PIN pad: the time small at the top, "Enter PIN", a dot for each digit
+ * typed, then the keys (1-9, Del, 0, OK). */
 static void draw_prompt(struct gfx_surface *s, int ox, int oy)
 {
-    const struct user *u = users_get(ls.who);
-    if (!u)
-        return;
-    int cy = prompt_cy();
-    draw_avatar(s, S()->w / 2 + ls.shake - ox, cy - oy, AVATAR_R, u, 0);
-    text_draw(s, (S()->w - text_width(u->name, TEXT_HEADING)) / 2 + ls.shake - ox, cy + AVATAR_R + 14 - oy, u->name,
-              TEXT_HEADING, WHITE);
-    struct gfx_rect f = field_rect();
-    gfx_blend_round_rect(s, f.x - ox, f.y - oy, f.w, f.h, f.h / 2, WHITE, 46);
-    int waiting = (int32_t)(ls.wait_until - uptime_ms()) > 0;
-    if (ls.pwlen) {                         /* the password: dots */
-        int n = ls.pwlen > 24 ? 24 : ls.pwlen, w = n * 14 - 4, x = f.x + (f.w - w) / 2;
-        for (int i = 0; i < n; i++)
-            gfx_fill_circle(s, x + 5 + i * 14 - ox, f.y + f.h / 2 - oy, 5, WHITE);
-    } else {
-        const char *ph = waiting ? "Wait a moment" TEXT_ELLIPSIS : "Password";
-        text_draw(s, f.x + (f.w - text_width(ph, TEXT_BODY)) / 2 - ox, f.y + (f.h - text_height(TEXT_BODY)) / 2 - oy,
-                  ph, TEXT_BODY, gfx_mix(WHITE, 0, 150));
+    char hm[8], ampm[4];
+    if (ls.shown.year) {
+        time_text(&ls.shown, hm, ampm);
+        centred(s, ox, oy, S()->h * 6 / 100, hm, TEXT_LARGE, WHITE);
     }
-    int y = f.y + f.h + 14;
+    int waiting = (int32_t)(ls.wait_until - uptime_ms()) > 0;
+    centred(s, ox, oy, S()->h * 17 / 100, waiting ? "Wait a moment" TEXT_ELLIPSIS : "Enter PIN", TEXT_HEADING, WHITE);
+    int n = ls.pwlen > 16 ? 16 : ls.pwlen, w = n * 40 - 16, x = (S()->w - w) / 2 + ls.shake;
+    for (int i = 0; i < n; i++)
+        gfx_fill_circle(s, x + 12 + i * 40 - ox, dots_cy() - oy, 12, WHITE);
+    int y = dots_cy() + 40;
     if (ls.message)
         centred(s, ox, oy, y, ls.message, TEXT_BODY, BAD);
     else if (ls.caps)
         centred(s, ox, oy, y, "Caps Lock is on", TEXT_BODY, WARN);
+    for (int k = 0; k < PAD_KEYS; k++) {
+        int cx, cy;
+        pad_centre(k, &cx, &cy);
+        int digit = k != 9 && k != 11;
+        if (digit || k == ls.pad_held)
+            gfx_blend_round_rect(s, cx - PAD_R - ox, cy - PAD_R - oy, 2 * PAD_R, 2 * PAD_R, PAD_R, WHITE,
+                                 k == ls.pad_held ? 110 : 36);
+        enum text_style st = digit ? TEXT_LARGE : TEXT_BOLD;
+        const char *l = pad_label(k);
+        text_draw(s, cx - text_width(l, st) / 2 - ox, cy - text_height(st) / 2 - oy, l, st, WHITE);
+    }
+}
+
+/* Notifications under the clock: their titles only, as the content may be private. */
+static void draw_notes(struct gfx_surface *s, int ox, int oy)
+{
+    struct gfx_rect c = clock_rect();
+    int n = desktop_note_count(), y = c.y + c.h + 48, x = 48, w = S()->w - 96;
+    for (int i = 0; i < n && i < NOTES_SHOWN; i++, y += NOTE_H + 12) {
+        gfx_blend_round_rect(s, x - ox, y - oy, w, NOTE_H, 24, WHITE, 40);
+        text_draw_fit(s, x + 28 - ox, y + (NOTE_H - text_height(TEXT_BOLD)) / 2 - oy, desktop_note_title(i), w - 56,
+                      TEXT_BOLD, WHITE);
+    }
+    if (n > NOTES_SHOWN) {
+        char more[16] = "+";
+        char *p = put2(more + 1, n - NOTES_SHOWN, 0);
+        put(p, " more");
+        centred(s, ox, oy, y, more, TEXT_SMALL, gfx_mix(WHITE, 0, 190));
+    }
 }
 
 static void draw_pick(struct gfx_surface *s, int ox, int oy)
@@ -369,34 +405,27 @@ static void draw_pick(struct gfx_surface *s, int ox, int oy)
 static void draw_into(struct gfx_surface *s, int ox, int oy)
 {
     gfx_blit(s, 0, 0, &ls.bg, ox, oy, s->w, s->h);
-    draw_clock(s, ox, oy);
-    if (ls.view == V_PROMPT)
+    if (ls.view == V_PROMPT) {
         draw_prompt(s, ox, oy);
-    else if (ls.view == V_PICK)
-        draw_pick(s, ox, oy);
-    const char *hint = ls.view == V_PICK ? (ls.login ? "Choose who you are: the arrow keys and Enter, or click"
-                                                     : "Choose who you are: the arrow keys and Enter, or click. "
-                                                       "Choosing someone else logs you out")
-                     : ls.view == V_PROMPT ? (ls.login && users_count() > 1 ? "Enter to log in, Esc to choose someone else"
-                                              : "Enter to unlock, Esc to go back")
-                     : "Click or press a key to unlock";
-    centred(s, ox, oy, S()->h - 64, hint, TEXT_BODY, gfx_mix(WHITE, 0, 190));
-
-    struct gfx_rect p = power_rect();
-    int cx = p.x + p.w / 2 - ox, cy = p.y + p.h / 2 - oy;
-    if (ls.hover == H_POWER || ls.menu_open)
-        gfx_blend_round_rect(s, p.x - ox, p.y - oy, p.w, p.h, p.h / 2, WHITE, 40);
-    if (cx >= 0 && cy >= 0 && cx < s->w && cy < s->h)     /* the icon's hole shows what's behind */
-        draw_power_icon(s, cx, cy, WHITE, s->px[cy * s->stride + cx]);
-    if (ls.menu_open) {
+    } else {
+        /* The clock, the notifications and the hint follow a swipe up. */
+        int coy = oy - ls.lift;
+        draw_clock(s, ox, coy);
+        if (ls.view == V_PICK)
+            draw_pick(s, ox, coy);
+        else
+            draw_notes(s, ox, coy);
+        const char *hint = ls.view == V_PICK ? "Choose who you are" : "Swipe up to unlock";
+        centred(s, ox, coy, S()->h - 64, hint, TEXT_BODY, gfx_mix(WHITE, 0, 190));
+    }
+    if (ls.menu_open) {                     /* Power held: Restart, Power off */
+        gfx_darken(s, 0, 0, s->w, s->h, 120);
         struct gfx_rect m = menu_rect();
-        gfx_fill_round_rect(s, m.x - ox, m.y - oy, m.w, m.h, 12, POPOVER);
+        gfx_fill_round_rect(s, m.x - ox, m.y - oy, m.w, m.h, 24, POPOVER);
         for (int k = 0; k < 2; k++) {
             struct gfx_rect r = item_rect(k);
             int disabled = k == 1 && !power_can_off();
-            if (!disabled && ls.hover == H_RESTART + k)
-                gfx_fill_round_rect(s, r.x - ox, r.y - oy, r.w, r.h, 6, gfx_mix(WHITE, POPOVER, 38));
-            text_draw(s, r.x + 12 - ox, r.y + (r.h - text_height(TEXT_BODY)) / 2 - oy, k ? "Shut Down" : "Restart",
+            text_draw(s, r.x + 32 - ox, r.y + (r.h - text_height(TEXT_BODY)) / 2 - oy, k ? "Power off" : "Restart",
                       TEXT_BODY, disabled ? gfx_mix(WHITE, POPOVER, 110) : WHITE);
         }
     }
@@ -417,12 +446,6 @@ static void draw_all(void)
 {
     draw_rect((struct gfx_rect){ 0, 0, S()->w, S()->h });
     cursor_refresh();
-}
-
-static struct gfx_rect top_right(void)
-{
-    struct gfx_rect m = menu_rect();
-    return gfx_rect_union(power_rect(), (struct gfx_rect){ m.x - 4, m.y - 4, m.w + 8, m.h + 8 });
 }
 
 /* --- the curtain ----------------------------------------------------------------------------
@@ -524,6 +547,10 @@ static int start(int animate_from_desktop)
     ls.menu_open = ls.hover = 0;
     ls.pwlen = 0;
     ls.message = 0;
+    ls.swiping = ls.lift = 0;
+    ls.pad_held = -1;
+    ls.power_down_ms = 0;
+    ls.power_held = 0;
     if (read_time(&ls.shown))
         ls.shown.year = 0;
     if (animate) {
@@ -540,7 +567,7 @@ void lockscreen_lock(void)
     ls.login = 0;
     ls.who = users_current();
     ls.pick = ls.who > 0 ? ls.who : 0;
-    ls.view = users_count() > 1 ? V_PICK : V_CLOCK;   /* everyone, under the clock */
+    ls.view = V_CLOCK;          /* LiteKern Go: one user, so no picker (UI-PLAN.md) */
     if (!start(1))
         kprintf("lock: locked (wallpaper %s)\n", ls.set.wallpaper);
 }
@@ -550,7 +577,7 @@ void lockscreen_login(void)
     ls.login = 1;
     ls.who = 0;
     ls.pick = 0;
-    ls.view = users_count() > 1 ? V_PICK : V_PROMPT;
+    ls.view = V_CLOCK;          /* the first user's: a swipe up, then their PIN */
     if (!start(0))
         kprintf("lock: login screen (%d user%s)\n", users_count(), users_count() == 1 ? "" : "s");
 }
@@ -586,6 +613,7 @@ static void unlock(void)
         gfx_blit(&ls.under, 0, 0, S(), 0, 0, S()->w, S()->h);
         slide(0);
     }
+    ls.lift = ls.swiping = 0;
     desktop_cover(0);                       /* the desktop draws itself again */
 }
 
@@ -600,6 +628,8 @@ static void show(enum view v)
     ls.view = v;
     ls.message = 0;
     ls.pwlen = 0;
+    ls.lift = 0;
+    ls.pad_held = -1;
     draw_all();
 }
 
@@ -611,7 +641,7 @@ static void wake(void)
         unlock();
         return;
     }
-    kprintf("lock: password for %s\n", u->name);
+    kprintf("lock: PIN for %s\n", u->name);
     show(V_PROMPT);
 }
 
@@ -642,7 +672,7 @@ static void try_password(void)
         return;
     }
     ls.fails++;
-    kprintf("lock: wrong password for %s (%d)\n", users_get(ls.who)->name, ls.fails);
+    kprintf("lock: wrong PIN for %s (%d)\n", users_get(ls.who)->name, ls.fails);
     memset(ls.pw, 0, sizeof(ls.pw));
     ls.pwlen = 0;
     /* After a few wrong tries, a wait that grows: 2, 4, 8 ... up to 30 s. */
@@ -650,19 +680,32 @@ static void try_password(void)
     if (wait > 30000)
         wait = 30000;
     ls.wait_until = uptime_ms() + wait;
-    ls.message = wait ? "Wrong password. Wait a moment, then try again." : "Wrong password. Try again.";
+    ls.message = wait ? "Wrong PIN. Wait a moment." : "Wrong PIN. Try again.";
     shake();
+}
+
+static void set_menu(int open)
+{
+    if (ls.menu_open == open)
+        return;
+    ls.menu_open = open;
+    kprintf("lock: power menu %s\n", open ? "open" : "closed");
+    draw_all();
 }
 
 void lockscreen_tick(void)
 {
     if (!ls.active)
         return;
-    if (ls.view == V_PROMPT && (!ls.login || users_count() > 1) && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
-        show(users_count() > 1 ? V_PICK : V_CLOCK);     /* left alone: back where it started */
+    if (ls.power_down_ms && !ls.power_held && uptime_ms() - ls.power_down_ms >= POWER_HOLD_MS) {
+        ls.power_held = 1;
+        set_menu(1);
+    }
+    if (ls.view == V_PROMPT && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
+        show(V_CLOCK);                      /* left alone: back to the clock */
     if (ls.message && ls.wait_until && (int32_t)(ls.wait_until - uptime_ms()) <= 0) {
         ls.wait_until = 0;                  /* the wait's over: say so */
-        ls.message = "Wrong password. Try again.";
+        ls.message = "Wrong PIN. Try again.";
         draw_rect(middle_rect());
     }
     if (uptime_ms() - ls.last_tick < 1000)
@@ -672,7 +715,10 @@ void lockscreen_tick(void)
     if (read_time(&t) || (t.minute == ls.shown.minute && t.hour == ls.shown.hour && t.day == ls.shown.day))
         return;
     ls.shown = t;
-    draw_rect(clock_rect());
+    if (ls.view == V_PROMPT)
+        draw_all();                         /* its small clock */
+    else
+        draw_rect(clock_rect());
 }
 
 static int is_modifier(uint16_t key)
@@ -682,14 +728,34 @@ static int is_modifier(uint16_t key)
            key == KEY_CAPSLOCK;
 }
 
+static void pin_add(char c)
+{
+    if (ls.pwlen >= PASSWORD_MAX - 1)
+        return;
+    ls.pw[ls.pwlen++] = c;
+    if (ls.message && !ls.wait_until)
+        ls.message = 0;
+}
+
+/* A key of the PIN pad. */
+static void pad_press(int k)
+{
+    if (k == 9) {
+        if (ls.pwlen)
+            ls.pw[--ls.pwlen] = '\0';
+    } else if (k == 11) {
+        kprintf("lock: PIN entered\n");
+        try_password();
+    } else {
+        pin_add(pad_label(k)[0]);
+    }
+}
+
+/* A keyboard (the VM's): digits, or any character of a password set elsewhere. */
 static void prompt_key(const struct key_event *k)
 {
     int caps = (k->mods & MOD_CAPSLOCK) != 0, redraw = caps != ls.caps;
     ls.caps = caps;
-    if (k->key == KEY_ESC) {
-        show(users_count() > 1 ? V_PICK : ls.login ? V_PROMPT : V_CLOCK);
-        return;
-    }
     if (k->key == KEY_ENTER) {
         try_password();
         if (ls.active)
@@ -699,19 +765,46 @@ static void prompt_key(const struct key_event *k)
     if (k->key == KEY_BACKSPACE && ls.pwlen) {
         ls.pw[--ls.pwlen] = '\0';
         redraw = 1;
-    } else if (k->ascii >= ' ' && k->ascii <= '~' && ls.pwlen < PASSWORD_MAX - 1 && !(k->mods & MOD_CTRL)) {
-        ls.pw[ls.pwlen++] = (char)k->ascii;
-        if (ls.message && !ls.wait_until)
-            ls.message = 0;
+    } else if (k->ascii >= ' ' && k->ascii <= '~' && !(k->mods & MOD_CTRL)) {
+        pin_add((char)k->ascii);
         redraw = 1;
     }
     if (redraw)
         draw_rect(middle_rect());
 }
 
+/* The phone's keys: Power held opens the power menu; Back closes it, or
+ * leaves the PIN pad for the clock. Home and a short Power do nothing yet
+ * (the screen can't go off in the VM). */
+static void phone_key(const struct key_event *k)
+{
+    if (k->key == KEY_PHONE_POWER) {
+        if (k->pressed && !ls.power_down_ms) {
+            ls.power_down_ms = uptime_ms() | 1;
+        } else if (!k->pressed) {
+            ls.power_down_ms = 0;
+            ls.power_held = 0;
+        }
+        return;
+    }
+    if (!k->pressed || k->key != KEY_PHONE_BACK)
+        return;
+    if (ls.menu_open)
+        set_menu(0);
+    else if (ls.view == V_PROMPT)
+        show(V_CLOCK);
+}
+
 void lockscreen_key(const struct key_event *k)
 {
-    if (!ls.active || !k->pressed)
+    if (!ls.active)
+        return;
+    if (k->key & KEY_PHONE) {
+        if (uptime_ms() - ls.locked_at >= QUIET_MS)
+            phone_key(k);
+        return;
+    }
+    if (!k->pressed)
         return;
     if (k->key == KEY_CAPSLOCK && ls.view == V_PROMPT) {
         ls.caps = !(k->mods & MOD_CAPSLOCK);    /* the state after this press */
@@ -722,19 +815,22 @@ void lockscreen_key(const struct key_event *k)
         return;
     ls.last_input = uptime_ms();
     if (ls.menu_open) {
-        ls.menu_open = 0;
-        draw_rect(top_right());
-        if (k->key == KEY_ESC)
-            return;
+        set_menu(0);
+        return;
     }
     switch (ls.view) {
     case V_CLOCK:
-        wake();
+        if (k->key == KEY_ESC)
+            return;
+        wake();                             /* a keyboard: as a swipe up */
         if (ls.active && ls.view == V_PROMPT && k->ascii > ' ' && k->ascii <= '~')
-            prompt_key(k);                  /* typing straight away: it's the password */
+            prompt_key(k);                  /* typing straight away: it's the PIN */
         return;
     case V_PROMPT:
-        prompt_key(k);
+        if (k->key == KEY_ESC)
+            show(V_CLOCK);
+        else
+            prompt_key(k);
         return;
     case V_PICK:
         if (k->key == KEY_LEFT && ls.pick > 0)
@@ -743,11 +839,6 @@ void lockscreen_key(const struct key_event *k)
             ls.pick++;
         else if (k->key == KEY_ENTER || k->key == KEY_SPACE) {
             choose(ls.pick);
-            return;
-        } else if (k->ascii > ' ' && k->ascii <= '~') {
-            choose(ls.pick);                /* typing straight away: their password */
-            if (ls.active && ls.view == V_PROMPT)
-                prompt_key(k);
             return;
         } else
             return;
@@ -761,43 +852,65 @@ void lockscreen_pointer(int x, int y, uint8_t buttons)
     if (!ls.active)
         return;
     int down = (buttons & MOUSE_LEFT) && !(ls.buttons & MOUSE_LEFT);
+    int up = !(buttons & MOUSE_LEFT) && (ls.buttons & MOUSE_LEFT);
     ls.buttons = buttons;
-    int h = hit_at(x, y);
-    if (h != ls.hover) {
-        int was = ls.hover;
-        ls.hover = h;
-        draw_rect(top_right());
-        if (ls.view == V_PICK && (was >= H_AVATAR || h >= H_AVATAR))
-            draw_rect(middle_rect());
-    }
-    if (!down || uptime_ms() - ls.locked_at < QUIET_MS)
+    if (down && uptime_ms() - ls.locked_at < QUIET_MS)
         return;
-    ls.last_input = uptime_ms();
-    switch (h) {
-    case H_POWER:
-        ls.menu_open = !ls.menu_open;
-        draw_rect(top_right());
-        return;
-    case H_RESTART:
-        kprintf("lock: restart\n");
-        cursor_hide();
-        power_restart();
-    case H_SHUTDOWN:
-        if (!power_can_off())
-            return;
-        kprintf("lock: shut down\n");
-        cursor_hide();
-        power_off();
-    default:
-        if (ls.menu_open) {                 /* a click away from the menu closes it */
-            ls.menu_open = 0;
-            draw_rect(top_right());
+    if (down) {
+        ls.last_input = uptime_ms();
+        int h = hit_at(x, y);
+        if (ls.menu_open) {
+            if (h == H_RESTART) {
+                kprintf("lock: restart\n");
+                cursor_hide();
+                power_restart();
+            }
+            if (h == H_SHUTDOWN && power_can_off()) {
+                kprintf("lock: shut down\n");
+                cursor_hide();
+                power_off();
+            }
+            set_menu(0);                    /* a tap away from it closes it */
             return;
         }
-        if (h >= H_AVATAR)
+        if (ls.view == V_CLOCK) {
+            ls.swiping = 1;
+            ls.y0 = y;
+        } else if (ls.view == V_PROMPT && h >= H_PAD && h < H_PAD + PAD_KEYS) {
+            ls.pad_held = h - H_PAD;
+            pad_press(ls.pad_held);
+            if (ls.active)
+                draw_all();
+        } else if (h >= H_AVATAR) {
             choose(h - H_AVATAR);
-        else if (ls.view == V_CLOCK)
+        }
+        return;
+    }
+    if (ls.swiping && (buttons & MOUSE_LEFT)) {
+        int lift = y < ls.y0 ? y - ls.y0 : 0;
+        if (lift != ls.lift) {
+            ls.lift = lift;
+            draw_all();
+        }
+        return;
+    }
+    if (!up)
+        return;
+    if (ls.swiping) {
+        ls.swiping = 0;
+        ls.last_input = uptime_ms();
+        if (-ls.lift >= SWIPE_UNLOCK) {
+            kprintf("lock: swiped up\n");
             wake();
+            return;
+        }
+        if (!ls.lift)
+            kprintf("lock: swipe up to unlock\n");
+        ls.lift = 0;                        /* not far enough: back down */
+        draw_all();
+    } else if (ls.pad_held >= 0) {
+        ls.pad_held = -1;
+        draw_all();
     }
 }
 

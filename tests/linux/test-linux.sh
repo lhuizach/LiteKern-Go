@@ -25,7 +25,7 @@ make -s -f platform/Makefile KBUILD=build/test-saver LBUILD=build-linux/saver SC
 mkdir -p build-linux/test
 cp build/litekernx.img build-linux/test/disk.img
 
-# Two users on a copy: User (an admin, password "apple") and Ann (no
+# Two users on a copy: User (an admin, PIN 1234) and Ann (no
 # password), written as kernel/users.c writes them (salted SHA-256, 20000 rounds).
 cp build/litekernx.img build-linux/test/users.img
 python3 - build-linux/test/users.txt <<'EOF'
@@ -38,7 +38,7 @@ def h(salt, pw):
 salt = bytes(range(16))
 open(sys.argv[1], "w").write(
     "# test users\n"
-    f"user admin 3584e4 {salt.hex()} {h(salt, b'apple')} User\n"
+    f"user admin 3584e4 {salt.hex()} {h(salt, b'1234')} User\n"
     f"user standard e45c84 {bytes(16).hex()} - Ann\n")
 EOF
 mmd -i build-linux/test/users.img@@8388608 ::/LiteKern 2>/dev/null
@@ -156,23 +156,45 @@ check "holding Power opens the power menu, and doesn't lock" \
     '^shell: power menu \(Power held\)$' \
     '!shell: lock \(Power\)'
 
-# Two users: the login screen; User (first, Enter), a wrong password, the right one.
-run $SHELL_BIN build-linux/test/users.img "sleep:0.6 ret sleep:0.5 p e a r ret sleep:1.5 a p p l e ret sleep:2" \
-    --keyboard qwerty
-check "the login screen: a wrong password, then the right one" \
+# The lock screen (kernel/lockscreen.c): a tap only hints, a short swipe
+# springs back, a long one (300 px up) unlocks.
+path; add sleep:0.5 phone_power sleep:1.2; click; add press:1; go 360 580; add release sleep:0.3 press:1
+go 360 500; go 360 400; go 360 340; add release sleep:1.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the lock screen: swipe up to unlock" \
+    '^lock: locked' \
+    '^lock: swipe up to unlock$' \
+    '^lock: swiped up$' \
+    '^lock: unlocked$'
+
+# Logging in (two users, so a login: the first one's, as the phone has no
+# picker): a swipe up, the PIN pad; 5555 OK is wrong, 1234 OK is right.
+# The pad's keys: columns 150, 360, 570; rows 582, 758, 934, 1110 (Del 0 OK).
+path; add sleep:0.6 press:1; go 360 500; go 360 400; go 360 340; add release sleep:0.5
+go 360 758; click; click; click; click; go 570 1110; click; add sleep:1.5
+go 150 582; click; go 360 582; click; go 570 582; click; go 150 758; click; go 570 1110; click; add sleep:2
+run $SHELL_BIN build-linux/test/users.img "$P"
+check "the login screen: a swipe up, the PIN pad, a wrong PIN, then the right one" \
     '^users: 2 \(User admin password, Ann\)$' \
     '^lock: login screen \(2 users\)$' \
-    '^lock: password for User$' \
-    '^lock: wrong password for User \(1\)$' \
+    '^lock: PIN for User$' \
+    '^lock: wrong PIN for User \(1\)$' \
     '^users: User logged in$' \
     '^lock: logged in as User$' \
     '!lock: logged in as Ann'
 
-run $SHELL_BIN build-linux/test/users.img "sleep:0.6 right sleep:0.3 ret sleep:2" --keyboard qwerty
-check "someone without a password logs straight in, with settings of their own to come" \
-    '^lock: logged in as Ann$' \
-    '^settings: Ann has none of their own yet$' \
-    '!lock: password for Ann'
+# The VM's keyboard types the PIN too; Back (Esc) leaves the pad for the clock.
+run $SHELL_BIN build-linux/test/users.img "sleep:0.6 ret sleep:0.5 esc sleep:0.3 ret sleep:0.3 1 2 3 4 ret sleep:2" \
+    --keyboard qwerty
+check "the PIN from the keyboard; Esc back to the clock" \
+    '^lock: PIN for User$' \
+    '^lock: logged in as User$'
+
+# Holding Power on the lock screen: its power menu; Back closes it.
+run $SHELL_BIN build-linux/test/users.img "sleep:0.6 keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.3 phone_back sleep:0.3"
+check "the lock screen's power menu: Power held, Back closes it" \
+    '^lock: power menu open$' \
+    '^lock: power menu closed$'
 
 # The QWERTY layout (the build's, LiteKern Go): the keys q, 1 and m type q, 1 and m.
 run $SHELL_BIN build-linux/test/disk.img "sleep:0.3 q 1 m"
@@ -247,6 +269,16 @@ check "the app switcher: a tap goes to an app, a swipe up closes one, Close all 
     '^switcher: close all$' \
     '^lkx: Files exited \(0\)$' \
     '!crashed|PANIC'
+
+# Notify's two notifications (the tests' image), then Power: their cards
+# under the lock screen's clock (white titles, 80..640 x 580..800).
+path; tap_app 7; add phone_home sleep:0.8 phone_power sleep:1.5
+cp build/test-apps/litekernx.img build-linux/test/locknote.img
+SCREEN="has=ffffff@80,580,640,800" run $SHELL_BIN build-linux/test/locknote.img "$P"
+check "the lock screen shows notifications under the clock" \
+    '^notify: Notify: Again$' \
+    '^lock: locked' \
+    '^screen: has ffffff in 80,580,640,800: yes$'
 
 # Back closes an app with nothing to go back to.
 path; open_app 1; add phone_back sleep:1.5

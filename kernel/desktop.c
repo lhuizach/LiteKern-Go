@@ -2038,6 +2038,17 @@ void desktop_notify(const void *owner, const char *title, const char *body)
     if (qs.t > 0)
         qs.t = FX(qs_h());                  /* the panel grows with it */
     damage_all();
+    lockscreen_redraw();                    /* locked: its card shows there */
+}
+
+int desktop_note_count(void)
+{
+    return nnotes;
+}
+
+const char *desktop_note_title(int i)
+{
+    return i >= 0 && i < nnotes ? notes[i].title : "";
 }
 
 static void note_remove(int k)

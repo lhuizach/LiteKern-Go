@@ -72,7 +72,7 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       (pixel) scrolling, long press (nothing uses it yet), scrolling outside lists
 - [x] 2.8 On-screen keyboard: letters, 123 page, Shift and caps lock, Backspace
       repeat, key preview; the app shrinks above it. Not yet: auto-capitals, a number
-      pad for number fields, the lock screen's password field, a slide-in animation
+      pad for number fields, a slide-in animation
 - [x] 2.9 Quick settings and notifications: pulled down from the status bar (or Home
       held); Wi-Fi, Dark mode, Do not disturb and Lock tiles, brightness, Settings;
       notifications from apps (SYS_NOTIFY), in the panel and the status bar. Not yet:
@@ -80,7 +80,10 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       with a backlight
 - [x] 2.10 App switcher: cards of the open apps, tap to go, swipe up to close, Close
       all. Not yet: animations in and out, live pictures (they're taken on opening)
-- [ ] 2.11 Lock screen: swipe to unlock, PIN pad
+- [x] 2.11 Lock screen: swipe up to unlock, PIN pad (a password is the PIN; wrong
+      ones shake and wait), notification titles under the clock, Power held for its
+      power menu; one user, no picker. Not yet: setting a PIN (Settings, phase 3), the
+      battery while charging, the screen going off on Power (needs the phone)
 - [ ] 2.12 Power menu, volume pop-up, screenshots
 
 **Done when:** in the VM, the shell can be used with only the mouse (as a
