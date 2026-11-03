@@ -58,7 +58,9 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       positions: they get rewritten as each phone screen replaces the desktop one
 - [x] 2.2 Key map: Back, Home, Recent apps, Power, volume (VM keys: Esc, Home,
       F1, F12, PgUp/PgDn)
-- [ ] 2.3 Full-screen window manager, one app visible, background apps paused
+- [x] 2.3 Full-screen window manager, one app visible. Not yet: background apps
+      paused (stopping their processes would trip the hang watchdog), and closing an
+      app (Back in 2.6, the switcher in 2.10)
 - [ ] 2.4 Home screen: icon pages and All apps, no dock or top bar
 - [ ] 2.5 Status bar
 - [ ] 2.6 Back event in the app API, with the default behaviour in the shell

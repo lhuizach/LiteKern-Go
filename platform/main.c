@@ -9,7 +9,7 @@
  *               drm (the real screen: the EeePC, linux/overlay/usr/bin/lkx-start)
  *   --disk      the disk image: its ramdisk (apps, wallpapers) and FAT32
  *               partition (settings, users, files). Default: build/litekernx.img
- *   --size      the screen: 1024x600 like the EeePC (default), 1024x768 like the VMs
+ *   --size      the screen: 720x1280 like the phone (default), 1024x768 like the VMs
  *   --keys      headless: a script in the tests' key language (platform/headless.c)
  *   --shot      headless: a PNG once the script has run, then exit
  *   --for       give up after this many seconds (tests)
@@ -237,7 +237,7 @@ int main(int argc, char **argv)
 {
     const char *backend = getenv("DISPLAY") ? "x11" : "headless";
     const char *disk = "build/litekernx.img", *keys = 0, *shot = 0, *layout = 0;
-    int w = 1024, h = 600;
+    int w = 720, h = 1280;             /* LiteKern Go: the phone's screen */
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : 0;
         if (!v)

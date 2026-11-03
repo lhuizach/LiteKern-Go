@@ -13,7 +13,6 @@
 #define GRIP 6              /* resize handle: this far outside the frame ... */
 #define GRIP_IN 3           /* ... and this far inside */
 #define CASCADE 32          /* a new window over an old one moves this far along */
-#define DOUBLE_MS 400       /* two header clicks this close: maximise / restore */
 #define DRAG_START 4        /* px a maximised window must be dragged before it lets go */
 
 /* Buttons: the app's, then the window's own three. */
@@ -69,8 +68,6 @@ static int drag_dx, drag_dy, drag_x0, drag_y0, drag_free;
 static int resize_edges;
 static struct gfx_rect resize_r0;
 static int resize_x0, resize_y0;
-static struct wm_window *last_header_win;
-static uint32_t last_header_ms;
 
 enum { E_LEFT = 1, E_RIGHT = 2, E_TOP = 4, E_BOTTOM = 8 };
 
@@ -106,12 +103,13 @@ static int radius(const struct wm_window *w)
     return w->maximised ? 0 : WM_RADIUS;
 }
 
-/* A maximised window has no header bar of its own: its title, buttons and
- * controls are in the shell's top bar (kernel/desktop.c, wm_header_hidden()),
- * and its content takes the room. */
+/* LiteKern Go: every window keeps its header bar (the app's title and
+ * buttons), full-screen too; the top bar above it is the phone's status bar
+ * (UI-PLAN.md). LiteKern X put a maximised window's header in its top bar. */
 static int header_h(const struct wm_window *w)
 {
-    return w->maximised ? 0 : T()->headerbar_h;
+    (void)w;
+    return T()->headerbar_h;
 }
 
 static struct gfx_rect header_rect(const struct wm_window *w, struct gfx_rect r)
@@ -148,10 +146,10 @@ static void layout(const struct wm_window *w, struct gfx_rect r, struct gfx_rect
     }
     int size = t->button_size, top = h.y + (h.h - size) / 2;
     int left = h.x + t->spacing, right = h.x + h.w - t->spacing;
-    for (int b = B_CLOSE; b >= B_MIN; b--) {
-        out[b] = (struct gfx_rect){ right - size, top, size, size };
-        right -= size + (b == B_MIN ? t->spacing * 2 : 2);
-    }
+    /* LiteKern Go: no minimise, maximise or close. The phone's keys do
+     * that: Home, Back, and the app switcher (UI-PLAN.md). */
+    for (int b = B_MIN; b <= B_CLOSE; b++)
+        out[b] = (struct gfx_rect){ 0, 0, 0, 0 };
     for (int i = 0; i < WM_MAX_BUTTONS; i++) {
         if (i >= w->nbuttons) {
             out[i] = (struct gfx_rect){ 0, 0, 0, 0 };
@@ -289,7 +287,7 @@ void wm_move_resize(struct wm_window *w, struct gfx_rect r)
 
 void wm_set_maximised(struct wm_window *w, int maximised)
 {
-    if (!w || w->maximised == !!maximised)
+    if (!w || w->maximised == !!maximised || !maximised)   /* LiteKern Go: full-screen for good */
         return;
     damage(w);
     if (maximised) {
@@ -386,6 +384,10 @@ struct wm_window *wm_create(const char *title, int w, int h, int min_w, int min_
     }
     win->r = clamp_rect(win, r);
     win->normal = win->r;
+    /* LiteKern Go: every app full-screen, under the status bar (UI-PLAN.md).
+     * The size asked for is only where a "restore" would go, which never comes. */
+    win->maximised = 1;
+    win->r = area;
     apply_size(win);
     win->qhead = win->qtail = 0;            /* no RESIZE for the first size */
     struct gfx_surface full = { win->buf, bw, bh, bw };
@@ -424,8 +426,6 @@ void wm_destroy(struct wm_window *w)
         drag_win = 0;
     if (resize_win == w)
         resize_win = 0;
-    if (last_header_win == w)
-        last_header_win = 0;
     if (focus == w)
         focus = 0;
     refocus();
@@ -695,7 +695,8 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
         uint32_t bg = down ? t->button_active : lit ? t->button_hover : 0;
         int cx = rs[b].x + rs[b].w / 2 - ox, cy = rs[b].y + rs[b].h / 2 - oy;
         if (b >= B_MIN) {
-            draw_control(s, b, w->maximised, cx, cy, bg ? bg : t->button_bg, fg);
+            if (rs[b].w)                    /* LiteKern Go: none (layout()) */
+                draw_control(s, b, w->maximised, cx, cy, bg ? bg : t->button_bg, fg);
             continue;
         }
         const struct button *bt = &w->buttons[b];
@@ -712,7 +713,7 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
 
     /* The title: centred if it fits between the buttons; otherwise moved
      * into the space there is, and cut short if it must, as GNOME does. */
-    int lmax = h.x + t->spacing, rmin = rs[B_MIN].x;
+    int lmax = h.x + t->spacing, rmin = h.x + h.w - t->spacing;
     for (int b = 0; b < w->nbuttons; b++) {
         if (w->buttons[b].side == WM_LEFT && rs[b].x + rs[b].w > lmax)
             lmax = rs[b].x + rs[b].w;
@@ -857,7 +858,15 @@ static void draw_shadow(struct gfx_surface *dst, int ox, int oy, struct wm_windo
 void wm_draw(struct gfx_surface *dst, int ox, int oy)
 {
     struct gfx_rect view = { ox, oy, dst->w, dst->h };
-    for (int i = 0; i < nz; i++) {
+    /* LiteKern Go: one app on screen. A full-screen window hides everything
+     * behind it, so drawing starts there. */
+    int first = 0;
+    for (int i = nz - 1; i >= 0; i--)
+        if (!z[i]->minimised && !z[i]->hidden && z[i]->maximised) {
+            first = i;
+            break;
+        }
+    for (int i = first; i < nz; i++) {
         struct wm_window *w = z[i];
         if (w->minimised || w->hidden || gfx_rect_empty(gfx_rect_intersect(wm_bounds(w), view)))
             continue;
@@ -1157,19 +1166,9 @@ int wm_input_mouse(int x, int y, uint8_t buttons)
         press_win = w;
         press_btn = b;
         damage_button(w, b);
-    } else if (last_header_win == w && uptime_ms() - last_header_ms < DOUBLE_MS) {
-        last_header_win = 0;
-        shell_window_maximise(w, !w->maximised, w->r);
-    } else {                                /* the header bar: drag to move */
-        last_header_win = w;
-        last_header_ms = uptime_ms();
-        drag_win = w;
-        drag_free = 0;
-        drag_x0 = x;
-        drag_y0 = y;
-        drag_dx = x - w->r.x;
-        drag_dy = y - w->r.y;
     }
+    /* LiteKern Go: the header bar doesn't move or maximise the window: it's
+     * full-screen for good. */
     return 1;
 }
 
