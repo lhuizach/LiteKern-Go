@@ -516,15 +516,20 @@ static int same(struct hit a, struct hit b)
     return a.kind == b.kind && a.app == b.app;
 }
 
+/* LiteKern Go: the top bar is the phone's status bar (UI-PLAN.md): the time
+ * on the left, the network and battery on the right, no buttons. Home and
+ * Power are the phone's keys, so their buttons are gone: home_rect() and
+ * power_rect() are empty, the latter only marking the right edge. */
+static uint32_t bar_fg = SHELL_FG;      /* the status bar's text and icons, set as it's drawn */
+
 static struct gfx_rect home_rect(void)
 {
-    return (struct gfx_rect){ T()->spacing, (T()->topbar_h - BAR_BUTTON_H) / 2, BAR_BUTTON_W, BAR_BUTTON_H };
+    return (struct gfx_rect){ 0, 0, 0, 0 };
 }
 
 static struct gfx_rect power_rect(void)
 {
-    return (struct gfx_rect){ S()->w - T()->spacing - BAR_BUTTON_W, (T()->topbar_h - BAR_BUTTON_H) / 2,
-                              BAR_BUTTON_W, BAR_BUTTON_H };
+    return (struct gfx_rect){ S()->w - T()->margin + 4, (T()->topbar_h - BAR_BUTTON_H) / 2, 0, BAR_BUTTON_H };
 }
 
 /* The network icon, left of the power button (only with network hardware). */
@@ -534,7 +539,7 @@ static int net_present(void) { return net_shown.wired != K86_NET_NONE || net_sho
 static struct gfx_rect net_rect(void)
 {
     struct gfx_rect p = power_rect();
-    return (struct gfx_rect){ p.x - BAR_BUTTON_W - 4, p.y, BAR_BUTTON_W, BAR_BUTTON_H };
+    return (struct gfx_rect){ p.x - 2 * BAR_BUTTON_W - 4, p.y, 2 * BAR_BUTTON_W, BAR_BUTTON_H };    /* 2x icons */
 }
 
 /* The battery (kernel/machine.h), left of those: its icon and how full, "87%"
@@ -558,7 +563,7 @@ static struct gfx_rect battery_rect(void)
 {
     char text[8];
     battery_text(text);
-    int w = 10 + 21 + 6 + text_width(text, TEXT_BOLD) + 10;
+    int w = 10 + 2 * (21 + 6) + text_width(text, TEXT_BOLD) + 10;      /* 2x icons (BAR_SCALE) */
     int right = (net_present() ? net_rect().x : power_rect().x) - 4;
     return (struct gfx_rect){ right - w, power_rect().y, w, BAR_BUTTON_H };
 }
@@ -832,44 +837,46 @@ static void draw_icon(const struct app *a, struct gfx_rect r, uint32_t alpha)
     }
 }
 
-static void draw_home_icon(int cx, int cy, uint32_t c)
-{
-    for (int i = 0; i <= 7; i++)                    /* roof */
-        gfx_fill_rect(VS, VX(cx - i), VY(cy - 7 + i), 2 * i + 1, 1, c);
-    gfx_fill_rect(VS, VX(cx - 5), VY(cy + 1), 11, 6, c);      /* walls */
-    gfx_fill_rect(VS, VX(cx - 1), VY(cy + 3), 3, 4, T()->topbar_bg);   /* door */
-}
-
 /* The network (kernel/net.h): Wi-Fi as a fan whose arcs light up with the
  * signal, Ethernet as three linked boxes; dimmed when not connected. */
+/* The status bar's icons: LiteKern X's, drawn BAR_SCALE times bigger for
+ * the phone's screen (UI-PLAN.md: 2x). */
+#define BAR_SCALE 2
+#define B(v) ((v) * BAR_SCALE)
+
+static void dot(int x, int y, uint32_t c)       /* one of the icons' pixels */
+{
+    gfx_fill_rect(VS, VX(x), VY(y), BAR_SCALE, BAR_SCALE, c);
+}
+
 static void draw_net_icon(int cx, int cy, const struct k86_net *n, uint32_t bg)
 {
-    uint32_t lit = SHELL_FG, dim = gfx_mix(bg, SHELL_FG, 160);
+    uint32_t lit = bar_fg, dim = gfx_mix(bg, bar_fg, 160);
     int wifi = n->wifi != K86_NET_NONE && (n->wifi == K86_NET_UP || n->wired != K86_NET_UP);
     if (wifi) {
         int up = n->wifi == K86_NET_UP;
         int bars = !up ? 0 : n->signal >= 66 ? 3 : n->signal >= 33 ? 2 : 1;
-        int ox = cx, oy = cy + 6;
+        int ox = cx, oy = cy + B(6);
         /* Three arcs, 45 degrees either side of up, drawn pixel by pixel:
          * only above the centre, so nothing spills below the top bar. */
-        for (int dy = -12; dy < 0; dy++)
+        for (int dy = -B(12); dy < 0; dy++)
             for (int dx = dy; dx <= -dy; dx++) {
                 int d2 = dx * dx + dy * dy;
                 for (int k = 1; k <= 3; k++)
-                    if (d2 > (1 + 3 * k) * (1 + 3 * k) && d2 <= (3 + 3 * k) * (3 + 3 * k))
+                    if (d2 > B(1 + 3 * k) * B(1 + 3 * k) && d2 <= B(3 + 3 * k) * B(3 + 3 * k))
                         gfx_fill_rect(VS, VX(ox + dx), VY(oy + dy), 1, 1, bars >= k ? lit : dim);
             }
-        gfx_fill_circle(VS, VX(ox), VY(oy - 1), 2, up ? lit : dim);
+        gfx_fill_circle(VS, VX(ox), VY(oy - B(1)), B(2), up ? lit : dim);
         return;
     }
     uint32_t c = n->wired == K86_NET_UP ? lit : dim;
-    gfx_fill_rect(VS, VX(cx - 3), VY(cy - 8), 7, 5, c);         /* the boxes */
-    gfx_fill_rect(VS, VX(cx - 10), VY(cy + 3), 7, 5, c);
-    gfx_fill_rect(VS, VX(cx + 4), VY(cy + 3), 7, 5, c);
-    gfx_fill_rect(VS, VX(cx), VY(cy - 3), 1, 4, c);             /* the links */
-    gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 15, 1, c);
-    gfx_fill_rect(VS, VX(cx - 7), VY(cy + 1), 1, 2, c);
-    gfx_fill_rect(VS, VX(cx + 7), VY(cy + 1), 1, 2, c);
+    gfx_fill_rect(VS, VX(cx - B(3)), VY(cy - B(8)), B(7), B(5), c);         /* the boxes */
+    gfx_fill_rect(VS, VX(cx - B(10)), VY(cy + B(3)), B(7), B(5), c);
+    gfx_fill_rect(VS, VX(cx + B(4)), VY(cy + B(3)), B(7), B(5), c);
+    gfx_fill_rect(VS, VX(cx), VY(cy - B(3)), B(1), B(4), c);               /* the links */
+    gfx_fill_rect(VS, VX(cx - B(7)), VY(cy + B(1)), B(15), B(1), c);
+    gfx_fill_rect(VS, VX(cx - B(7)), VY(cy + B(1)), B(1), B(2), c);
+    gfx_fill_rect(VS, VX(cx + B(7)), VY(cy + B(1)), B(1), B(2), c);
 }
 
 /* A battery on its side, filled as far as it's full (red when nearly empty),
@@ -877,13 +884,13 @@ static void draw_net_icon(int cx, int cy, const struct k86_net *n, uint32_t bg)
 static void draw_battery(struct gfx_rect r, const struct k86_machine *m, uint32_t bg)
 {
     int x = r.x + 10, cy = r.y + r.h / 2, low = m->battery <= 10 && m->charging == K86_BATTERY_DISCHARGING;
-    uint32_t c = SHELL_FG, fill = low ? 0xff6b6b : SHELL_FG;
-    gfx_fill_round_rect(VS, VX(x), VY(cy - 6), 19, 12, 3, c);         /* the case */
-    gfx_fill_round_rect(VS, VX(x + 2), VY(cy - 4), 15, 8, 1, bg);
-    gfx_fill_rect(VS, VX(x + 19), VY(cy - 2), 2, 4, c);               /* the terminal */
-    int w = (m->battery * 13 + 50) / 100;
+    uint32_t c = bar_fg, fill = low ? 0xff6b6b : bar_fg;
+    gfx_fill_round_rect(VS, VX(x), VY(cy - B(6)), B(19), B(12), B(3), c);         /* the case */
+    gfx_fill_round_rect(VS, VX(x + B(2)), VY(cy - B(4)), B(15), B(8), B(1), bg);
+    gfx_fill_rect(VS, VX(x + B(19)), VY(cy - B(2)), B(2), B(4), c);               /* the terminal */
+    int w = (m->battery * B(13) + 50) / 100;
     if (w > 0)
-        gfx_fill_rect(VS, VX(x + 3), VY(cy - 3), w, 6, fill);
+        gfx_fill_rect(VS, VX(x + B(3)), VY(cy - B(3)), w, B(6), fill);
     if (m->charging == K86_BATTERY_CHARGING) {
         /* The bolt, outlined in the bar's colour so it shows over the fill. */
         static const char *const bolt[] = { "..##", ".##.", "####", ".##.", "##.." };
@@ -891,24 +898,16 @@ static void draw_battery(struct gfx_rect r, const struct k86_machine *m, uint32_
             for (int j = 0; j < 5; j++)
                 for (int i = 0; i < 4; i++)
                     if (bolt[j][i] == '#') {
-                        int bx = x + 8 + i, by = cy - 3 + j;
+                        int bx = x + B(8 + i), by = cy + B(j - 3);
                         if (pass == 0)
-                            gfx_fill_rect(VS, VX(bx - 1), VY(by - 1), 3, 3, bg);
+                            gfx_fill_rect(VS, VX(bx - B(1)), VY(by - B(1)), B(3), B(3), bg);
                         else
-                            gfx_fill_rect(VS, VX(bx), VY(by), 1, 1, c);
+                            dot(bx, by, c);
                     }
     }
     char text[8];
     battery_text(text);
-    text_draw(VS, VX(x + 27), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), text, TEXT_BOLD, SHELL_FG);
-}
-
-static void draw_power_icon(int cx, int cy, uint32_t c, uint32_t bg)
-{
-    gfx_fill_circle(VS, VX(cx), VY(cy + 1), 7, c);
-    gfx_fill_circle(VS, VX(cx), VY(cy + 1), 5, bg);
-    gfx_fill_rect(VS, VX(cx - 3), VY(cy - 7), 7, 5, bg);      /* the gap at the top */
-    gfx_fill_rect(VS, VX(cx - 1), VY(cy - 8), 2, 8, c);       /* the stroke */
+    text_draw(VS, VX(x + B(27)), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), text, TEXT_BOLD, bar_fg);
 }
 
 static uint32_t hit_bg(struct hit h, uint32_t base)
@@ -958,42 +957,17 @@ static void log_clock(void)
     kprintf("shell: clock %s\n", text);
 }
 
-/* The clock's text and where it goes: centred, but never under a maximised
- * window's buttons in the top bar (Settings' tabs): moved right of them, and
- * only the time if even that doesn't fit. */
+/* The status bar's clock: the time, on the left (the date is on the home
+ * screen and the lock screen). */
 static void clock_place(char text[24], int *x)
 {
     clock_text(text);
-    int w = text_width(text, TEXT_BOLD);
-    *x = (S()->w - w) / 2;
-    struct wm_window *mw = merged();
-    if (!mw)
-        return;
-    struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
-    wbar_layout(mw, btn, ctl);
-    int left_end = 0, right_start = ctl[0].x;
-    for (int i = 0; i < WM_MAX_BUTTONS; i++) {
-        if (!btn[i].w)
-            continue;
-        if (btn[i].x < S()->w / 2 && btn[i].x + btn[i].w > left_end)
-            left_end = btn[i].x + btn[i].w;
-        else if (btn[i].x >= S()->w / 2 && btn[i].x < right_start)
-            right_start = btn[i].x;
-    }
-    if (*x < left_end + 16)
-        *x = left_end + 16;
-    if (*x + w > right_start - 16) {
-        const char *time = text;            /* the time follows the date's two spaces */
-        while (*time && !(time[0] == ' ' && time[1] == ' '))
-            time++;
-        if (*time) {
-            memmove(text, time + 2, strlen(time + 2) + 1);
-            w = text_width(text, TEXT_BOLD);
-        }
-        *x = (S()->w - w) / 2 < left_end + 16 ? left_end + 16 : (S()->w - w) / 2;
-        if (*x + w > right_start - 8)
-            text[0] = '\0';                /* no room at all: the buttons come first */
-    }
+    const char *time = text;                /* the time follows the date's two spaces */
+    while (*time && !(time[0] == ' ' && time[1] == ' '))
+        time++;
+    if (*time)
+        memmove(text, time + 2, strlen(time + 2) + 1);
+    *x = T()->margin;
 }
 
 static struct gfx_rect clock_rect(void)
@@ -1001,10 +975,8 @@ static struct gfx_rect clock_rect(void)
     char text[24];
     int x;
     clock_place(text, &x);
-    int w = text_width(text, TEXT_BOLD);
-    int cx = (S()->w - 220) / 2;            /* covers the centred one too: it may have moved */
-    int l = x < cx ? x : cx, r = x + w > cx + 220 ? x + w : cx + 220;
-    return (struct gfx_rect){ l - 4, 0, r - l + 8, T()->topbar_h };
+    (void)text;
+    return (struct gfx_rect){ 0, 0, x + text_width("00:00", TEXT_BOLD) + 16, T()->topbar_h };
 }
 
 /* The name of the app in front, after Home. */
@@ -1015,68 +987,38 @@ static const char *focused_name(void)
     return a ? a->name : w ? wm_title(w) : "";
 }
 
+/* The status bar: clear over the home screen (a soft shade keeps it
+ * readable on any wallpaper), the app's header bar colour over an app, so
+ * the two read as one. */
 static void draw_topbar(void)
 {
     const struct theme *t = T();
     struct gfx_rect bar = { 0, 0, S()->w, t->topbar_h };
     if (!visible(bar))
         return;
-    gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, t->topbar_bg);
-    int ty = (t->topbar_h - text_height(TEXT_BOLD)) / 2;
-    const char *name = focused_name();
-    if (name[0])
-        text_draw(VS, VX(t->spacing + BAR_BUTTON_W + t->spacing * 2), VY(ty), name, TEXT_BOLD, SHELL_FG);
-    struct wm_window *mw = merged();
-    if (mw) {                               /* its header: buttons and controls */
-        struct gfx_rect btn[WM_MAX_BUTTONS], ctl[3];
-        wbar_layout(mw, btn, ctl);
-        for (int i = 0; i < WM_MAX_BUTTONS; i++) {
-            enum wm_side side;
-            enum wm_icon icon;
-            const char *label;
-            int sel;
-            if (wm_button_info(mw, i, &side, &icon, &label, &sel))
-                continue;
-            struct gfx_rect b = btn[i];
-            uint32_t base = sel ? t->button_bg : t->topbar_bg;
-            uint32_t bbg = hit_bg((struct hit){ H_WBTN, i }, base);
-            if (bbg != t->topbar_bg)
-                gfx_fill_round_rect(VS, VX(b.x), VY(b.y), b.w, b.h, t->radius, bbg);
-            if (icon != WM_ICON_NONE)
-                wm_draw_header_icon(VS, icon, VX(b.x + b.w / 2), VY(b.y + b.h / 2), SHELL_FG);
-            else
-                text_draw(VS, VX(b.x + (b.w - text_width(label, TEXT_BOLD)) / 2), VY(ty), label, TEXT_BOLD, SHELL_FG);
-        }
-        for (int k = 0; k < 3; k++) {
-            uint32_t cbg = hit_bg((struct hit){ H_WCTL, k }, t->button_bg);
-            wm_draw_control(VS, k, 1, VX(ctl[k].x + WCTL_SIZE / 2), VY(ctl[k].y + WCTL_SIZE / 2), cbg, SHELL_FG);
-        }
+    uint32_t bg;
+    if (home_shown()) {
+        gfx_darken(VS, VX(0), VY(0), bar.w, bar.h, 60);
+        bg = 0x202020;                      /* about what's under it, for the icons' dim parts */
+        bar_fg = SHELL_FG;
+    } else {
+        bg = t->headerbar_bg;
+        gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
+        bar_fg = t->fg;
     }
+    int ty = (t->topbar_h - text_height(TEXT_BOLD)) / 2;
     char text[24];
     int clock_x;
     clock_place(text, &clock_x);
     if (text[0])
-        text_draw(VS, VX(clock_x), VY(ty), text, TEXT_BOLD, SHELL_FG);
-    struct gfx_rect r = home_rect();
-    uint32_t bg = hit_bg((struct hit){ H_HOME, 0 }, t->topbar_bg);
-    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
-    draw_home_icon(r.x + r.w / 2, r.y + r.h / 2, SHELL_FG);
-    r = power_rect();
-    bg = menu_open ? gfx_mix(WHITE, t->topbar_bg, A_HOVER) : hit_bg((struct hit){ H_POWER, 0 }, t->topbar_bg);
-    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
-    draw_power_icon(r.x + r.w / 2, r.y + r.h / 2, SHELL_FG, bg);
+        text_draw(VS, VX(clock_x), VY(ty), text, TEXT_BOLD, bar_fg);
     if (net_present()) {
-        r = net_rect();
-        bg = hit_bg((struct hit){ H_NET, 0 }, t->topbar_bg);
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+        struct gfx_rect r = net_rect();
         draw_net_icon(r.x + r.w / 2, r.y + r.h / 2, &net_shown, bg);
     }
-    if (battery_present()) {
-        r = battery_rect();
-        bg = hit_bg((struct hit){ H_BATTERY, 0 }, t->topbar_bg);
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
-        draw_battery(r, &machine_shown, bg);
-    }
+    if (battery_present())
+        draw_battery(battery_rect(), &machine_shown, bg);
+    bar_fg = SHELL_FG;
 }
 
 static void draw_menu(void)

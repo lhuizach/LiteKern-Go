@@ -63,7 +63,7 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       app (Back in 2.6, the switcher in 2.10)
 - [x] 2.4 Home screen: icon pages and All apps, no dock. Not yet: dragging icons
       around, sharper icons (48 px ones scaled up), portrait wallpapers
-- [ ] 2.5 Status bar
+- [x] 2.5 Status bar. Not yet: notification icons (with 2.9)
 - [ ] 2.6 Back event in the app API, with the default behaviour in the shell
 - [ ] 2.7 Touch rules: tap, long press, drag, momentum scrolling
 - [ ] 2.8 On-screen keyboard
