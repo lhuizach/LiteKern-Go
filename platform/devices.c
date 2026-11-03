@@ -225,13 +225,14 @@ static const driver_t mouse_driver = {
  *
  * LiteKern Go: the phone's keys, and the PC keys that stand in for them in
  * the VM (UI-PLAN.md): Home -> Home, F1 -> Recent apps, F12 -> Power,
- * Page Up/Down -> volume. Back is Esc on both. Unverified: the codes the A5
+ * Page Up/Down -> volume, Esc -> Back. Unverified: the codes the A5
  * really sends (expected KEY_BACK, KEY_HOMEPAGE, KEY_APPSELECT or KEY_MENU);
  * check with evtest on the phone (ROADMAP.md, phase 5). */
 uint16_t plat_evdev_key(unsigned code)
 {
     switch (code) {
-    case 158: return KEY_ESC;               /* KEY_BACK */
+    case 158:                               /* KEY_BACK */
+    case 1:   return KEY_PHONE_BACK;        /* the VM: Esc */
     case 172:                               /* KEY_HOMEPAGE */
     case 102: return KEY_PHONE_HOME;        /* the VM: Home */
     case 580:                               /* KEY_APPSELECT */

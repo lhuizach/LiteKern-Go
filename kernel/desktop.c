@@ -7,6 +7,7 @@
 #include "kernel/driver.h"
 #include "kernel/icon.h"
 #include "kernel/input.h"
+#include "kernel/keymap.h"
 #include "kernel/lkx.h"
 #include "kernel/pmm.h"
 #include "kernel/power.h"
@@ -1855,6 +1856,27 @@ static int phone_key(const struct key_event *k)
     if (!k->pressed)
         return 1;
     switch (k->key) {
+    case KEY_PHONE_BACK: {
+        /* The power menu first; on the home screen, back to its first page;
+         * in an app, to the app if it has something to close, else it
+         * closes (UI-PLAN.md). */
+        struct wm_window *w = wm_top_visible();
+        if (menu_open) {
+            menu_set(0);
+        } else if (!w) {
+            turn_to(0, 0);
+        } else if (wm_back_wanted(w)) {
+            kprintf("shell: Back (to %s)\n", name_of(w));
+            struct key_event esc = keymap_event(KEY_ESC, 1);
+            wm_input_key(&esc);
+            esc = keymap_event(KEY_ESC, 0);
+            wm_input_key(&esc);
+        } else {
+            kprintf("shell: Back closes %s\n", name_of(w));
+            wm_request_close(w);
+        }
+        break;
+    }
     case KEY_PHONE_HOME:
         kprintf("shell: Home\n");
         menu_set(0);

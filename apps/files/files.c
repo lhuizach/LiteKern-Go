@@ -794,8 +794,8 @@ static void key(const struct key_event *k)
         open_dialog(RENAME);
     else if (k->key == KEY_DELETE)
         open_dialog(DELETE);
-    else if (k->key == KEY_BACKSPACE || (k->key == KEY_LEFT && (k->mods & MOD_ALT)))
-        go_back();
+    else if (k->key == KEY_BACKSPACE || k->key == KEY_ESC || (k->key == KEY_LEFT && (k->mods & MOD_ALT)))
+        go_back();                                          /* Esc: the phone's Back */
     else if (wg_list_key(&list, k) == WG_LIST_ACTIVATE)
         activate(list.selected);
     if (dialog_for == NONE)
@@ -879,6 +879,9 @@ int main(void)
 
     for (;;) {
         struct k86_event ev;
+        /* The phone's Back: a viewer or dialog to close, or a folder to go
+         * up from; at the top, Back closes Files. */
+        k86_back_wanted(viewing || dialog_for != NONE || (vol >= 0 && (depth > 0 || nvolumes > 1)));
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {

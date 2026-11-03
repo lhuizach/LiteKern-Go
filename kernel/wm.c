@@ -38,6 +38,7 @@ struct wm_window {
     struct gfx_rect r;          /* on screen */
     struct gfx_rect normal;     /* restored size and place */
     int maximised, minimised;
+    int back_wanted;            /* SYS_WINDOW_BACK */
     int hidden;                 /* left out while an animation draws it instead */
     int min_w, min_h;
     uint32_t *buf;              /* the content's pixels: capacity buf_w x buf_h */
@@ -480,6 +481,17 @@ void wm_clear_buttons(struct wm_window *w)
         press_btn = NONE;
     if (!w->minimised)
         damage_header(w);
+}
+
+void wm_set_back_wanted(struct wm_window *w, int wanted)
+{
+    if (w)
+        w->back_wanted = wanted;
+}
+
+int wm_back_wanted(const struct wm_window *w)
+{
+    return w && w->back_wanted;
 }
 
 void wm_set_owner(struct wm_window *w, const void *owner)

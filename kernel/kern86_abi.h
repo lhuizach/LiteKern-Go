@@ -251,6 +251,10 @@ struct k86_dirent {
 #define SYS_BRIGHTNESS_SET  35  /* ebx: the screen's brightness, 5-100 (%). Saved */
 #define SYS_TIMEZONE_SET    36  /* ebx: the time zone, an index in kernel/timezones.h. Saved */
 #define SYS_TOUCHPAD_SET    37  /* ebx: the touchpad's speed, 0-100 (50: the usual). Saved */
+/* LiteKern Go: the phone's Back key (UI-PLAN.md). ebx: 1 = the app has something
+ * for Back to close (a dialog, a page under its first, a folder's parent): Back
+ * then comes to it as an Esc key press. 0 (how apps start): Back closes the app. */
+#define SYS_WINDOW_BACK     38
 
 #define K86_BATTERY_DISCHARGING 0
 #define K86_BATTERY_CHARGING    1

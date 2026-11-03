@@ -602,6 +602,11 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
     case SYS_BRIGHTNESS_SET: return machine_set_brightness((int)a1);
     case SYS_TIMEZONE_SET:   return machine_set_timezone((int)a1);
     case SYS_TOUCHPAD_SET:   return machine_set_touchpad((int)a1);
+    case SYS_WINDOW_BACK:
+        if (!lkx_window())
+            return -EINVAL;
+        wm_set_back_wanted(lkx_window(), a1 != 0);
+        return 0;
     default:                 return -ENOSYS;
     }
 }

@@ -251,6 +251,18 @@ static inline int k86_brightness_set(int percent)
     return k86_call(SYS_BRIGHTNESS_SET, (uintptr_t)percent, 0, 0, 0);
 }
 
+/* LiteKern Go's Back key: wanted = 1 while the app has something for Back to
+ * close (it then gets Back as an Esc press), 0 when Back should close the app.
+ * Only calls the shell when it changes, so it can be called before each wait. */
+static inline int k86_back_wanted(int wanted)
+{
+    static int was = 0;                     /* apps start with Back closing them */
+    if (!!wanted == was)
+        return 0;
+    was = !!wanted;
+    return k86_call(SYS_WINDOW_BACK, (uintptr_t)was, 0, 0, 0);
+}
+
 /* speed: 0-100, 50 the usual. */
 static inline int k86_touchpad_set(int speed)
 {

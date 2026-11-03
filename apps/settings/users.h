@@ -10,5 +10,6 @@ void users_page_draw(void);
 void users_page_layout(void);                       /* the window was resized */
 void users_page_pointer(const struct k86_event *ev);
 void users_page_key(const struct key_event *k);
+int users_page_busy(void);               /* a dialog open: Back cancels it */
 
 #endif

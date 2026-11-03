@@ -64,7 +64,9 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 - [x] 2.4 Home screen: icon pages and All apps, no dock. Not yet: dragging icons
       around, sharper icons (48 px ones scaled up), portrait wallpapers
 - [x] 2.5 Status bar. Not yet: notification icons (with 2.9)
-- [ ] 2.6 Back event in the app API, with the default behaviour in the shell
+- [x] 2.6 Back: apps say when they have something for it (SYS_WINDOW_BACK), else it
+      closes them. Files, Blocksmith and Settings' Users dialogs use it. Not yet: a
+      single tap opens a folder in Files (it wants a double tap or Enter)
 - [ ] 2.7 Touch rules: tap, long press, drag, momentum scrolling
 - [ ] 2.8 On-screen keyboard
 - [ ] 2.9 Quick settings panel and notifications

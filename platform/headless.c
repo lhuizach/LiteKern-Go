@@ -51,7 +51,8 @@ static const struct { const char *name; uint16_t key; } names[] = {
     { "pgup", KEY_PAGEUP }, { "pgdn", KEY_PAGEDOWN }, { "insert", KEY_INSERT },
     { "delete", KEY_DELETE }, { "meta_l", KEY_LSUPER }, { "meta_r", KEY_RSUPER },
     { "kp_enter", KEY_EXTENDED | 0x1c },
-    /* LiteKern Go: the phone's keys (Back is "esc") */
+    /* LiteKern Go: the phone's keys ("esc" stays the PC's Esc) */
+    { "phone_back", KEY_PHONE_BACK },
     { "phone_home", KEY_PHONE_HOME }, { "phone_recents", KEY_PHONE_RECENTS },
     { "phone_power", KEY_PHONE_POWER }, { "vol_up", KEY_VOLUME_UP }, { "vol_down", KEY_VOLUME_DOWN },
 };

@@ -377,6 +377,11 @@ void users_page_pointer(const struct k86_event *ev)
         users_page_draw();
 }
 
+int users_page_busy(void)
+{
+    return flow.active;
+}
+
 void users_page_key(const struct key_event *k)
 {
     if (flow.active) {

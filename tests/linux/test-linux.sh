@@ -202,13 +202,25 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^screen: has ffffff in 330,110,700,230: yes$' \
     '!crashed|stopped|PANIC'
 
-# Files lists the disk. (Closing it waits for Back, phase 2.6: until then
-# apps have no way to close.)
-path; open_app 0
+# Files lists the disk; Documents (its first row, 300,261: tapped, then Enter) opens.
+# The phone's Back goes up to the disk first (Files asked for it), then closes Files.
+path; open_app 0; go 300 261; click; add sleep:0.3 ret sleep:1 phone_back sleep:1 phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
-check "Files lists the disk (its calls through kernel/sys_app.c)" \
+check "Files lists the disk; Back goes up a folder, then closes Files" \
     '^user: files: open Boot disk \(LITEKERNX\)$' \
+    '^user: files: open folder Documents$' \
+    '^shell: Back \(to Files\)$' \
+    '^shell: Back closes Files$' \
+    '^lkx: Files exited \(0\)$' \
     '!crashed|stopped|PANIC'
+
+# Back closes an app with nothing to go back to.
+path; open_app 1; add phone_back sleep:1.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "Back closes Calculator" \
+    '^shell: Back closes Calculator$' \
+    '^lkx: Calculator exited \(0\)$' \
+    '!shell: Back \(to'
 
 # Settings (944x552 at 40,39; content from 41,86): the Light card, saved;
 # after a restart it's still light. Then Users (header 196,63), Add User
@@ -272,14 +284,14 @@ check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
     '!blocksmith: error|crashed'
 
-# Stability: Files opened and sent home 15 times (closing waits for 2.6).
+# Stability: Files opened and closed with Back 15 times; each must end cleanly.
 path; add gap:0.1
-for i in $(seq 15); do tap_app 0; add phone_home sleep:0.6; done
+for i in $(seq 15); do tap_app 0; add phone_back sleep:0.6; done
 run $SHELL_BIN build-linux/test/disk.img "$P"
-n=$(grep -c '^desktop: minimise Files$' <<<"$out")
-out+=$'\n'"stress: $n of 15 home"
-check "Files opened and sent home 15 times" \
-    '^stress: 15 of 15 home$' \
+n=$(grep -c '^lkx: Files exited (0)$' <<<"$out")
+out+=$'\n'"stress: $n of 15 ended"
+check "Files opened and closed with Back 15 times, ending cleanly each time" \
+    '^stress: 15 of 15 ended$' \
     '!crashed|stopped|PANIC'
 
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to

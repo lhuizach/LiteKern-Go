@@ -461,6 +461,7 @@ int main(void)
 
     for (;;) {
         struct k86_event ev;
+        k86_back_wanted(page == 1 && users_page_busy());     /* the phone's Back: a dialog first */
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {
