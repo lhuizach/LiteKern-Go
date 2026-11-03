@@ -90,20 +90,27 @@ struct wg_list {
     void *ctx;
     uint32_t under;
     int dirty;
-    int last_click_row;
+    int last_click_row;         /* LiteKern Go: the row pressed, until the finger lifts (-1: none) */
     uint32_t last_click_ms;
+    int drag_y0, drag_top0;     /* where the finger went down, and the list's top then */
+    int dragging;               /* it moved: the list scrolls with it */
+    int sel_before;             /* the selection before the press (put back if it's a drag) */
 };
 
 void wg_list_draw(struct gfx_surface *s, struct wg_list *l);
 int wg_list_rows_shown(const struct wg_list *l);
-/* A click selects (CHANGED); a second click on the same row within
- * WG_DOUBLE_CLICK_MS activates it. A click on the scrollbar pages. */
+/* LiteKern Go, for touch (UI-PLAN.md): pressing a row selects it (CHANGED,
+ * the press's feedback); lifting the finger on that row activates it, so a
+ * single tap opens. A finger that moves WG_SWIPE_SLOP px instead drags the
+ * list, a row at a time, and the selection goes back to what it was. A
+ * press on the scrollbar pages. */
+#define WG_SWIPE_SLOP 24
 enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *p);
 /* Up/Down/Home/End/PgUp/PgDn move the selection; Enter activates. */
 enum wg_list_result wg_list_key(struct wg_list *l, const struct key_event *k);
 /* The wheel (K86_EVENT_SCROLL) at x, y: WG_SCROLL_ROWS rows a notch if over
  * the list. 1 if it moved (dirty). */
-#define WG_SCROLL_ROWS 3
+#define WG_SCROLL_ROWS 1             /* LiteKern Go: rows are 88 px tall */
 int wg_list_scroll(struct wg_list *l, int x, int y, int notches);
 /* Change the row count (keeping the selection in range) / select a row and
  * scroll it into view. */

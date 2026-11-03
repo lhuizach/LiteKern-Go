@@ -67,7 +67,9 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 - [x] 2.6 Back: apps say when they have something for it (SYS_WINDOW_BACK), else it
       closes them. Files, Blocksmith and Settings' Users dialogs use it. Not yet: a
       single tap opens a folder in Files (it wants a double tap or Enter)
-- [ ] 2.7 Touch rules: tap, long press, drag, momentum scrolling
+- [x] 2.7 Touch rules, part 1: lists open on a single tap (on lift) and scroll
+      when dragged, a row at a time. Not yet: momentum after a flick, smooth
+      (pixel) scrolling, long press (nothing uses it yet), scrolling outside lists
 - [ ] 2.8 On-screen keyboard
 - [ ] 2.9 Quick settings panel and notifications
 - [ ] 2.10 App switcher

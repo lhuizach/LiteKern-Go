@@ -308,6 +308,34 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
         l->hover = row;
         l->dirty = 1;
     }
+    /* A press under way: a drag scrolls, a lift on the same row activates. */
+    if (!p->down && (l->dragging || l->last_click_row != -1)) {
+        int dy = p->y - l->drag_y0;
+        if (p->up || !p->held) {
+            int tapped = !l->dragging && row == l->last_click_row;
+            l->dragging = 0;
+            l->last_click_row = -1;
+            return tapped ? WG_LIST_ACTIVATE : WG_LIST_NONE;
+        }
+        if (!l->dragging && (dy > WG_SWIPE_SLOP || dy < -WG_SWIPE_SLOP)) {
+            l->dragging = 1;
+            l->last_click_row = -1;
+            if (l->selected != l->sel_before) {
+                l->selected = l->sel_before;
+                l->dirty = 1;
+            }
+        }
+        if (l->dragging) {
+            int top = l->drag_top0 - dy / t->row_h;
+            top = top > max_top(l) ? max_top(l) : top < 0 ? 0 : top;
+            if (top != l->top) {
+                l->top = top;
+                l->hover = -1;
+                l->dirty = 1;
+            }
+        }
+        return WG_LIST_NONE;
+    }
     if (!p->down || !inside(card, p->x, p->y))
         return WG_LIST_NONE;
 
@@ -322,14 +350,20 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
         l->dirty = 1;
         return l->top != before ? WG_LIST_CHANGED : WG_LIST_NONE;
     }
-    if (row < 0)
+    l->drag_y0 = p->y;
+    l->drag_top0 = l->top;
+    l->dragging = 0;
+    l->sel_before = l->selected;
+    if (row < 0) {
+        l->dragging = 0;
+        l->last_click_row = -2;                 /* a press on empty space: it can still drag */
         return WG_LIST_NONE;
-    int twice = row == l->last_click_row && p->time_ms - l->last_click_ms <= WG_DOUBLE_CLICK_MS;
-    l->last_click_row = twice ? -1 : row;       /* a third click starts over */
+    }
+    l->last_click_row = row;
     l->last_click_ms = p->time_ms;
     if (row != l->selected)
         wg_list_select(l, row);
-    return twice ? WG_LIST_ACTIVATE : WG_LIST_CHANGED;
+    return WG_LIST_CHANGED;
 }
 
 enum wg_list_result wg_list_key(struct wg_list *l, const struct key_event *k)

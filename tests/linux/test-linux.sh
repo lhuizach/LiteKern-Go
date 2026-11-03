@@ -202,9 +202,9 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^screen: has ffffff in 330,110,700,230: yes$' \
     '!crashed|stopped|PANIC'
 
-# Files lists the disk; Documents (its first row, 300,261: tapped, then Enter) opens.
+# Files lists the disk; a single tap on Documents (its first row, 300,261) opens it.
 # The phone's Back goes up to the disk first (Files asked for it), then closes Files.
-path; open_app 0; go 300 261; click; add sleep:0.3 ret sleep:1 phone_back sleep:1 phone_back sleep:1.5
+path; open_app 0; go 300 261; click; add sleep:1 phone_back sleep:1 phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Files lists the disk; Back goes up a folder, then closes Files" \
     '^user: files: open Boot disk \(LITEKERNX\)$' \
