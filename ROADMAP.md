@@ -86,7 +86,7 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       battery while charging, the screen going off on Power (needs the phone)
 - [x] 2.12 Power menu (a sheet in the middle: Power off, Restart, Lock), volume pop-up
       (right edge, 2 s, held keeps changing), screenshots (Power + Volume Down, PNG in
-      Pict/Screenshots, a toast). Not yet: real sound (the level is only kept), dragging
+      Pictures/Screenshots, a toast). Not yet: real sound (the level is only kept), dragging
       the volume slider, screenshots of the lock screen, keeping the volume across restarts
 
 **Done when:** in the VM, the shell can be used with only the mouse (as a
