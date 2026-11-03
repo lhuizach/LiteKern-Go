@@ -612,6 +612,16 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
             return -EINVAL;
         wm_set_keyboard_wanted(lkx_window(), a1 != 0);
         return 0;
+    case SYS_NOTIFY: {
+        char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];
+        int err;
+        if (!lkx_window())
+            return -EINVAL;
+        if ((err = user_string(title, a1, sizeof(title))) || (err = user_string(body, a2, sizeof(body))))
+            return err;
+        desktop_notify(wm_owner(lkx_window()), title, body);
+        return 0;
+    }
     default:                 return -ENOSYS;
     }
 }

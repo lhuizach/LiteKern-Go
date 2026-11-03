@@ -258,6 +258,13 @@ struct k86_dirent {
 /* LiteKern Go: ebx: 1 while the app has a text field open: the on-screen keyboard
  * comes up (kernel/osk.h) and the window shrinks above it (K86_EVENT_RESIZE). */
 #define SYS_WINDOW_KEYBOARD 39
+/* LiteKern Go: ebx: a title, ecx: a line of text (both NUL-terminated, cut to
+ * K86_NOTE_TITLE / K86_NOTE_BODY). A notification from the app, in the quick
+ * settings panel and the status bar until dismissed; tapping it opens the app.
+ * Another with the same title replaces it. */
+#define SYS_NOTIFY          40
+#define K86_NOTE_TITLE      48
+#define K86_NOTE_BODY       96
 
 #define K86_BATTERY_DISCHARGING 0
 #define K86_BATTERY_CHARGING    1

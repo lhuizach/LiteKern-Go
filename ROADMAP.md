@@ -63,7 +63,7 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       app (Back in 2.6, the switcher in 2.10)
 - [x] 2.4 Home screen: icon pages and All apps, no dock. Not yet: dragging icons
       around, sharper icons (48 px ones scaled up), portrait wallpapers
-- [x] 2.5 Status bar. Not yet: notification icons (with 2.9)
+- [x] 2.5 Status bar
 - [x] 2.6 Back: apps say when they have something for it (SYS_WINDOW_BACK), else it
       closes them. Files, Blocksmith and Settings' Users dialogs use it. Not yet: a
       single tap opens a folder in Files (it wants a double tap or Enter)
@@ -73,7 +73,11 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 - [x] 2.8 On-screen keyboard: letters, 123 page, Shift and caps lock, Backspace
       repeat, key preview; the app shrinks above it. Not yet: auto-capitals, a number
       pad for number fields, the lock screen's password field, a slide-in animation
-- [ ] 2.9 Quick settings panel and notifications
+- [x] 2.9 Quick settings and notifications: pulled down from the status bar (or Home
+      held); Wi-Fi, Dark mode, Do not disturb and Lock tiles, brightness, Settings;
+      notifications from apps (SYS_NOTIFY), in the panel and the status bar. Not yet:
+      the Wi-Fi tile tried on real Wi-Fi, volume, the brightness slider on a screen
+      with a backlight
 - [ ] 2.10 App switcher
 - [ ] 2.11 Lock screen: swipe to unlock, PIN pad
 - [ ] 2.12 Power menu, volume pop-up, screenshots

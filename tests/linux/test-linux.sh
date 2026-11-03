@@ -13,7 +13,7 @@ failures=0
 W=720 H=1280
 # The shell and the apps, the tests' misbehaving ones too; their disk image
 # (the kernel build's, with them in the ramdisk).
-TEST_APPS="tests/apps/crash tests/apps/badcalls tests/apps/hang"
+TEST_APPS="tests/apps/crash tests/apps/badcalls tests/apps/hang tests/apps/notify"
 make -s -f platform/Makefile EXTRA_APPS="$TEST_APPS" >/dev/null || exit 1
 rm -f build/test-apps/litekernx.img build/test-apps/stage1.bin     # FAT_MB isn't a make dependency
 make -s BUILD=build/test-apps FAT_MB=64 "EXTRA_APPS=$TEST_APPS" build/test-apps/litekernx.img >/dev/null || exit 1
@@ -343,6 +343,27 @@ check "apps: a crash, bad calls and a hang each end only the app" \
     '^lkx: Hang stopped responding and was stopped$' \
     '^user: files: open Boot disk' \
     '!still running|PANIC|Segmentation'
+
+# Notifications and quick settings (the tests' image): Notify (the 8th icon)
+# posts two; the status bar is pulled down (from 360,20 to 920): the panel,
+# with them newest first. A tap on the first ("Again", 360,526) opens its app
+# and dismisses it. Pulled again: Dark mode (276,236) and Do not disturb
+# (444,236) tiles, then Back closes it. Home held opens it too.
+path; tap_app 7; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
+go 360 526; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 276 236; click; add sleep:0.5
+go 444 236; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
+cp build/test-apps/litekernx.img build-linux/test/qs.img
+run $SHELL_BIN build-linux/test/qs.img "$P"
+check "notifications: posted, in the pulled-down panel, a tap opens the app; the panel's tiles; Back, Home held" \
+    '^notify: Notify: Hello$' \
+    '^notify: Notify: Again$' \
+    '^qs: open$' \
+    '^notify: dismissed Again$' \
+    '^qs: closed$' \
+    '^qs: light style$' \
+    '^qs: do not disturb on$' \
+    '^shell: quick settings \(Home held\)$' \
+    '!crashed|PANIC'
 
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do

@@ -274,6 +274,12 @@ static inline int k86_keyboard_wanted(int wanted)
     return k86_call(SYS_WINDOW_KEYBOARD, (uintptr_t)was, 0, 0, 0);
 }
 
+/* LiteKern Go: a notification (SYS_NOTIFY). */
+static inline int k86_notify(const char *title, const char *body)
+{
+    return k86_call(SYS_NOTIFY, (uintptr_t)title, (uintptr_t)body, 0, 0);
+}
+
 /* speed: 0-100, 50 the usual. */
 static inline int k86_touchpad_set(int speed)
 {

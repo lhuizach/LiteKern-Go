@@ -15,5 +15,7 @@ int net_scan(struct k86_wifi *out, int max);
 /* Join a Wi-Fi network (password "" for an open one), remembering it. 0 or -errno. */
 int net_join(const char *ssid, const char *password);
 int net_forget(const char *ssid);
+/* LiteKern Go's quick settings: Wi-Fi's radio on or off (rfkill). 0 or -errno. */
+int net_wifi_set(int on);
 
 #endif

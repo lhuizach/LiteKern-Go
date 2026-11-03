@@ -27,3 +27,9 @@ int net_forget(const char *ssid)
     (void)ssid;
     return -ENODEV;
 }
+
+int net_wifi_set(int on)
+{
+    (void)on;
+    return -ENODEV;
+}

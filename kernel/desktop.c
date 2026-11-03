@@ -148,6 +148,9 @@ static void damage_all(void)
 }
 
 static void draw_home(void);
+static void draw_qs(void);
+static int qs_shown(void);
+static void draw_note_icons(int x, int cy, uint32_t bg);
 static int home_shown(void);
 static void draw_topbar(void);
 static void draw_menu(void);
@@ -166,6 +169,7 @@ static void compose(struct gfx_rect r)
     if (started && !home_shown())
         osk_draw(VS, v.ox, v.oy);
     if (started) {
+        draw_qs();                      /* under the status bar, which stays on top */
         draw_topbar();
         if (menu_open)
             draw_menu();
@@ -1001,7 +1005,11 @@ static void draw_topbar(void)
     if (!visible(bar))
         return;
     uint32_t bg;
-    if (home_shown()) {
+    if (qs_shown()) {                       /* quick settings: the bar is the panel's top */
+        bg = t->dialog_bg;
+        gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
+        bar_fg = t->fg;
+    } else if (home_shown()) {
         gfx_darken(VS, VX(0), VY(0), bar.w, bar.h, 60);
         bg = 0x202020;                      /* about what's under it, for the icons' dim parts */
         bar_fg = SHELL_FG;
@@ -1016,6 +1024,7 @@ static void draw_topbar(void)
     clock_place(text, &clock_x);
     if (text[0])
         text_draw(VS, VX(clock_x), VY(ty), text, TEXT_BOLD, bar_fg);
+    draw_note_icons(clock_x + text_width(text, TEXT_BOLD) + 20, t->topbar_h / 2, bg);
     if (net_present()) {
         struct gfx_rect r = net_rect();
         draw_net_icon(r.x + r.w / 2, r.y + r.h / 2, &net_shown, bg);
@@ -1706,6 +1715,486 @@ static void track_peek(int x, int y)
     }
 }
 
+/* --- quick settings and notifications (LiteKern Go, UI-PLAN.md) -------------------------
+ *
+ * Pulled down from the status bar (or a tap on it, or Home held), over
+ * whatever is on screen, which dims: the date and a Settings button; tiles
+ * for Wi-Fi, Dark mode, Do not disturb and Lock; the brightness; then the
+ * apps' notifications (SYS_NOTIFY), newest first: a tap opens the app, a
+ * swipe sideways dismisses one, Clear all the lot. Back, Home, a tap on the
+ * dimmed part or a swipe up closes it. */
+
+#define QS_TILE 120             /* a round tile */
+#define QS_HEAD 120             /* the date and Settings */
+#define QS_TILES_H (QS_TILE + 64)
+#define QS_SLIDER_H 110
+#define NOTE_MAX 8
+#define NOTE_H 112
+#define NOTE_GAP 12
+#define QS_CLEAR_H 96
+#define A_QS_DIM 140            /* black over what's behind the panel */
+
+struct note {
+    const struct app *app;
+    char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];
+};
+static struct note notes[NOTE_MAX];     /* newest first */
+static int nnotes;
+static int dnd;                         /* Do not disturb: kept, but not in the status bar */
+
+static struct spring qs;                /* how far down the panel is: FX(px), 0 up */
+static int qs_moving;
+static uint32_t last_qs_tick;
+/* A finger on it: where it went down, what it's doing. */
+static int qs_x0, qs_y0, qs_from, qs_finger;
+enum { QF_NONE, QF_PULL, QF_PANEL, QF_SLIDER, QF_NOTE, QF_DIM };
+static int qs_note = -1, qs_note_dx;
+
+enum { T_WIFI, T_DARK, T_DND, T_LOCK, QS_NTILES };
+
+static int qs_h(void)
+{
+    int list = nnotes ? nnotes * (NOTE_H + NOTE_GAP) + QS_CLEAR_H : 90;
+    return QS_HEAD + QS_TILES_H + QS_SLIDER_H + list + T()->margin;
+}
+
+static int qs_shown(void) { return qs.x > 0 || qs.t > 0; }
+static int qs_top(void) { return T()->topbar_h - qs_h() + qs.x / 256; }
+
+static struct gfx_rect qs_rect(void) { return (struct gfx_rect){ 0, qs_top(), S()->w, qs_h() }; }
+
+static struct gfx_rect qs_gear_rect(void)
+{
+    return (struct gfx_rect){ S()->w - T()->margin - 88, qs_top() + 16, 88, 88 };
+}
+
+static struct gfx_rect qs_tile_rect(int i)
+{
+    int cell = (S()->w - 2 * T()->margin) / QS_NTILES;
+    return (struct gfx_rect){ T()->margin + i * cell + (cell - QS_TILE) / 2, qs_top() + QS_HEAD, QS_TILE, QS_TILE };
+}
+
+static struct gfx_rect qs_slider_rect(void)     /* the track, with room to grab it */
+{
+    int m = T()->margin;
+    return (struct gfx_rect){ m + 72, qs_top() + QS_HEAD + QS_TILES_H + 20, S()->w - 2 * m - 96, 72 };
+}
+
+static struct gfx_rect note_rect(int k)
+{
+    int y = qs_top() + QS_HEAD + QS_TILES_H + QS_SLIDER_H + k * (NOTE_H + NOTE_GAP);
+    return (struct gfx_rect){ T()->margin, y, S()->w - 2 * T()->margin, NOTE_H };
+}
+
+static struct gfx_rect qs_clear_rect(void)
+{
+    struct gfx_rect last = note_rect(nnotes);
+    return (struct gfx_rect){ S()->w / 2 - 120, last.y + 8, 240, 72 };
+}
+
+static void qs_set(int open, int instant)
+{
+    static int was;
+    qs.t = open ? FX(qs_h()) : 0;
+    if (instant)
+        spring_snap(&qs);
+    if (was != open)
+        kprintf("qs: %s\n", open ? "open" : "closed");
+    was = open;
+    qs_moving = qs.x != qs.t || qs.v;
+    last_qs_tick = uptime_ms();
+    damage_all();
+}
+
+static void qs_tick(void)
+{
+    if (!qs_moving)
+        return;
+    uint32_t now = uptime_ms(), steps = (now - last_qs_tick) / TICK_MS;
+    if (!steps)
+        return;
+    last_qs_tick = now;
+    for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++)
+        qs_moving = spring_step(&qs, 50, 100);
+    damage_all();
+    shell_flush();
+}
+
+static void note_copy(char *dst, const char *src, int max)
+{
+    int n = 0;
+    while (src[n] && n < max - 1) {
+        dst[n] = src[n];
+        n++;
+    }
+    dst[n] = '\0';
+}
+
+void desktop_notify(const void *owner, const char *title, const char *body)
+{
+    const struct app *a = owner;
+    int k = 0;
+    while (k < nnotes && !(notes[k].app == a && !strcmp(notes[k].title, title)))
+        k++;                                /* the same one again: it replaces it */
+    if (k == nnotes && nnotes < NOTE_MAX)
+        nnotes++;
+    if (k == NOTE_MAX)
+        k = NOTE_MAX - 1;                   /* full: the oldest goes */
+    for (; k > 0; k--)
+        notes[k] = notes[k - 1];
+    notes[0].app = a;
+    note_copy(notes[0].title, title, sizeof(notes[0].title));
+    note_copy(notes[0].body, body, sizeof(notes[0].body));
+    kprintf("notify: %s: %s\n", a ? a->name : "?", notes[0].title);
+    if (qs.t > 0)
+        qs.t = FX(qs_h());                  /* the panel grows with it */
+    damage_all();
+}
+
+static void note_remove(int k)
+{
+    kprintf("notify: dismissed %s\n", notes[k].title);
+    for (; k < nnotes - 1; k++)
+        notes[k] = notes[k + 1];
+    nnotes--;
+    if (qs.t > 0) {
+        qs.t = FX(qs_h());
+        spring_snap(&qs);
+    }
+    damage_all();
+}
+
+static int wifi_on(void) { return net_shown.wifi != K86_NET_NONE && net_shown.wifi != K86_NET_OFF; }
+
+static int tile_on(int i)
+{
+    switch (i) {
+    case T_WIFI: return wifi_on();
+    case T_DARK: return !theme_is_light();
+    case T_DND:  return dnd;
+    default:     return 0;
+    }
+}
+
+static int tile_works(int i)
+{
+    return i != T_WIFI || net_shown.wifi != K86_NET_NONE;
+}
+
+static void tile_tap(int i)
+{
+    switch (i) {
+    case T_WIFI:
+        if (tile_works(i))
+            net_wifi_set(!wifi_on());
+        break;
+    case T_DARK:
+        theme_set(!theme_is_light(), theme_accent_index());
+        wallpaper_refresh();
+        wm_theme_changed();
+        settings_save();
+        kprintf("qs: %s style\n", theme_is_light() ? "light" : "dark");
+        break;
+    case T_DND:
+        dnd = !dnd;
+        kprintf("qs: do not disturb %s\n", dnd ? "on" : "off");
+        break;
+    case T_LOCK:
+        qs_set(0, 1);
+        shell_flush();
+        kprintf("shell: lock (quick settings)\n");
+        lockscreen_lock();
+        return;
+    }
+    damage_all();
+}
+
+static void brightness_at(int x)
+{
+    struct gfx_rect r = qs_slider_rect();
+    int p = (x - r.x) * 100 / (r.w > 0 ? r.w : 1);
+    p = p < 5 ? 5 : p > 100 ? 100 : p;
+    if (machine_set_brightness(p) == 0) {
+        machine_status(&machine_shown);
+        damage_all();
+    }
+}
+
+static void draw_tile_icon(int i, int cx, int cy, uint32_t c, uint32_t bg)
+{
+    switch (i) {
+    case T_WIFI: {
+        struct k86_net n = net_shown;
+        if (wifi_on()) {
+            n.wifi = K86_NET_UP;
+            n.signal = 100;
+        }
+        uint32_t keep = bar_fg;
+        bar_fg = c;
+        draw_net_icon(cx, cy, &n, bg);
+        bar_fg = keep;
+        break;
+    }
+    case T_DARK:                            /* a moon: a circle with a bite out of it */
+        gfx_fill_circle(VS, VX(cx), VY(cy), 22, c);
+        gfx_fill_circle(VS, VX(cx + 12), VY(cy - 10), 18, bg);
+        break;
+    case T_DND:                             /* a circle with a bar */
+        gfx_fill_circle(VS, VX(cx), VY(cy), 22, c);
+        gfx_fill_rect(VS, VX(cx - 12), VY(cy - 3), 24, 6, bg);
+        break;
+    case T_LOCK:                            /* a padlock */
+        gfx_fill_round_rect(VS, VX(cx - 18), VY(cy - 2), 36, 28, 4, c);
+        gfx_fill_circle(VS, VX(cx), VY(cy - 8), 13, c);
+        gfx_fill_circle(VS, VX(cx), VY(cy - 8), 7, bg);
+        gfx_fill_rect(VS, VX(cx - 7), VY(cy - 8), 14, 6, bg);
+        break;
+    }
+}
+
+static void date_long(char date[40])
+{
+    static const char *const days[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+                                        "Friday", "Saturday" };
+    static const char *const months[] = { "January", "February", "March", "April", "May", "June", "July",
+                                          "August", "September", "October", "November", "December" };
+    int n = 0;
+    for (const char *q = days[clock_shown.weekday % 7]; *q; q++)
+        date[n++] = *q;
+    date[n++] = ' ';
+    if (clock_shown.day >= 10)
+        date[n++] = (char)('0' + clock_shown.day / 10);
+    date[n++] = (char)('0' + clock_shown.day % 10);
+    date[n++] = ' ';
+    for (const char *q = months[(clock_shown.month - 1) % 12]; *q; q++)
+        date[n++] = *q;
+    date[n] = '\0';
+}
+
+static void draw_qs(void)
+{
+    if (!qs_shown())
+        return;
+    const struct theme *t = T();
+    struct gfx_rect p = qs_rect();
+    int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0;
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
+    gfx_fill_round_rect(VS, VX(p.x), VY(p.y - 40), p.w, p.h + 40, 32, t->dialog_bg);     /* round below */
+    /* The date, and Settings. */
+    if (rtc && clock_shown.month) {
+        char date[40];
+        date_long(date);
+        text_draw(VS, VX(t->margin), VY(p.y + (QS_HEAD - text_height(TEXT_HEADING)) / 2), date, TEXT_HEADING, t->fg);
+    }
+    struct gfx_rect g = qs_gear_rect();
+    int gx = g.x + g.w / 2, gy = g.y + g.h / 2;
+    gfx_fill_circle(VS, VX(gx), VY(gy), g.w / 2, t->button_bg);
+    gfx_fill_circle(VS, VX(gx), VY(gy), 20, t->fg);                 /* a cog */
+    static const int cog_dx[8] = { 0, 18, 26, 18, 0, -18, -26, -18 }, cog_dy[8] = { -26, -18, 0, 18, 26, 18, 0, -18 };
+    for (int k = 0; k < 8; k++)
+        gfx_fill_circle(VS, VX(gx + cog_dx[k]), VY(gy + cog_dy[k]), 7, t->fg);
+    gfx_fill_circle(VS, VX(gx), VY(gy), 9, t->button_bg);
+    /* The tiles. */
+    static const char *const names[QS_NTILES] = { "Wi-Fi", "Dark mode", "Do not disturb", "Lock" };
+    int cell = (S()->w - 2 * t->margin) / QS_NTILES;
+    for (int i = 0; i < QS_NTILES; i++) {
+        struct gfx_rect r = qs_tile_rect(i);
+        int on = tile_on(i), works = tile_works(i);
+        uint32_t bg = on ? t->accent_bg : t->button_bg, fg = on ? t->accent_fg : works ? t->fg : t->fg_dim;
+        gfx_fill_circle(VS, VX(r.x + r.w / 2), VY(r.y + r.h / 2), r.w / 2, bg);
+        draw_tile_icon(i, r.x + r.w / 2, r.y + r.h / 2, fg, bg);
+        int tw = text_width(names[i], TEXT_SMALL);
+        int lx = r.x + r.w / 2 - (tw < cell - 4 ? tw : cell - 4) / 2;
+        text_draw_fit(VS, VX(lx), VY(r.y + r.h + 8), names[i], cell - 4, TEXT_SMALL, works ? t->fg : t->fg_dim);
+    }
+    /* The brightness: a sun, then the slider. */
+    struct gfx_rect sr = qs_slider_rect();
+    int cy = sr.y + sr.h / 2, bright = machine_shown.brightness;
+    uint32_t sun = bright >= 0 ? t->fg : t->fg_dim;
+    static const int ray_dx[8] = { 0, 15, 22, 15, 0, -15, -22, -15 }, ray_dy[8] = { -22, -15, 0, 15, 22, 15, 0, -15 };
+    gfx_fill_circle(VS, VX(t->margin + 30), VY(cy), 12, sun);
+    for (int k = 0; k < 8; k++)
+        gfx_fill_circle(VS, VX(t->margin + 30 + ray_dx[k]), VY(cy + ray_dy[k]), 3, sun);
+    gfx_fill_round_rect(VS, VX(sr.x), VY(cy - 6), sr.w, 12, 6, t->button_bg);
+    if (bright >= 0) {
+        int kx = sr.x + sr.w * bright / 100;
+        gfx_fill_round_rect(VS, VX(sr.x), VY(cy - 6), kx - sr.x, 12, 6, t->accent_bg);
+        gfx_fill_circle(VS, VX(kx), VY(cy), 22, t->fg);
+    }
+    /* The notifications. */
+    if (!nnotes) {
+        const char *none = "No notifications";
+        text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(note_rect(0).y + 24), none, TEXT_BODY,
+                  t->fg_dim);
+        return;
+    }
+    for (int k = 0; k < nnotes; k++) {
+        struct gfx_rect r = note_rect(k);
+        if (k == qs_note)
+            r.x += qs_note_dx;
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
+        if (notes[k].app)
+            draw_icon(notes[k].app, (struct gfx_rect){ r.x + 20, r.y + (r.h - 56) / 2, 56, 56 }, 255);
+        int tx = r.x + 20 + 56 + 20, tw = r.w - (tx - r.x) - 20;
+        text_draw_fit(VS, VX(tx), VY(r.y + 16), notes[k].title, tw, TEXT_BOLD, t->fg);
+        text_draw_fit(VS, VX(tx), VY(r.y + 16 + text_height(TEXT_BOLD) + 4), notes[k].body, tw, TEXT_SMALL,
+                      t->fg_dim);
+    }
+    struct gfx_rect c = qs_clear_rect();
+    gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg);
+    text_draw(VS, VX(c.x + (c.w - text_width("Clear all", TEXT_BOLD)) / 2), VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2),
+              "Clear all", TEXT_BOLD, t->fg);
+}
+
+/* The status bar's share: up to 4 notifying apps' icons after the time, a
+ * dot for more; Do not disturb shows its own sign instead. */
+static void draw_note_icons(int x, int cy, uint32_t bg)
+{
+    if (dnd) {
+        gfx_fill_circle(VS, VX(x + 14), VY(cy), 13, bar_fg);
+        gfx_fill_rect(VS, VX(x + 7), VY(cy - 2), 14, 4, bg);
+        return;
+    }
+    const struct app *shown[4];
+    int n = 0, more = 0;
+    for (int k = 0; k < nnotes; k++) {
+        int seen = 0;
+        for (int j = 0; j < n; j++)
+            seen |= shown[j] == notes[k].app;
+        if (seen || !notes[k].app)
+            continue;
+        if (n == 4) {
+            more = 1;
+            break;
+        }
+        shown[n++] = notes[k].app;
+    }
+    for (int j = 0; j < n; j++)
+        draw_icon(shown[j], (struct gfx_rect){ x + j * 40, cy - 16, 32, 32 }, 255);
+    if (more)
+        gfx_fill_circle(VS, VX(x + n * 40 + 8), VY(cy), 5, bar_fg);
+}
+
+/* The finger, while the panel is out (or being pulled). 1 if it took it. */
+static int qs_pointer(int x, int y, uint8_t buttons, int down)
+{
+    int h = qs_h();
+    if (down && !qs_shown() && y < T()->topbar_h && !menu_open) {
+        qs_finger = QF_PULL;                /* from the status bar */
+        qs_x0 = x;
+        qs_y0 = y;
+        return 1;
+    }
+    if (!qs_shown() && qs_finger != QF_PULL)
+        return 0;
+    if (down) {
+        qs_x0 = x;
+        qs_y0 = y;
+        qs_from = qs.x;
+        if (!inside(qs_rect(), x, y)) {
+            qs_finger = QF_DIM;
+        } else if (machine_shown.brightness >= 0 && inside(qs_slider_rect(), x, y)) {
+            qs_finger = QF_SLIDER;
+            brightness_at(x);
+        } else {
+            qs_finger = QF_PANEL;
+            qs_note = -1;
+            for (int k = 0; k < nnotes; k++)
+                if (inside(note_rect(k), x, y)) {
+                    qs_finger = QF_NOTE;
+                    qs_note = k;
+                    qs_note_dx = 0;
+                }
+        }
+        return 1;
+    }
+    int dx = x - qs_x0, dy = y - qs_y0, moved = dx * dx + dy * dy > SWIPE_SLOP * SWIPE_SLOP;
+    int held = buttons & MOUSE_LEFT;
+    switch (qs_finger) {
+    case QF_PULL:                           /* the panel's bottom follows the finger */
+        if (held) {
+            int to = y - T()->topbar_h;
+            qs.x = qs.t = FX(to < 0 ? 0 : to > h ? h : to);
+            qs.v = 0;
+            damage_all();
+        } else {
+            qs_finger = QF_NONE;
+            qs_set(!moved || qs.x > FX(h) / 3, 0);  /* a tap opens it too */
+        }
+        return 1;
+    case QF_SLIDER:
+        if (held)
+            brightness_at(x);
+        else
+            qs_finger = QF_NONE;
+        return 1;
+    case QF_NOTE:
+        if (held) {
+            if (dx > SWIPE_SLOP || dx < -SWIPE_SLOP)
+                qs_note_dx = dx;
+            damage_all();
+            return 1;
+        }
+        qs_finger = QF_NONE;
+        if (qs_note_dx > S()->w / 3 || qs_note_dx < -S()->w / 3) {
+            note_remove(qs_note);
+        } else if (!moved) {                /* a tap: its app */
+            const struct app *a = notes[qs_note].app;
+            note_remove(qs_note);
+            qs_set(0, 1);
+            if (a && app_index(a) >= 0)
+                launch(app_index(a), (struct gfx_rect){ S()->w / 2 - 28, T()->topbar_h, 56, 56 });
+        }
+        qs_note = -1;
+        qs_note_dx = 0;
+        damage_all();
+        return 1;
+    case QF_PANEL:
+        if (held) {
+            if (dy < -SWIPE_SLOP) {         /* swiped up: it follows */
+                int to = qs_from + FX(dy);
+                qs.x = qs.t = to < 0 ? 0 : to;
+                qs.v = 0;
+                damage_all();
+            }
+            return 1;
+        }
+        qs_finger = QF_NONE;
+        if (dy < -SWIPE_SLOP) {
+            qs_set(qs.x > FX(h) * 2 / 3, 0);
+            return 1;
+        }
+        if (moved)
+            return 1;
+        if (inside(qs_gear_rect(), x, y)) {
+            qs_set(0, 1);
+            for (int i = 0; i < builtin_app_count; i++)
+                if (!strcmp(builtin_apps[i].name, "Settings"))
+                    launch(i, qs_gear_rect());
+            return 1;
+        }
+        for (int i = 0; i < QS_NTILES; i++)
+            if (inside(qs_tile_rect(i), x, y))
+                tile_tap(i);
+        if (nnotes && inside(qs_clear_rect(), x, y)) {
+            kprintf("notify: cleared %d\n", nnotes);
+            nnotes = 0;
+            qs.t = FX(qs_h());
+            spring_snap(&qs);
+            damage_all();
+        }
+        return 1;
+    case QF_DIM:
+        if (!held) {
+            qs_finger = QF_NONE;
+            if (!moved)
+                qs_set(0, 0);
+        }
+        return 1;
+    }
+    return 1;
+}
+
 void desktop_input_scroll(int x, int y, int notches)
 {
     if (started && (menu_open || grid_open || hit_at(x, y).kind != H_NONE))
@@ -1771,6 +2260,8 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
     track_peek(x, y);
     if (!wm_grabbed() && osk_pointer(x, y, buttons))
         return;                 /* the on-screen keyboard's */
+    if (!wm_grabbed() && qs_pointer(x, y, buttons, down))
+        return;                 /* quick settings', or the status bar pulled */
     if (home_swipe(x, buttons, down, up))
         return;
     if (wm_grabbed() && !pressed.kind) {    /* a drag or a press in a window */
@@ -1841,8 +2332,37 @@ static void recent_app(void)
     kprintf("desktop: no recent apps\n");
 }
 
+/* Home: a press goes home (or closes quick settings); held, quick settings. */
+static uint32_t home_down_ms;
+static int home_held;
+
+static void home_key(void)
+{
+    kprintf("shell: Home\n");
+    menu_set(0);
+    set_grid(0);
+    if (qs_shown()) {
+        qs_set(0, 0);
+        return;
+    }
+    show_desktop();
+    turn_to(0, 0);                      /* on the home screen already: back to its first page */
+}
+
 static int phone_key(const struct key_event *k)
 {
+    if (k->key == KEY_PHONE_HOME) {
+        if (k->pressed && !home_down_ms) {
+            home_down_ms = uptime_ms() | 1;
+        } else if (!k->pressed) {
+            if (home_down_ms && !home_held)
+                home_key();
+            home_down_ms = 0;
+            home_held = 0;
+            shell_flush();
+        }
+        return 1;
+    }
     if (k->key == KEY_PHONE_POWER) {
         if (k->pressed && !power_down_ms) {
             power_down_ms = uptime_ms() | 1;
@@ -1868,6 +2388,8 @@ static int phone_key(const struct key_event *k)
         struct wm_window *w = wm_top_visible();
         if (menu_open) {
             menu_set(0);
+        } else if (qs_shown()) {
+            qs_set(0, 0);
         } else if (!w) {
             turn_to(0, 0);
         } else if (wm_back_wanted(w)) {
@@ -1882,13 +2404,6 @@ static int phone_key(const struct key_event *k)
         }
         break;
     }
-    case KEY_PHONE_HOME:
-        kprintf("shell: Home\n");
-        menu_set(0);
-        set_grid(0);
-        show_desktop();
-        turn_to(0, 0);                  /* on the home screen already: back to its first page */
-        break;
     case KEY_PHONE_RECENTS:
         kprintf("shell: Recent apps\n");
         menu_set(0);
@@ -1926,6 +2441,12 @@ static void keyboard_follow(void)
 
 static void power_tick(void)
 {
+    if (home_down_ms && !home_held && uptime_ms() - home_down_ms >= POWER_HOLD_MS) {
+        home_held = 1;
+        kprintf("shell: quick settings (Home held)\n");
+        qs_set(1, 0);
+        shell_flush();
+    }
     if (power_down_ms && !power_held && uptime_ms() - power_down_ms >= POWER_HOLD_MS) {
         power_held = 1;
         kprintf("shell: power menu (Power held)\n");
@@ -1972,6 +2493,7 @@ void desktop_tick(void)
         return;
     dock_tick();
     pager_tick();
+    qs_tick();
     power_tick();
     osk_tick();
     keyboard_follow();
@@ -2008,7 +2530,7 @@ void desktop_tick(void)
 
 int desktop_busy(void)
 {
-    return dock_moving || hide_at || pager_moving;
+    return dock_moving || hide_at || pager_moving || qs_moving;
 }
 
 static void log_event(const struct wm_event *ev)

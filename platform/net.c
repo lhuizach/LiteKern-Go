@@ -485,6 +485,9 @@ static int radio_blocked(void)
         snprintf(path, sizeof(path), "/sys/class/rfkill/%s/hard", e->d_name);
         read_line(path, v, sizeof(v));
         blocked |= v[0] == '1';
+        snprintf(path, sizeof(path), "/sys/class/rfkill/%s/soft", e->d_name);    /* net_wifi_set() */
+        read_line(path, v, sizeof(v));
+        blocked |= v[0] == '1';
     }
     if (d)
         closedir(d);
@@ -640,6 +643,30 @@ void net_poll(void)
 }
 
 /* --- kernel/net.h --------------------------------------------------------------------------- */
+
+int net_wifi_set(int on)
+{
+    if (!wlan[0])
+        return -ENODEV;
+    DIR *d = opendir("/sys/class/rfkill");
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        char path[300], v[16] = "";
+        if (e->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "/sys/class/rfkill/%s/type", e->d_name);
+        read_line(path, v, sizeof(v));
+        if (strcmp(v, "wlan"))
+            continue;
+        snprintf(path, sizeof(path), "/sys/class/rfkill/%s/soft", e->d_name);
+        write_file(path, on ? "0" : "1");
+    }
+    if (d)
+        closedir(d);
+    kprintf("net: Wi-Fi %s\n", on ? "on" : "off");
+    return 0;
+}
+
 
 void net_status(struct k86_net *out)
 {

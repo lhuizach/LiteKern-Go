@@ -49,6 +49,8 @@ int desktop_log_out(void);
 
 /* The theme or wallpaper changed: redraw everything. */
 void desktop_refresh(void);
+/* LiteKern Go: an app's notification (SYS_NOTIFY; owner: its struct app). */
+void desktop_notify(const void *owner, const char *title, const char *body);
 
 /* Pointer input, every packet: the shell's (top bar, menus, dock, app menu)
  * or passed on to the windows. */
