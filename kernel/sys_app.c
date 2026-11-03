@@ -610,7 +610,7 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
     case SYS_WINDOW_KEYBOARD:
         if (!lkx_window())
             return -EINVAL;
-        wm_set_keyboard_wanted(lkx_window(), a1 != 0);
+        wm_set_keyboard_wanted(lkx_window(), a1 == K86_KEYBOARD_NUMBERS ? K86_KEYBOARD_NUMBERS : a1 != 0);
         return 0;
     case SYS_NOTIFY: {
         char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];

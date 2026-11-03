@@ -501,7 +501,7 @@ enum wg_entry_result wg_entry_pointer(struct wg_entry *e, const struct wg_pointe
 /* --- dialog ------------------------------------------------------------------ */
 
 #define DLG_PAD 24
-#define DLG_W   420
+#define DLG_W   640                 /* LiteKern Go: nearly the screen's width */
 #define DLG_LINE (text_height(TEXT_BODY) + 2)
 
 /* Word-wrap the body to max_w pixels: calls out(line, len) per line,
@@ -570,7 +570,7 @@ void wg_dialog_layout(struct wg_dialog *d, int w, int h)
     int lines = wrap(d->body, body_width(d), 0, 0);
     if (lines < 1)
         lines = 1;
-    int dh = DLG_PAD + text_height(TEXT_HEADING) + 10 + lines * DLG_LINE + (d->has_entry ? 12 + 34 : 0) +
+    int dh = DLG_PAD + text_height(TEXT_HEADING) + 10 + lines * DLG_LINE + (d->has_entry ? 12 + t->button_size : 0) +
              24 + t->button_size + DLG_PAD;
     d->r = (struct gfx_rect){ (w - dw) / 2, (h - dh) / 2, dw, dh };
     int y = d->r.y + dh - DLG_PAD - t->button_size;
@@ -580,7 +580,7 @@ void wg_dialog_layout(struct wg_dialog *d, int w, int h)
         d->buttons[i].under = t->dialog_bg;
     }
     if (d->has_entry) {
-        d->entry.r = (struct gfx_rect){ d->r.x + DLG_PAD, y - 24 - 34, dw - 2 * DLG_PAD, 34 };
+        d->entry.r = (struct gfx_rect){ d->r.x + DLG_PAD, y - 24 - t->button_size, dw - 2 * DLG_PAD, t->button_size };
         d->entry.under = t->dialog_bg;
         entry_follow_cursor(&d->entry);
     }

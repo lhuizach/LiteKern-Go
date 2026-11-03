@@ -4,8 +4,8 @@
   "entry": "settings.lkx",
   "version": "1.0",
   "order": 3,
-  "width": 944,
-  "height": 552,
-  "min_width": 944,
-  "min_height": 552
+  "width": 720,
+  "height": 1224,
+  "min_width": 360,
+  "min_height": 600
 }

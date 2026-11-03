@@ -510,7 +510,7 @@ void wm_set_keyboard_wanted(struct wm_window *w, int wanted)
 
 int wm_keyboard_wanted(const struct wm_window *w)
 {
-    return w && w->keyboard_wanted;
+    return w ? w->keyboard_wanted : 0;
 }
 
 void wm_set_owner(struct wm_window *w, const void *owner)

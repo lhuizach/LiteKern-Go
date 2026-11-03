@@ -255,9 +255,13 @@ struct k86_dirent {
  * for Back to close (a dialog, a page under its first, a folder's parent): Back
  * then comes to it as an Esc key press. 0 (how apps start): Back closes the app. */
 #define SYS_WINDOW_BACK     38
-/* LiteKern Go: ebx: 1 while the app has a text field open: the on-screen keyboard
- * comes up (kernel/osk.h) and the window shrinks above it (K86_EVENT_RESIZE). */
+/* LiteKern Go: ebx: K86_KEYBOARD_TEXT while the app has a text field open (or
+ * K86_KEYBOARD_NUMBERS, for a PIN: it opens on its numbers), 0 when not: the
+ * on-screen keyboard comes up (kernel/osk.h) and the window shrinks above it
+ * (K86_EVENT_RESIZE). */
 #define SYS_WINDOW_KEYBOARD 39
+#define K86_KEYBOARD_TEXT    1
+#define K86_KEYBOARD_NUMBERS 2
 /* LiteKern Go: ebx: a title, ecx: a line of text (both NUL-terminated, cut to
  * K86_NOTE_TITLE / K86_NOTE_BODY). A notification from the app, in the quick
  * settings panel and the status bar until dismissed; tapping it opens the app.

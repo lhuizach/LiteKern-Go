@@ -2796,8 +2796,8 @@ void shell_osk_key(const struct key_event *k)
 static void keyboard_follow(void)
 {
     struct wm_window *w = wm_top_visible();
-    int want = w && !covered && !sw_open && wm_keyboard_wanted(w);
-    if (want == osk_shown())
+    int want = w && !covered && !sw_open ? wm_keyboard_wanted(w) : 0;
+    if (want == osk_mode())
         return;
     osk_show(want);
     wm_set_area((struct gfx_rect){ 0, T()->topbar_h, S()->w, S()->h - T()->topbar_h - osk_height() });
@@ -2807,13 +2807,13 @@ static void keyboard_follow(void)
 
 static void power_tick(void)
 {
-    if (home_down_ms && !home_held && uptime_ms() - home_down_ms >= POWER_HOLD_MS) {
+    if (home_down_ms && !home_held && (int32_t)(uptime_ms() - home_down_ms) >= POWER_HOLD_MS) {
         home_held = 1;
         kprintf("shell: quick settings (Home held)\n");
         qs_set(1, 0);
         shell_flush();
     }
-    if (power_down_ms && !power_held && uptime_ms() - power_down_ms >= POWER_HOLD_MS) {
+    if (power_down_ms && !power_held && (int32_t)(uptime_ms() - power_down_ms) >= POWER_HOLD_MS) {
         power_held = 1;
         kprintf("shell: power menu (Power held)\n");
         menu_set(1);

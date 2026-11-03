@@ -94,8 +94,12 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
 
 ## Phase 3 — Apps (in the VM)
 
-- [ ] Settings reworked for portrait (Wi-Fi, Display, Sound, Lock screen, Home
-      screen, Storage, Battery, Date and time, About phone)
+- [x] Settings reworked for portrait: a list of pages (Wi-Fi, Display, Lock Screen,
+      Battery, Date and Time, About Phone), back arrow or Back to return; Display
+      (brightness, style, accent, background, screen saver) and Lock Screen (Lock Now,
+      Set/Change/Remove PIN, clock, background) scroll with a drag; PIN dialogs open
+      the keyboard on its numbers. Users page hidden (one user). Not yet: Sound (no
+      audio), Home screen (clock widget on/off), Storage
 - [ ] Files reworked for portrait
 - [ ] Calculator reworked for portrait
 - [ ] Blocksmith checked with touch

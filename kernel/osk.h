@@ -13,8 +13,10 @@
 #include "kernel/gfx.h"
 #include "kernel/input.h"
 
+/* show: 0 hides it, 1 shows the letters, 2 the numbers (a PIN). */
 void osk_show(int show);
 int osk_shown(void);
+int osk_mode(void);                     /* what osk_show() last asked for */
 int osk_height(void);                   /* 0 while hidden */
 /* Where it draws: the keys, and above them a key's preview while pressed. */
 struct gfx_rect osk_bounds(void);

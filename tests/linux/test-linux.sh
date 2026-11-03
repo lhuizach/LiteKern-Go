@@ -177,7 +177,7 @@ check "Volume Up held: the level climbs to 100, the pop-up shows it (the blue ac
 # Screenshots: Power, then Volume Down (and the other way round): a PNG in
 # /Pictures/Screenshots, no lock, no power menu; a toast says so.
 cp build/litekernx.img build-linux/test/shots.img
-run $SHELL_BIN build-linux/test/shots.img "sleep:1.5 keydown:phone_power sleep:0.1 keydown:vol_down sleep:0.1 keyup:vol_down keyup:phone_power sleep:1.2 keydown:vol_down sleep:0.1 keydown:phone_power sleep:0.1 keyup:phone_power keyup:vol_down sleep:0.5"
+run $SHELL_BIN build-linux/test/shots.img "gap:0.03 sleep:1.5 keydown:phone_power sleep:0.1 keydown:vol_down sleep:0.1 keyup:vol_down keyup:phone_power sleep:1.2 keydown:vol_down sleep:0.1 keydown:phone_power sleep:0.1 keyup:phone_power keyup:vol_down sleep:0.5"
 nshots=$(mdir -b -i build-linux/test/shots.img@@8388608 ::/Pictures/Screenshots 2>/dev/null | grep -c '\.png$')
 first=$(mdir -b -i build-linux/test/shots.img@@8388608 ::/Pictures/Screenshots 2>/dev/null | grep '\.png$' | head -1)
 sig=$( [ -n "$first" ] && mtype -i build-linux/test/shots.img@@8388608 "$first" | head -c 8 | od -An -tx1 | tr -d ' \n')
@@ -321,32 +321,60 @@ check "Back closes Calculator" \
     '^lkx: Calculator exited \(0\)$' \
     '!shell: Back \(to'
 
-# Settings (944x552 at 40,39; content from 41,86): the Light card, saved;
-# after a restart it's still light. Then Users (header 196,63), Add User
-# (201,548): "Ann", no password (no auth: User has none).
-nwall=$(ls assets/wallpapers/*.png | grep -vc -- '-light\.png$')
-row_w=$(( (nwall + 1) * 160 + nwall * 24 )); [ "$row_w" -lt 424 ] && row_w=424
-light_x=$(( 41 + (942 - row_w) / 2 + 324 ))
+# Settings (apps/settings): a list of pages from y 172, rows 88 (Wi-Fi 216,
+# Display 304, Lock Screen 392, Battery 480, Date and Time 568, About 656);
+# the header's back arrow, or Back, goes back to it. Display: the Light card
+# (530,320), saved; after a restart it's still light.
 cp build/litekernx.img build-linux/test/settings.img
-path; open_app 2; go "$light_x" 194; click; add sleep:1; go 196 63; click; add sleep:0.8
-go 201 548; click; add sleep:0.5 shift-a n n ret sleep:0.3 ret sleep:0.3 ret sleep:1.5
-run $SHELL_BIN build-linux/test/settings.img "$P" --keyboard qwerty
-check "Settings: a style change is saved; a user added (SYS_USER_CHANGE, checked by the shell)" \
+path; open_app 2; go 360 304; click; add sleep:1; go 530 320; click; add sleep:1 phone_back sleep:0.8
+go 360 656; click; add sleep:0.8 phone_back sleep:0.5 phone_back sleep:1
+run $SHELL_BIN build-linux/test/settings.img "$P"
+check "Settings: the list of pages, Display's style saved, About, Back to the list, then Back closes it" \
+    '^user: settings: page display$' \
     '^user: settings: style light$' \
     '^settings: saved$' \
-    '^users: added Ann$' \
-    '^user: settings: users add Ann: done$' \
+    '^user: settings: page about$' \
+    '^user: settings: page home$' \
+    '^shell: Back closes Settings$' \
     '!refused|crashed|PANIC'
 run $SHELL_BIN build-linux/test/settings.img "sleep:0.5"
 check "Settings' choices are kept across a restart" \
-    '^settings: loaded( for User)?: light, ' \
-    '^users: 2 \(User admin, Ann\)$'
+    '^settings: loaded( for User)?: light, '
+
+# The PIN: Lock Screen (360,392), Set PIN (360,420), 1234 twice (the
+# keyboard comes up for it). Then Power locks; a swipe up asks for the PIN.
+cp build/litekernx.img build-linux/test/pin.img
+path; open_app 2; go 360 392; click; add sleep:1; go 360 420; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
+add phone_power sleep:1.5 press:1; go 360 300; go 360 200; go 360 100; add release sleep:1 1 2 3 4 ret sleep:2
+run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
+check "Settings sets a PIN; the lock screen then asks for it" \
+    '^user: settings: page lock$' \
+    '^user: settings: lock PIN set$' \
+    '^osk: shown$' \
+    '^user: settings: lock PIN saved: done$' \
+    '^lock: PIN for User$' \
+    '^lock: unlocked$' \
+    '!refused|crashed|PANIC'
+# After a restart, it's needed to log in; then Remove PIN (530,420) takes
+# the PIN once, and the next start needs none.
+path; add sleep:0.6 ret sleep:0.3 1 2 3 4 ret sleep:2; open_app 2; go 360 392; click; add sleep:1; go 530 420; click
+add sleep:0.8 1 2 3 4 ret sleep:2
+run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
+check "the PIN at the next start; Remove PIN" \
+    '^lock: login screen \(1 user\)$' \
+    '^lock: logged in as User$' \
+    '^user: settings: lock PIN remove$' \
+    '^user: settings: lock PIN removed: done$'
+run $SHELL_BIN build-linux/test/pin.img "sleep:0.8"
+check "no PIN: the next start goes straight in" \
+    '^desktop: ready$' \
+    '!lock: login screen'
 
 # The machine (phase L4), with a battery and backlight of our own (folders
-# shaped like Linux's /sys): the battery in the top bar; Settings' System tab
-# (271,63): the wheel scrolls the time zones three rows a notch, so the first
-# row (621,223) is then Paris; the brightness slider dragged to 60% writes
-# the backlight (9 of 15). Both are kept on the disk for the next start.
+# shaped like Linux's /sys): the battery in the status bar and on the Battery
+# page (360,480); Display's brightness slider (54..666 at y 247) dragged to
+# 60% writes the backlight (9 of 15); Date and Time (360,568): Paris (541).
+# Both are kept on the disk for the next start.
 F=build-linux/test/fake
 rm -rf $F; mkdir -p $F/ps/BAT0 $F/bl/acpi_video0
 printf 'Battery\n' >$F/ps/BAT0/type; printf '72\n' >$F/ps/BAT0/capacity; printf 'Discharging\n' >$F/ps/BAT0/status
@@ -354,17 +382,19 @@ printf 'firmware\n' >$F/bl/acpi_video0/type; printf '15\n' >$F/bl/acpi_video0/ma
 printf '3\n' >$F/bl/acpi_video0/brightness
 export LKX_POWER_SUPPLY=$PWD/$F/ps LKX_BACKLIGHT=$PWD/$F/bl
 cp build/litekernx.img build-linux/test/machine.img
-path; open_app 2; go 271 63; click; add sleep:1; go 700 400; add wheel:1 sleep:0.5; go 621 223; click; add sleep:0.5
-go 297 325; add sleep:0.2 press:1; go 317 325; go 337 325; add release sleep:1
-SCREEN="has=ffffff@900,5,965,25" run $SHELL_BIN build-linux/test/machine.img "$P"
+path; open_app 2; go 360 480; click; add sleep:1 phone_back sleep:0.5; go 360 304; click; add sleep:1
+go 176 247; add sleep:0.2 press:1; go 300 247; go 423 247; add release sleep:1 phone_back sleep:0.5
+go 360 568; click; add sleep:1; go 360 541; click; add sleep:1
+SCREEN="has=ffffff@560,5,700,50" run $SHELL_BIN build-linux/test/machine.img "$P"
 out+=$'\n'"backlight: $(cat $F/bl/acpi_video0/brightness)"
-check "the battery in the top bar; Settings' System page: the wheel, a time zone, the brightness" \
+check "the battery in the status bar and Settings; the brightness; a time zone" \
     '^machine: backlight acpi_video0$' \
-    '^screen: has ffffff in 900,5,965,25: yes$' \
-    '^user: settings: page system$' \
-    '^machine: time zone Paris, Brussels$' \
-    '^user: settings: system brightness 60: set$' \
+    '^screen: has ffffff in 560,5,700,50: yes$' \
+    '^user: settings: page battery$' \
+    '^user: settings: brightness 60: set$' \
     '^backlight: 9$' \
+    '^user: settings: page time$' \
+    '^machine: time zone Paris, Brussels$' \
     '!refused|crashed|PANIC'
 run $SHELL_BIN build-linux/test/machine.img "sleep:0.5"
 check "the time zone and brightness are kept across a restart" \

@@ -697,7 +697,7 @@ void lockscreen_tick(void)
 {
     if (!ls.active)
         return;
-    if (ls.power_down_ms && !ls.power_held && uptime_ms() - ls.power_down_ms >= POWER_HOLD_MS) {
+    if (ls.power_down_ms && !ls.power_held && (int32_t)(uptime_ms() - ls.power_down_ms) >= POWER_HOLD_MS) {
         ls.power_held = 1;
         set_menu(1);
     }

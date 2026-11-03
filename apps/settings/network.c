@@ -1,5 +1,6 @@
 /* LiteKern X — Settings: the Network page (kernel/net.h, the Linux port's
- * phase L5), laid out like the Users page.
+ * phase L5). LiteKern Go: the Wi-Fi page, one column, the buttons along
+ * the bottom.
  *
  * What's connected (Wi-Fi, Ethernet, the address), then the Wi-Fi networks
  * in range, strongest first, with Connect, Forget and Rescan. Connect asks
@@ -110,17 +111,14 @@ static int reload(void)
 
 void network_page_layout(void)
 {
-    int w = c->w - 2 * 48, x = 48;
-    if (w > 720)
-        w = 720, x = (c->w - w) / 2;
-    list_y = 20 + text_height(TEXT_HEADING) + 12 + 2 * (text_height(TEXT_BODY) + 6) + 12;
-    int bar_y = c->h - 34 - 24;
+    const struct theme *t = theme_get();
+    int x = 32, w = c->w - 2 * x;
+    list_y = 24 + 2 * (text_height(TEXT_BODY) + 6) + 16;
+    int bar_y = c->h - t->button_size - 24 - text_height(TEXT_SMALL) - 8;
     list.r = (struct gfx_rect){ x, list_y, w, bar_y - 16 - list_y };
-    int bx = x;
-    for (int i = 0; i < NBAR; i++) {
-        bar[i]->r = (struct gfx_rect){ bx, bar_y, wg_button_width(bar[i]->label), 34 };
-        bx += bar[i]->r.w + 10;
-    }
+    int bw = (w - (NBAR - 1) * 12) / NBAR;
+    for (int i = 0; i < NBAR; i++)
+        bar[i]->r = (struct gfx_rect){ x + i * (bw + 12), bar_y, bw, t->button_size };
     if (asking)
         wg_dialog_layout(&dialog, c->w, c->h);
 }
@@ -129,7 +127,7 @@ static const char *state_name(int s, int wifi_kind)
 {
     switch (s) {
     case K86_NET_NONE:       return wifi_kind ? "none on this machine" : "no port";
-    case K86_NET_OFF:        return wifi_kind ? "switched off (Fn+F2 switches it on)" : "no cable";
+    case K86_NET_OFF:        return wifi_kind ? "switched off (quick settings switches it on)" : "no cable";
     case K86_NET_DOWN:       return "not connected";
     case K86_NET_CONNECTING: return "connecting...";
     case K86_NET_UP:         return "connected";
@@ -142,8 +140,7 @@ void network_page_draw(void)
     const struct theme *t = theme_get();
     char line[120];
     gfx_fill_rect(c, 0, 0, c->w, c->h, t->window_bg);
-    text_draw(c, list.r.x, 20, "Network", TEXT_HEADING, t->fg);
-    int y = 20 + text_height(TEXT_HEADING) + 8;
+    int y = 24;
     copy(line, "Wi-Fi: ", sizeof(line));
     append(line, state_name(net.wifi, 1), sizeof(line));
     if (net.ssid[0] && net.wifi >= K86_NET_CONNECTING) {
@@ -162,14 +159,15 @@ void network_page_draw(void)
     text_draw_fit(c, list.r.x, y, line, list.r.w, TEXT_BODY, t->fg_dim);
     wg_list_draw(c, &list);
     if (!nwifi) {
-        const char *empty = net.wifi == K86_NET_NONE ? "No Wi-Fi on this machine."
+        const char *empty = net.wifi == K86_NET_NONE ? "No Wi-Fi on this phone."
                           : net.wifi == K86_NET_OFF ? "Wi-Fi is switched off." : "Looking for networks...";
-        text_draw(c, list.r.x + 16, list.r.y + 14, empty, TEXT_BODY, t->fg_dim);
+        text_draw(c, list.r.x + 24, list.r.y + 24, empty, TEXT_BODY, t->fg_dim);
     }
     for (int i = 0; i < NBAR; i++)
         wg_button_draw(c, bar[i]);
     if (status[0])
-        text_draw_fit(c, list.r.x, c->h - 22, status, list.r.w, TEXT_SMALL, status_bad ? t->destructive : t->fg_dim);
+        text_draw_fit(c, list.r.x, c->h - text_height(TEXT_SMALL) - 8, status, list.r.w, TEXT_SMALL,
+                      status_bad ? t->destructive : t->fg_dim);
     if (asking)
         wg_dialog_show(c, &dialog);
     k86_present(0, 0, c->w, c->h);
@@ -340,4 +338,9 @@ void network_page_key(const struct key_event *k)
         enable();
         network_page_draw();
     }
+}
+
+int network_page_busy(void)
+{
+    return asking;
 }

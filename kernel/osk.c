@@ -54,7 +54,7 @@ static const struct key pages[2][ROWS][11] = {
     },
 };
 
-static int shown, page;
+static int shown, page, mode;
 static int shift;               /* 0 off, 1 for the next letter, 2 caps lock */
 static uint32_t shift_ms;       /* when Shift was last tapped */
 static int held_row = -1, held_col = -1;    /* the key under the finger */
@@ -99,6 +99,7 @@ static int key_at(int x, int y, int *row, int *col)
 }
 
 int osk_shown(void) { return shown; }
+int osk_mode(void) { return mode; }
 int osk_height(void) { return shown ? OSK_H : 0; }
 
 struct gfx_rect osk_bounds(void)
@@ -108,10 +109,15 @@ struct gfx_rect osk_bounds(void)
 
 void osk_show(int show)
 {
-    if (shown == !!show)
+    if (mode == show)
         return;
+    mode = show;
+    page = show == 2;                   /* a PIN: the numbers first */
+    if (shown == !!show) {
+        shell_damage(osk_bounds());
+        return;
+    }
     shown = !!show;
-    page = 0;
     shift = 0;
     held_row = held_col = -1;
     kprintf("osk: %s\n", shown ? "shown" : "hidden");
