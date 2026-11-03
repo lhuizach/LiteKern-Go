@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # LiteKern X on Linux (LiteKernX-Roadmap/06, phases L1 and L2): lkx-shell, the
 # desktop as a Linux program, and the apps as Linux processes, run headless with scripted input (platform/headless.c,
-# the same key language as tests/kernel) at the EeePC's 1024x600. Checks its
-# log, like tests/kernel/test-kernel.sh, and its screenshots.
+# the same key language as tests/kernel) at LiteKern Go's 720x1280 (the phone's
+# screen; the mouse is the finger). Checks its log, like tests/kernel/test-kernel.sh,
+# and its screenshots.
 #
 # Usage (in WSL): bash tests/linux/test-linux.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 failures=0
-W=1024 H=600
+W=720 H=1280
 # The shell and the apps, the tests' misbehaving ones too; their disk image
 # (the kernel build's, with them in the ramdisk).
 TEST_APPS="tests/apps/crash tests/apps/badcalls tests/apps/hang"
@@ -81,8 +82,12 @@ path() { PX=$((W / 2)) PY=$((H / 2)) P=""; }
 go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
-# The dock at 1024x600: Files, Log, Show Apps (kernel/desktop.c's layout).
-DOCK_Y=$((H - 40)) FILES_X=452 LOG_X=512 SHOWAPPS_X=572
+# The home screen (kernel/desktop.c): apps in 4 columns of 168 x 184 px tiles
+# from y 276. tap_app N taps the N-th (0: Files, 1 Calculator, 2 Settings,
+# 3 Blocksmith, then Log; the tests' apps come before Log).
+tile_x() { echo $(( (W - 4 * 168) / 2 + 84 + ($1 % 4) * 168 )); }
+tile_y() { echo $(( 56 + 220 + 72 + ($1 / 4) * 184 )); }
+tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:1.5; }
 PLAIN=202634
 
 SHELL_BIN=build-linux/lkx-shell
@@ -95,31 +100,32 @@ check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the
     '^ramdisk: [0-9]+ files' \
     '^lkx: Files \(apps/files/files.lkx' \
     '^lkx: Blocksmith \(apps/blocksmith/blocksmith.lkx' \
-    '^wallpaper: crossing, 1024x600' \
-    '^dock: Files Log Show Apps$' \
+    '^wallpaper: crossing, ' \
     '^desktop: ready$' \
-    '^screen: 1024x600$' \
+    '^screen: 720x1280$' \
     '!^screen: corner '$PLAIN \
     '!PANIC|Segmentation'
 
-path; go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.8 esc sleep:0.5
-run $SHELL_BIN build-linux/test/disk.img "$P"
-check "the app menu opens from the dock, Esc closes it" \
-    '^desktop: app menu open$' \
-    '^desktop: app menu closed$'
+# The home screen: swiped left, the All apps page; Home turns back to the first.
+path; go 600 800; add press:1; go 500 800; go 300 800; go 150 800; add release sleep:1 phone_home sleep:1
+SCREEN="has=ffffff@0,56,720,276" run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the home screen: its clock, a swipe to All apps, Home back to the first page" \
+    '^home: page 2 of 2 \(All apps\)$' \
+    '^home: page 1 of 2$' \
+    '^screen: has ffffff in 0,56,720,276: yes$'
 
-# Log from the dock (it opens at 132,75, 760x480: its close button 868,99).
-path; go $LOG_X $DOCK_Y; click; add sleep:1.2; go 868 99; click; add sleep:1
+# Log from its home screen icon: full-screen under the status bar; Home hides it.
+path; tap_app 4; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
-check "Log opens from the dock and its close button closes it" \
+check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
-    '^wm: open Log at 132,75 760x480$' \
+    '^wm: open Log at 0,56 720x1224$' \
     '^anim: open Log' \
-    '^wm: close$' \
+    '^desktop: minimise Log$' \
     '!^screen: corner '$PLAIN
 
-# The power menu's Lock (its third item, y 108-142), then a key unlocks.
-path; go 998 15; click; add sleep:0.4; go 930 125; click; add sleep:1.5 spc sleep:1.5
+# Power held opens the power menu; its Lock (the third item, 618,151), then a key unlocks.
+path; add keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.3; go 618 151; click; add sleep:1.5 spc sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "the power menu locks; a key unlocks" \
     '^shell: lock$' \
@@ -128,10 +134,10 @@ check "the power menu locks; a key unlocks" \
     '^lock: unlocked$'
 
 run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 meta_l-l sleep:1.5 shot:build-linux/test/lock.png"
-SCREEN="has=ffffff@380,140,660,250" run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 meta_l-l sleep:1.5"
+SCREEN="has=ffffff@150,320,580,460" run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 meta_l-l sleep:1.5"
 check "Super+L locks: the big clock" \
     '^shell: lock \(Super\+L\)$' \
-    '^screen: has ffffff in 380,140,660,250: yes$'
+    '^screen: has ffffff in 150,320,580,460: yes$'
 
 # LiteKern Go's phone keys (UI-PLAN.md): Home, Recent apps, volume; Power
 # locks, held it opens the power menu instead.
@@ -185,11 +191,7 @@ check "the screen saver starts after the idle time, covers the desktop, a key en
     '^screensaver: off after [0-9]+ s: [1-9][0-9]* frames'
 
 # --- the apps, each its own Linux process (phase L2) ------------------------------------------
-# The app menu at 1024x600, one row of 5: Files, Calculator, Settings,
-# Blocksmith, Log (kernel/desktop.c's grid), at y 265.
-tile() { echo $(( (W - 5 * 112) / 2 + 56 + $1 * 112 )); }
-GRID_Y=265
-open_app() { go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go "$(tile "$1")" $GRID_Y; click; add sleep:1.5; }
+open_app() { tap_app "$1"; }
 
 path; open_app 1; add 5 shift-equal 3 ret sleep:0.5
 SCREEN="has=ffffff@330,110,700,230" run $SHELL_BIN build-linux/test/disk.img "$P" --keyboard qwerty
@@ -200,12 +202,13 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^screen: has ffffff in 330,110,700,230: yes$' \
     '!crashed|stopped|PANIC'
 
-# Files from the dock; its close button (760x500 at 132,65: 868,89) ends it.
-path; go $FILES_X $DOCK_Y; click; add sleep:1.5; go 868 89; click; add sleep:1
+# Files lists the disk. (Closing it waits for Back, phase 2.6: until then
+# apps have no way to close.)
+path; open_app 0
 run $SHELL_BIN build-linux/test/disk.img "$P"
-check "Files lists the disk (its calls through kernel/sys_app.c); closing its window ends it" \
+check "Files lists the disk (its calls through kernel/sys_app.c)" \
     '^user: files: open Boot disk \(LITEKERNX\)$' \
-    '^lkx: Files exited \(0\)$'
+    '!crashed|stopped|PANIC'
 
 # Settings (944x552 at 40,39; content from 41,86): the Light card, saved;
 # after a restart it's still light. Then Users (header 196,63), Add User
@@ -227,19 +230,6 @@ run $SHELL_BIN build-linux/test/settings.img "sleep:0.5"
 check "Settings' choices are kept across a restart" \
     '^settings: loaded( for User)?: light, ' \
     '^users: 2 \(User admin, Ann\)$'
-
-# A maximised window's header joins the top bar (the user's option A): Settings
-# maximised (its button at 924,63) shows its tabs there; Users (275,15) in the
-# top bar switches page; restore (924,15) brings its own header bar back.
-path; open_app 2; go 924 63; click; add sleep:1.5; go 275 15; click; add sleep:1
-go 600 300; add sleep:0.3 shot:build-linux/test/merged.png; go 924 15; click; add sleep:1
-run $SHELL_BIN build-linux/test/disk.img "$P"
-out+=$'\n'$(python3 tests/lib/qemu_monitor.py check build-linux/test/merged.png "has=444448@240,4,310,26" 2>&1)
-check "a maximised window's tabs and buttons are in the top bar, and work there" \
-    '^desktop: maximise Settings$' \
-    '^user: settings: page users$' \
-    '^screen: has 444448 in 240,4,310,26: yes$' \
-    '^desktop: unmaximise Settings$'
 
 # The machine (phase L4), with a battery and backlight of our own (folders
 # shaped like Linux's /sys): the battery in the top bar; Settings' System tab
@@ -282,23 +272,23 @@ check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
     '!blocksmith: error|crashed'
 
-# Stability: Files opened and closed 15 times; each must end cleanly.
+# Stability: Files opened and sent home 15 times (closing waits for 2.6).
 path; add gap:0.1
-for i in $(seq 15); do go $FILES_X $DOCK_Y; click; add sleep:0.8; go 868 89; click; add sleep:0.6; done
+for i in $(seq 15); do tap_app 0; add phone_home sleep:0.6; done
 run $SHELL_BIN build-linux/test/disk.img "$P"
-n=$(grep -c '^lkx: Files exited (0)$' <<<"$out")
-out+=$'\n'"stress: $n of 15 ended"
-check "Files opened and closed 15 times, ending cleanly each time" \
-    '^stress: 15 of 15 ended$' \
+n=$(grep -c '^desktop: minimise Files$' <<<"$out")
+out+=$'\n'"stress: $n of 15 home"
+check "Files opened and sent home 15 times" \
+    '^stress: 15 of 15 home$' \
     '!crashed|stopped|PANIC'
 
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their menu: 8 tiles (one row, y 265): Crash, Badcalls, Hang at 568, 680, 792.
+# Their home screen icons: Crash, Badcalls, Hang are the 5th to 7th.
 path
-for x in 568 680 792; do go $SHOWAPPS_X $DOCK_Y; click; add sleep:0.6; go $x 265; click; add sleep:1.5; done
-add sleep:11; go $FILES_X $DOCK_Y; click; add sleep:1.5
+for i in 4 5 6; do add phone_home sleep:0.5; tap_app "$i"; done
+add sleep:11 phone_home sleep:0.5; tap_app 0
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
 check "apps: a crash, bad calls and a hang each end only the app" \

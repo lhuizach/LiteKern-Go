@@ -61,7 +61,8 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 - [x] 2.3 Full-screen window manager, one app visible. Not yet: background apps
       paused (stopping their processes would trip the hang watchdog), and closing an
       app (Back in 2.6, the switcher in 2.10)
-- [ ] 2.4 Home screen: icon pages and All apps, no dock or top bar
+- [x] 2.4 Home screen: icon pages and All apps, no dock. Not yet: dragging icons
+      around, sharper icons (48 px ones scaled up), portrait wallpapers
 - [ ] 2.5 Status bar
 - [ ] 2.6 Back event in the app API, with the default behaviour in the shell
 - [ ] 2.7 Touch rules: tap, long press, drag, momentum scrolling
