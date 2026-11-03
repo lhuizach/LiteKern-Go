@@ -1122,6 +1122,7 @@ int main(void)
         /* The phone's Back: a dialog, an edit, a menu or a running script
          * to close first; then it closes Blocksmith (and saves). */
         k86_back_wanted(modal != M_NONE || edit_block != NO || menu_block != NO || run_active());
+        k86_keyboard_wanted((modal == M_DIALOG && dialog.has_entry) || edit_block != NO);   /* text to type */
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {

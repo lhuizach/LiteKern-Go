@@ -882,6 +882,7 @@ int main(void)
         /* The phone's Back: a viewer or dialog to close, or a folder to go
          * up from; at the top, Back closes Files. */
         k86_back_wanted(viewing || dialog_for != NONE || (vol >= 0 && (depth > 0 || nvolumes > 1)));
+        k86_keyboard_wanted(dialog_for != NONE && dialog.has_entry);      /* a name to type */
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {

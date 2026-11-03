@@ -70,7 +70,9 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
 - [x] 2.7 Touch rules, part 1: lists open on a single tap (on lift) and scroll
       when dragged, a row at a time. Not yet: momentum after a flick, smooth
       (pixel) scrolling, long press (nothing uses it yet), scrolling outside lists
-- [ ] 2.8 On-screen keyboard
+- [x] 2.8 On-screen keyboard: letters, 123 page, Shift and caps lock, Backspace
+      repeat, key preview; the app shrinks above it. Not yet: auto-capitals, a number
+      pad for number fields, the lock screen's password field, a slide-in animation
 - [ ] 2.9 Quick settings panel and notifications
 - [ ] 2.10 App switcher
 - [ ] 2.11 Lock screen: swipe to unlock, PIN pad

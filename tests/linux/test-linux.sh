@@ -214,6 +214,23 @@ check "Files lists the disk; Back goes up a folder, then closes Files" \
     '^lkx: Files exited \(0\)$' \
     '!crashed|stopped|PANIC'
 
+# The on-screen keyboard: Files' New Folder (146,1229) opens a dialog with a
+# text field, so it comes up and Files shrinks above it; h (435,1010), i
+# (540,904), Shift then i: "hiI"; Enter (645,1222) creates it, and it goes.
+cp build/litekernx.img build-linux/test/osk.img
+path; open_app 0; go 146 1229; click; add sleep:1; go 435 1010; click; go 540 904; click; go 67 1116; click
+go 540 904; click; add sleep:0.3; go 645 1222; click; add sleep:1
+run $SHELL_BIN build-linux/test/osk.img "$P"
+check "the on-screen keyboard: up for a text field, Files above it, taps type, Shift, Enter" \
+    '^osk: shown$' \
+    '^wm: open Files at 0,56 720x1224$' \
+    '^osk: key h$' \
+    '^osk: shift on$' \
+    '^osk: key i \(shift\)$' \
+    '^user: files: create folder hiI$' \
+    '^osk: hidden$' \
+    '!crashed|PANIC'
+
 # Back closes an app with nothing to go back to.
 path; open_app 1; add phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"

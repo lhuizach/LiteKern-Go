@@ -101,6 +101,10 @@ void wm_draw_control(struct gfx_surface *s, int which, int maximised, int cx, in
  * (SYS_WINDOW_BACK). Without, Back closes the app. */
 void wm_set_back_wanted(struct wm_window *w, int wanted);
 int wm_back_wanted(const struct wm_window *w);
+/* ...and whether it has a text field open (SYS_WINDOW_KEYBOARD): the shell then
+ * shows the on-screen keyboard (kernel/osk.h). */
+void wm_set_keyboard_wanted(struct wm_window *w, int wanted);
+int wm_keyboard_wanted(const struct wm_window *w);
 
 /* Who owns it (the shell's app), set by whoever created it. */
 void wm_set_owner(struct wm_window *w, const void *owner);
@@ -149,7 +153,8 @@ void wm_set_hidden(struct wm_window *w, int hidden);
  * button or the content held down. */
 int wm_grabbed(void);
 
-/* The space windows live in: below the top bar (kernel/desktop.c sets it). */
+/* The space windows live in: below the top bar, above the on-screen keyboard
+ * (kernel/desktop.c sets it). Full-screen windows follow it (WM_EVENT_RESIZE). */
 void wm_set_area(struct gfx_rect area);
 struct gfx_rect wm_area(void);
 

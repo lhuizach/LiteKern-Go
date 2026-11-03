@@ -112,6 +112,7 @@ static const struct kip_call kip_calls[] = {
     [SYS_TIMEZONE_SET]    = { { V } },
     [SYS_TOUCHPAD_SET]    = { { V } },
     [SYS_WINDOW_BACK]     = { { V } },
+    [SYS_WINDOW_KEYBOARD] = { { V } },
 };
 #define KIP_CALLS (sizeof(kip_calls) / sizeof(kip_calls[0]))
 

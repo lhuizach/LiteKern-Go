@@ -263,6 +263,17 @@ static inline int k86_back_wanted(int wanted)
     return k86_call(SYS_WINDOW_BACK, (uintptr_t)was, 0, 0, 0);
 }
 
+/* LiteKern Go's on-screen keyboard: wanted = 1 while a text field is open. Only
+ * calls the shell when it changes, so it can be called before each wait. */
+static inline int k86_keyboard_wanted(int wanted)
+{
+    static int was = 0;
+    if (!!wanted == was)
+        return 0;
+    was = !!wanted;
+    return k86_call(SYS_WINDOW_KEYBOARD, (uintptr_t)was, 0, 0, 0);
+}
+
 /* speed: 0-100, 50 the usual. */
 static inline int k86_touchpad_set(int speed)
 {

@@ -11,5 +11,6 @@ void users_page_layout(void);                       /* the window was resized */
 void users_page_pointer(const struct k86_event *ev);
 void users_page_key(const struct key_event *k);
 int users_page_busy(void);               /* a dialog open: Back cancels it */
+int users_page_typing(void);             /* ...with a text field: the on-screen keyboard */
 
 #endif

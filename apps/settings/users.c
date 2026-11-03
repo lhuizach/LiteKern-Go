@@ -382,6 +382,11 @@ int users_page_busy(void)
     return flow.active;
 }
 
+int users_page_typing(void)
+{
+    return flow.active && dialog.has_entry;
+}
+
 void users_page_key(const struct key_event *k)
 {
     if (flow.active) {

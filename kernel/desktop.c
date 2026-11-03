@@ -8,6 +8,7 @@
 #include "kernel/icon.h"
 #include "kernel/input.h"
 #include "kernel/keymap.h"
+#include "kernel/osk.h"
 #include "kernel/lkx.h"
 #include "kernel/pmm.h"
 #include "kernel/power.h"
@@ -162,6 +163,8 @@ static void compose(struct gfx_rect r)
         draw_home();
     else
         wm_draw(VS, v.ox, v.oy);
+    if (started && !home_shown())
+        osk_draw(VS, v.ox, v.oy);
     if (started) {
         draw_topbar();
         if (menu_open)
@@ -1766,6 +1769,8 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
     int up = !(buttons & MOUSE_LEFT) && (last_buttons & MOUSE_LEFT);
     last_buttons = buttons;
     track_peek(x, y);
+    if (!wm_grabbed() && osk_pointer(x, y, buttons))
+        return;                 /* the on-screen keyboard's */
     if (home_swipe(x, buttons, down, up))
         return;
     if (wm_grabbed() && !pressed.kind) {    /* a drag or a press in a window */
@@ -1899,6 +1904,26 @@ static int phone_key(const struct key_event *k)
     return 1;
 }
 
+/* The on-screen keyboard: up while the app in front has a text field open,
+ * its window shrunk above it. */
+void shell_osk_key(const struct key_event *k)
+{
+    if (wm_focused())
+        wm_input_key(k);
+}
+
+static void keyboard_follow(void)
+{
+    struct wm_window *w = wm_top_visible();
+    int want = w && !covered && wm_keyboard_wanted(w);
+    if (want == osk_shown())
+        return;
+    osk_show(want);
+    wm_set_area((struct gfx_rect){ 0, T()->topbar_h, S()->w, S()->h - T()->topbar_h - osk_height() });
+    damage_all();
+    shell_flush();
+}
+
 static void power_tick(void)
 {
     if (power_down_ms && !power_held && uptime_ms() - power_down_ms >= POWER_HOLD_MS) {
@@ -1948,6 +1973,8 @@ void desktop_tick(void)
     dock_tick();
     pager_tick();
     power_tick();
+    osk_tick();
+    keyboard_follow();
     uint32_t ticks;
     if (!rtc || dev_ioctl(rtc, RTC_GET_TICKS, &ticks) < 0 || ticks == last_tick)
         return;

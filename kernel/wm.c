@@ -39,6 +39,7 @@ struct wm_window {
     struct gfx_rect normal;     /* restored size and place */
     int maximised, minimised;
     int back_wanted;            /* SYS_WINDOW_BACK */
+    int keyboard_wanted;        /* SYS_WINDOW_KEYBOARD */
     int hidden;                 /* left out while an animation draws it instead */
     int min_w, min_h;
     uint32_t *buf;              /* the content's pixels: capacity buf_w x buf_h */
@@ -309,6 +310,13 @@ void wm_set_maximised(struct wm_window *w, int maximised)
 void wm_set_area(struct gfx_rect a)
 {
     area = a;
+    for (int i = 0; i < nz; i++)            /* LiteKern Go: full-screen windows fit it */
+        if (z[i]->maximised && (z[i]->r.h != a.h || z[i]->r.w != a.w)) {
+            damage(z[i]);
+            z[i]->r = a;
+            apply_size(z[i]);
+            damage(z[i]);
+        }
 }
 
 struct gfx_rect wm_area(void)
@@ -492,6 +500,17 @@ void wm_set_back_wanted(struct wm_window *w, int wanted)
 int wm_back_wanted(const struct wm_window *w)
 {
     return w && w->back_wanted;
+}
+
+void wm_set_keyboard_wanted(struct wm_window *w, int wanted)
+{
+    if (w)
+        w->keyboard_wanted = wanted;
+}
+
+int wm_keyboard_wanted(const struct wm_window *w)
+{
+    return w && w->keyboard_wanted;
 }
 
 void wm_set_owner(struct wm_window *w, const void *owner)
