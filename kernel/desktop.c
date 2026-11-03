@@ -43,10 +43,10 @@
 #define DOCK_HIDDEN (DOCK_H + DOCK_GAP + 10)    /* how far down the dock goes to hide */
 #define REVEAL_EDGE 2       /* px from the bottom that bring a hidden dock up */
 #define HIDE_DELAY_MS 600   /* the dock stays this long after the pointer leaves it */
-#define MENU_W 180
-#define MENU_ITEM_H 34
-#define MENU_PAD 6
-#define MENU_ITEMS 4        /* Restart, Shut Down, Lock, Log Out: new ones last, so the others stay put */
+#define MENU_W 520           /* the power menu (Power held): a sheet in the middle, big buttons */
+#define MENU_ITEM_H 128
+#define MENU_PAD 24
+#define MENU_ITEMS 4        /* Power off, Restart, Lock, Log Out (with accounts) */
 #define menu_items() (users_need_login() ? 4 : 3)   /* Log Out: only with accounts */
 #define WHITE 0xffffff
 /* The shell (top bar, its menus, the dock) stays dark in both styles, like GNOME Shell. */
@@ -157,6 +157,8 @@ static void draw_note_icons(int x, int cy, uint32_t bg);
 static int home_shown(void);
 static void draw_topbar(void);
 static void draw_menu(void);
+static void draw_volume(void);
+static void draw_toast(void);
 
 /* Everything in r, bottom to top. */
 static void compose(struct gfx_rect r)
@@ -176,8 +178,10 @@ static void compose(struct gfx_rect r)
     if (started) {
         draw_qs();                      /* under the status bar, which stays on top */
         draw_topbar();
+        draw_volume();
         if (menu_open)
             draw_menu();
+        draw_toast();
     }
     V = outer;
 }
@@ -514,7 +518,7 @@ enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_BATTERY, H_WBTN, H_WCTL, H_RES
                 H_LIST,     /* a row of All apps */
                 H_BAR };
 
-static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT };
+static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_SHUTDOWN, H_RESTART, H_LOCK, H_LOGOUT };
 
 struct hit {
     enum hit_kind kind;
@@ -640,15 +644,15 @@ static void wbar_layout(struct wm_window *w, struct gfx_rect btn[WM_MAX_BUTTONS]
 
 static struct gfx_rect menu_rect(void)
 {
-    return (struct gfx_rect){ S()->w - T()->spacing - MENU_W, T()->topbar_h + 4, MENU_W,
-                              menu_items() * MENU_ITEM_H + 2 * MENU_PAD };
+    int h = menu_items() * MENU_ITEM_H + 2 * MENU_PAD;
+    return (struct gfx_rect){ (S()->w - MENU_W) / 2, (S()->h - h) / 2, MENU_W, h };
 }
 
 static struct gfx_rect menu_item_rect(int k)
 {
     struct gfx_rect m = menu_rect();
-    return (struct gfx_rect){ m.x + MENU_PAD, m.y + MENU_PAD + k * MENU_ITEM_H, MENU_W - 2 * MENU_PAD,
-                              MENU_ITEM_H };
+    return (struct gfx_rect){ m.x + MENU_PAD, m.y + MENU_PAD + k * MENU_ITEM_H + 8, MENU_W - 2 * MENU_PAD,
+                              MENU_ITEM_H - 16 };
 }
 
 /* --- the home screen (LiteKern Go, UI-PLAN.md) ----------------------------------------
@@ -1042,17 +1046,19 @@ static void draw_topbar(void)
 static void draw_menu(void)
 {
     struct gfx_rect m = menu_rect();
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, 140);     /* what's behind, dimmed */
     if (!visible(m))
         return;
-    gfx_fill_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 12, SHELL_POPOVER);
-    static const char *const labels[MENU_ITEMS] = { "Restart", "Shut Down", "Lock", "Log Out" };
+    gfx_fill_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 32, SHELL_POPOVER);
+    static const char *const labels[MENU_ITEMS] = { "Power off", "Restart", "Lock", "Log Out" };
+    uint32_t face = gfx_mix(SHELL_FG, SHELL_POPOVER, 30);
     for (int k = 0; k < menu_items(); k++) {
         struct gfx_rect r = menu_item_rect(k);
         int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
-        uint32_t bg = disabled ? SHELL_POPOVER : hit_bg((struct hit){ menu_kinds[k], 0 }, SHELL_POPOVER);
-        if (bg != SHELL_POPOVER)
-            gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, 6, bg);
-        text_draw(VS, VX(r.x + 12), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2), labels[k], TEXT_BODY,
+        uint32_t bg = disabled ? face : hit_bg((struct hit){ menu_kinds[k], 0 }, face);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+        text_draw(VS, VX(r.x + (r.w - text_width(labels[k], TEXT_BOLD)) / 2),
+                  VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD,
                   disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG);
     }
 }
@@ -1414,8 +1420,10 @@ static void menu_set(int open)
     if (menu_open == open)
         return;
     menu_open = open;
-    shell_damage(menu_rect());
-    shell_damage(power_rect());
+    kprintf("shell: power menu %s\n", open ? "open" : "closed");
+    if (open)
+        wm_pointer_gone();
+    damage_all();                       /* the dimming covers everything */
 }
 
 static void launch(int i, struct gfx_rect from)
@@ -2537,6 +2545,154 @@ static void home_key(void)
     turn_to(0, 0);                      /* on the home screen already: back to its first page */
 }
 
+/* --- volume, screenshots, toasts (UI-PLAN.md) ------------------------------------------
+ *
+ * The volume keys show a slim slider on the right edge, near the keys, for
+ * 2 s after the last press; held, they keep changing it. There's no sound
+ * yet, so the level is only kept (and logged). Power + Volume Down saves a
+ * screenshot to Pictures/Screenshots; a toast says so. */
+
+#define VOL_STEP 10
+#define VOL_SHOW_MS 2000
+#define VOL_REPEAT_MS 150
+#define TOAST_MS 2000
+
+static int volume = 60;                 /* 0..100 */
+static uint32_t vol_until;              /* the pop-up shows until then (0: hidden) */
+static uint16_t vol_key;                /* the volume key held, or 0 */
+static uint32_t vol_repeat_at;
+static int vol_before;                  /* the level before Volume Down: a screenshot puts it back */
+static const char *toast;
+static uint32_t toast_until;
+
+static struct gfx_rect vol_rect(void)
+{
+    return (struct gfx_rect){ S()->w - 24 - 64, T()->topbar_h + 160, 64, 440 };
+}
+
+static struct gfx_rect toast_rect(void)
+{
+    int w = toast ? text_width(toast, TEXT_BODY) + 64 : 0;
+    return (struct gfx_rect){ (S()->w - w) / 2, S()->h - 180, w, 72 };
+}
+
+static void vol_hide(void)
+{
+    if (!vol_until)
+        return;
+    vol_until = 0;
+    shell_damage(vol_rect());
+}
+
+static void vol_change(int up)
+{
+    int v = volume + (up ? VOL_STEP : -VOL_STEP);
+    volume = v < 0 ? 0 : v > 100 ? 100 : v;
+    kprintf("shell: volume %s, %d%%\n", up ? "up" : "down", volume);
+    vol_until = uptime_ms() + VOL_SHOW_MS;
+    shell_damage(vol_rect());
+}
+
+static void draw_volume(void)
+{
+    struct gfx_rect r = vol_rect();
+    if (!vol_until || !visible(r))
+        return;
+    const struct theme *t = T();
+    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.w / 2, SHELL_POPOVER);
+    int tx = r.x + r.w / 2 - 6, ty = r.y + 28, th = r.h - 120;  /* the track */
+    gfx_fill_round_rect(VS, VX(tx), VY(ty), 12, th, 6, gfx_mix(SHELL_FG, SHELL_POPOVER, 50));
+    int fill = th * volume / 100;
+    if (fill)
+        gfx_fill_round_rect(VS, VX(tx), VY(ty + th - fill), 12, fill, 6, t->accent_bg);
+    char n[4];
+    int len = 0;
+    if (volume >= 100)
+        n[len++] = '1';
+    if (volume >= 10)
+        n[len++] = (char)('0' + volume / 10 % 10);
+    n[len++] = (char)('0' + volume % 10);
+    n[len] = '\0';
+    text_draw(VS, VX(r.x + (r.w - text_width(n, TEXT_SMALL)) / 2), VY(r.y + r.h - 72), n, TEXT_SMALL, SHELL_FG);
+}
+
+static void show_toast(const char *text)
+{
+    shell_damage(toast_rect());
+    toast = text;
+    toast_until = uptime_ms() + TOAST_MS;
+    shell_damage(toast_rect());
+    kprintf("shell: toast \"%s\"\n", text);
+}
+
+static void draw_toast(void)
+{
+    struct gfx_rect r = toast_rect();
+    if (!toast || !visible(r))
+        return;
+    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, SHELL_POPOVER);
+    text_draw(VS, VX(r.x + 32), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2), toast, TEXT_BODY, SHELL_FG);
+}
+
+static char *put_num(char *p, int v, int digits)
+{
+    for (int i = digits - 1; i >= 0; i--, v /= 10)
+        p[i] = (char)('0' + v % 10);
+    return p + digits;
+}
+
+/* The screen as it is now (without the volume pop-up), as a PNG. */
+static void screenshot(void)
+{
+    vol_hide();
+    shell_flush();
+    struct rtc_time c = { 0 };
+    if (rtc)
+        dev_read(rtc, &c, sizeof(c));
+    char name[40] = "Screenshot_", *p = name + 11;     /* Screenshot_20261103_200512.png */
+    p = put_num(p, c.year, 4);
+    p = put_num(p, c.month, 2);
+    p = put_num(p, c.day, 2);
+    *p++ = '_';
+    p = put_num(p, c.hour, 2);
+    p = put_num(p, c.minute, 2);
+    p = put_num(p, c.second, 2);
+    memcpy(p, ".png", 5);
+    uintptr_t phys;
+    uint32_t bytes, len;
+    int err = wallpaper_png_surface(S(), &phys, &bytes, &len);
+    if (!err) {
+        err = settings_save_screenshot(name, (const void *)phys, len);
+        wallpaper_pack_free(phys, bytes);
+    }
+    if (err) {
+        kprintf("shell: screenshot not saved (%d)\n", err);
+        show_toast("Couldn't save the screenshot");
+    } else {
+        kprintf("shell: screenshot %s, %u KB\n", name, len / 1024);
+        show_toast("Screenshot saved");
+    }
+}
+
+static void volume_tick(void)
+{
+    uint32_t now = uptime_ms();
+    if (vol_key && (int32_t)(now - vol_repeat_at) >= 0) {
+        vol_change(vol_key == KEY_VOLUME_UP);
+        vol_repeat_at = now + VOL_REPEAT_MS;
+        shell_flush();
+    }
+    if (vol_until && (int32_t)(now - vol_until) >= 0) {
+        vol_hide();
+        shell_flush();
+    }
+    if (toast && (int32_t)(now - toast_until) >= 0) {
+        shell_damage(toast_rect());
+        toast = 0;
+        shell_flush();
+    }
+}
+
 static int phone_key(const struct key_event *k)
 {
     if (k->key == KEY_PHONE_HOME) {
@@ -2554,6 +2710,12 @@ static int phone_key(const struct key_event *k)
     if (k->key == KEY_PHONE_POWER) {
         if (k->pressed && !power_down_ms) {
             power_down_ms = uptime_ms() | 1;
+            if (vol_key == KEY_VOLUME_DOWN) {   /* Volume Down, then Power: a screenshot */
+                vol_key = 0;
+                volume = vol_before;            /* not a volume change after all */
+                power_held = 1;                 /* nor a lock, nor the menu */
+                screenshot();
+            }
         } else if (!k->pressed) {
             if (power_down_ms && !power_held) {
                 menu_set(0);
@@ -2564,6 +2726,22 @@ static int phone_key(const struct key_event *k)
             power_down_ms = 0;
             power_held = 0;
         }
+        return 1;
+    }
+    if (k->key == KEY_VOLUME_UP || k->key == KEY_VOLUME_DOWN) {
+        if (!k->pressed) {
+            if (vol_key == k->key)
+                vol_key = 0;
+        } else if (k->key == KEY_VOLUME_DOWN && power_down_ms && !power_held) {
+            power_held = 1;                     /* Power, then Volume Down: a screenshot */
+            screenshot();
+        } else if (vol_key != k->key) {
+            vol_before = volume;
+            vol_key = (uint16_t)k->key;
+            vol_repeat_at = uptime_ms() + POWER_HOLD_MS;
+            vol_change(k->key == KEY_VOLUME_UP);
+        }
+        shell_flush();
         return 1;
     }
     if (!k->pressed)
@@ -2601,10 +2779,6 @@ static int phone_key(const struct key_event *k)
         if (qs_shown())
             qs_set(0, 1);
         sw_set(!sw_open);
-        break;
-    case KEY_VOLUME_UP:
-    case KEY_VOLUME_DOWN:
-        kprintf("shell: volume %s\n", k->key == KEY_VOLUME_UP ? "up" : "down");
         break;
     }
     shell_flush();
@@ -2687,6 +2861,7 @@ void desktop_tick(void)
     pager_tick();
     qs_tick();
     power_tick();
+    volume_tick();
     osk_tick();
     keyboard_follow();
     uint32_t ticks;
@@ -2722,7 +2897,8 @@ void desktop_tick(void)
 
 int desktop_busy(void)
 {
-    return dock_moving || hide_at || pager_moving || qs_moving;
+    /* A key held: its long press (or repeat) is timed, so no sleeping. */
+    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms;
 }
 
 static void log_event(const struct wm_event *ev)

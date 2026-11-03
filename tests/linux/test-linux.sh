@@ -124,8 +124,8 @@ check "an app opens full-screen from its home screen icon; Home goes back home" 
     '^desktop: minimise Log$' \
     '!^screen: corner '$PLAIN
 
-# Power held opens the power menu; its Lock (the third item, 618,151), then a key unlocks.
-path; add keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.3; go 618 151; click; add sleep:1.5 spc sleep:1.5
+# Power held opens the power menu (a sheet in the middle); its Lock (the third button, 360,760), then a key unlocks.
+path; add keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.3; go 360 760; click; add sleep:1.5 spc sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "the power menu locks; a key unlocks" \
     '^shell: lock$' \
@@ -143,8 +143,8 @@ check "Super+L locks: the big clock" \
 # locks, held it opens the power menu instead.
 run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 vol_up vol_down phone_home phone_recents sleep:0.3 phone_power sleep:1"
 check "the phone keys: Home, Recent apps, volume; Power locks" \
-    '^shell: volume up$' \
-    '^shell: volume down$' \
+    '^shell: volume up, 70%$' \
+    '^shell: volume down, 60%$' \
     '^shell: Home$' \
     '^desktop: show desktop$' \
     '^shell: Recent apps$' \
@@ -155,6 +155,39 @@ run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 keydown:phone_power sleep:0.
 check "holding Power opens the power menu, and doesn't lock" \
     '^shell: power menu \(Power held\)$' \
     '!shell: lock \(Power\)'
+
+# The power menu's sheet: Power off, Restart, Lock; a tap outside closes it.
+path; add keydown:phone_power sleep:0.8 keyup:phone_power sleep:0.3; go 360 200; click; add sleep:0.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the power menu: a tap outside closes it" \
+    '^shell: power menu open$' \
+    '^shell: power menu closed$' \
+    '!shell: lock'
+
+# Volume Up held: it keeps going up (60 -> 100 and stays); the pop-up on the
+# right edge (its accent fill, 632..696 x 216..656), gone 2 s after the last press.
+SCREEN="has=3584e4@632,216,696,656" \
+    run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 keydown:vol_up sleep:1.2 keyup:vol_up sleep:0.3"
+check "Volume Up held: the level climbs to 100, the pop-up shows it (the blue accent)" \
+    '^shell: volume up, 70%$' \
+    '^shell: volume up, 100%$' \
+    '^screen: has 3584e4 in 632,216,696,656: yes$' \
+    '!shell: volume up, 110%'
+
+# Screenshots: Power, then Volume Down (and the other way round): a PNG in
+# /Pictures/Screenshots, no lock, no power menu; a toast says so.
+cp build/litekernx.img build-linux/test/shots.img
+run $SHELL_BIN build-linux/test/shots.img "sleep:1.5 keydown:phone_power sleep:0.1 keydown:vol_down sleep:0.1 keyup:vol_down keyup:phone_power sleep:1.2 keydown:vol_down sleep:0.1 keydown:phone_power sleep:0.1 keyup:phone_power keyup:vol_down sleep:0.5"
+nshots=$(mdir -b -i build-linux/test/shots.img@@8388608 ::/Pictures/Screenshots 2>/dev/null | grep -c '\.png$')
+first=$(mdir -b -i build-linux/test/shots.img@@8388608 ::/Pictures/Screenshots 2>/dev/null | grep '\.png$' | head -1)
+sig=$( [ -n "$first" ] && mtype -i build-linux/test/shots.img@@8388608 "$first" | head -c 8 | od -An -tx1 | tr -d ' \n')
+out+=$'\n'"shots: $nshots, signature $sig"
+check "Power + Volume Down saves screenshots as PNG files" \
+    '^shell: screenshot Screenshot_[0-9]{8}_[0-9]{6}\.png, [0-9]+ KB$' \
+    '^shell: toast "Screenshot saved"$' \
+    '^shots: [12], signature 89504e470d0a1a0a$' \
+    '!shell: lock \(Power\)' \
+    '!shell: power menu'
 
 # The lock screen (kernel/lockscreen.c): a tap only hints, a short swipe
 # springs back, a long one (300 px up) unlocks.

@@ -402,6 +402,29 @@ static void make_home(const char *name)
     subdir(v, home, "Pictures", 1, &d);
 }
 
+int settings_save_screenshot(const char *name, const void *data, uint32_t len)
+{
+    struct fat_volume *v = boot_volume();
+    const struct user *u = users_get(users_current());
+    uint32_t dir;
+    struct fat_entry e;
+    if (!v)
+        return -ENODEV;
+    dir = fat_root(v);
+    int err = 0;
+    if (u && users_need_login())            /* accounts: their home folder's Pictures */
+        err = subdir(v, dir, HOMES, 1, &dir) || subdir(v, dir, u->name, 1, &dir) ? -EIO : 0;
+    if (!err)
+        err = subdir(v, dir, "Pictures", 1, &dir);
+    if (!err)
+        err = subdir(v, dir, "Screenshots", 1, &dir);
+    if (!err)
+        err = fat_create(v, dir, name, 0, &e);
+    if (!err)
+        err = fat_write(v, &e, data, len);
+    return err;
+}
+
 void settings_user_changed(const char *name)
 {
     if (!users_need_login()) {              /* one user, no password: as before accounts */

@@ -356,12 +356,61 @@ int wallpaper_pack(uintptr_t *phys, uint32_t *bytes, uint32_t *len)
     return wallpaper_pack_surface(&image, phys, bytes, len);
 }
 
+/* A PNG file (LiteKern Go's screenshots): the same filtered, deflated rows,
+ * wrapped as zlib in an IDAT chunk, after the signature and IHDR. */
+#define PNG_HEAD (8 + 25 + 8 + 2)           /* signature, IHDR, IDAT's length and type, zlib's header */
+#define PNG_TAIL (4 + 4 + 12)               /* Adler-32, IDAT's CRC, IEND */
+
+static uint32_t crc_tab[256];
+
+static uint32_t crc32(uint32_t crc, const uint8_t *p, uint32_t n)
+{
+    if (!crc_tab[1])
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++)
+                c = c & 1 ? 0xedb88320u ^ (c >> 1) : c >> 1;
+            crc_tab[i] = c;
+        }
+    crc = ~crc;
+    while (n--)
+        crc = crc_tab[(crc ^ *p++) & 0xff] ^ (crc >> 8);
+    return ~crc;
+}
+
+static uint8_t *be32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24), p[1] = (uint8_t)(v >> 16), p[2] = (uint8_t)(v >> 8), p[3] = (uint8_t)v;
+    return p + 4;
+}
+
+/* One chunk's length, type and data are at c (data already there): its CRC after. */
+static uint8_t *png_chunk(uint8_t *c, const char *type, uint32_t n)
+{
+    be32(c, n);
+    memcpy(c + 4, type, 4);
+    return be32(c + 8 + n, crc32(0, c + 4, 4 + n));
+}
+
+static int pack(const struct gfx_surface *src, int png, uintptr_t *phys, uint32_t *bytes, uint32_t *len);
+
 int wallpaper_pack_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len)
+{
+    return pack(src, 0, phys, bytes, len);
+}
+
+int wallpaper_png_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len)
+{
+    return pack(src, 1, phys, bytes, len);
+}
+
+static int pack(const struct gfx_surface *src, int png, uintptr_t *phys, uint32_t *bytes, uint32_t *len)
 {
     int w = src->w, h = src->h, stride = 1 + 3 * w;
     uint32_t raw_len = (uint32_t)h * (uint32_t)stride;
     uint32_t raw_bytes = (raw_len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    uint32_t cap = sizeof(struct header) + raw_len + raw_len / 64 + 1024;
+    uint32_t head = png ? PNG_HEAD : sizeof(struct header);
+    uint32_t cap = head + raw_len + raw_len / 64 + 1024 + PNG_TAIL;
     uint32_t out_bytes = (cap + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1), work_bytes = DEFLATE_WORK;
     uintptr_t raw = pmm_alloc_contiguous(raw_bytes / PAGE_SIZE);
     uintptr_t out = raw ? pmm_alloc_contiguous(out_bytes / PAGE_SIZE) : 0;
@@ -406,13 +455,36 @@ int wallpaper_pack_surface(const struct gfx_surface *src, uintptr_t *phys, uint3
     }
     hd.top = hd.left = src->px[0];
     hd.bottom = hd.right = src->px[(h - 1) * src->stride + w - 1];
-    int packed = deflate_raw((const uint8_t *)raw, raw_len, (uint8_t *)out + sizeof(hd),
-                             cap - sizeof(hd), (void *)work);
+    int packed = deflate_raw((const uint8_t *)raw, raw_len, (uint8_t *)out + head,
+                             cap - head - PNG_TAIL, (void *)work);
+    uint32_t a = 1, b = 0;                  /* zlib's Adler-32 of the rows */
+    for (uint32_t i = 0; png && i < raw_len; i++) {
+        a = (a + ((const uint8_t *)raw)[i]) % 65521;
+        b = (b + a) % 65521;
+    }
     free_frames(raw, raw_bytes);
     free_frames(work, work_bytes);
     if (packed < 0) {
         free_frames(out, out_bytes);
         return packed;
+    }
+    if (png) {
+        uint8_t *o = (uint8_t *)out;
+        memcpy(o, "\x89PNG\r\n\x1a\n", 8);
+        uint8_t *d = o + 8 + 8;             /* IHDR: w, h, 8-bit RGB, no interlace */
+        d = be32(d, (uint32_t)w);
+        d = be32(d, (uint32_t)h);
+        d[0] = 8, d[1] = 2, d[2] = 0, d[3] = 0, d[4] = 0;
+        uint8_t *idat = png_chunk(o + 8, "IHDR", 13);
+        idat[8] = 0x78, idat[9] = 0x01;     /* zlib: deflate, 32 KiB window */
+        uint32_t zlen = 2 + (uint32_t)packed + 4;
+        be32(idat + 8 + 2 + packed, b << 16 | a);
+        uint8_t *end = png_chunk(idat, "IDAT", zlen);
+        end = png_chunk(end, "IEND", 0);
+        *phys = out;
+        *bytes = out_bytes;
+        *len = (uint32_t)(end - o);
+        return 0;
     }
     hd.packed_len = (uint32_t)packed;
     memcpy((void *)out, &hd, sizeof(hd));

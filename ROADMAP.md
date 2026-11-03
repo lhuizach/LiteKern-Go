@@ -84,7 +84,10 @@ The steps from UI-PLAN.md, in order. After 2.5 it looks like a phone.
       ones shake and wait), notification titles under the clock, Power held for its
       power menu; one user, no picker. Not yet: setting a PIN (Settings, phase 3), the
       battery while charging, the screen going off on Power (needs the phone)
-- [ ] 2.12 Power menu, volume pop-up, screenshots
+- [x] 2.12 Power menu (a sheet in the middle: Power off, Restart, Lock), volume pop-up
+      (right edge, 2 s, held keeps changing), screenshots (Power + Volume Down, PNG in
+      Pict/Screenshots, a toast). Not yet: real sound (the level is only kept), dragging
+      the volume slider, screenshots of the lock screen, keeping the volume across restarts
 
 **Done when:** in the VM, the shell can be used with only the mouse (as a
 finger) and the six stand-in keys, and each step has a test in `tests/linux/`.

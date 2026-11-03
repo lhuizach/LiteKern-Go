@@ -73,6 +73,9 @@ int settings_private(const char *path);
  * one (replacing it), or read one into buf (its size, -ENOENT, -EINVAL if
  * bigger than len, -ENODEV without a writable boot disk). */
 int settings_write_file(const char *name, const void *data, uint32_t len);
+/* LiteKern Go: a screenshot (a PNG file) into Pictures/Screenshots, in the
+ * home folder ("/" without accounts), made if missing. 0 or an error. */
+int settings_save_screenshot(const char *name, const void *data, uint32_t len);
 int settings_read_file(const char *name, void *buf, uint32_t len);
 
 /* The lock screen's own picture: read (at boot, from settings_load) and written. */

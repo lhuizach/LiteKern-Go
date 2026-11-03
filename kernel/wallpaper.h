@@ -47,6 +47,8 @@ int wallpaper_set_packed(const void *data, uint32_t size);
 int wallpaper_render(const char *name, struct gfx_surface *dst);
 int wallpaper_render_packed(const void *data, uint32_t size, struct gfx_surface *dst);
 int wallpaper_pack_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len);
+/* The same picture as a PNG file (LiteKern Go's screenshots); freed with wallpaper_pack_free(). */
+int wallpaper_png_surface(const struct gfx_surface *src, uintptr_t *phys, uint32_t *bytes, uint32_t *len);
 void wallpaper_scale_cover(const uint32_t *px, int w, int h, int stride, struct gfx_surface *dst);
 const char *wallpaper_current(void);       /* "" for the plain colour */
 
