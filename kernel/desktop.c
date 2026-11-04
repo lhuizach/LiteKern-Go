@@ -1071,6 +1071,63 @@ static void draw_topbar(void)
     bar_fg = SHELL_FG;
 }
 
+/* The power menu's icons, drawn smooth (gfx_thick_line), about 40 px:
+ * a circle's points 32 round, from 3 o'clock clockwise (y is down). */
+static const int16_t circ[32] = { 1024, 1004, 946, 851, 724, 569, 392, 200, 0, -200, -392, -569, -724, -851,
+                                  -946, -1004, -1024, -1004, -946, -851, -724, -569, -392, -200, 0, 200, 392,
+                                  569, 724, 851, 946, 1004 };
+
+static void arc_point(int cx, int cy, int r, int i, int *x, int *y)
+{
+    *x = cx + r * circ[i & 31] / 1024;
+    *y = cy + r * circ[(i + 24) & 31] / 1024;     /* sin = cos a quarter turn back */
+}
+
+/* An arc from point a to point b (b > a), clockwise, w px thick. */
+static void arc(int cx, int cy, int r, int a, int b, int w, uint32_t c)
+{
+    for (int i = a; i < b; i++) {
+        int x0, y0, x1, y1;
+        arc_point(cx, cy, r, i, &x0, &y0);
+        arc_point(cx, cy, r, i + 1, &x1, &y1);
+        gfx_thick_line(VS, VX(x0), VY(y0), VX(x1), VY(y1), w, c);
+    }
+}
+
+static void menu_icon(enum hit_kind k, int cx, int cy, uint32_t c)
+{
+    int x, y;
+    switch (k) {
+    case H_SHUTDOWN:                        /* the power symbol: a ring open at the top, a bar */
+        arc(cx, cy + 2, 16, 27, 53, 5, c);
+        gfx_thick_line(VS, VX(cx), VY(cy - 18), VX(cx), VY(cy - 2), 5, c);
+        break;
+    case H_RESTART:                         /* a ring with an arrowhead: round again */
+        arc(cx, cy, 16, 28, 54, 5, c);      /* from half past one round to the top left */
+        arc_point(cx, cy, 16, 54, &x, &y);  /* its end, heading up and right: the arrow's tip there */
+        x += 4, y -= 2;
+        gfx_thick_line(VS, VX(x), VY(y), VX(x - 11), VY(y - 5), 5, c);
+        gfx_thick_line(VS, VX(x), VY(y), VX(x - 5), VY(y + 11), 5, c);
+        break;
+    case H_LOCK:                            /* a padlock */
+        arc(cx, cy - 6, 10, 16, 32, 5, c);
+        gfx_thick_line(VS, VX(cx - 10), VY(cy - 6), VX(cx - 10), VY(cy), 5, c);
+        gfx_thick_line(VS, VX(cx + 10), VY(cy - 6), VX(cx + 10), VY(cy), 5, c);
+        gfx_fill_round_rect(VS, VX(cx - 17), VY(cy - 1), 34, 24, 6, c);
+        break;
+    case H_LOGOUT:                          /* a door frame and an arrow out of it */
+        gfx_thick_line(VS, VX(cx - 4), VY(cy - 18), VX(cx - 16), VY(cy - 18), 4, c);
+        gfx_thick_line(VS, VX(cx - 16), VY(cy - 18), VX(cx - 16), VY(cy + 18), 4, c);
+        gfx_thick_line(VS, VX(cx - 16), VY(cy + 18), VX(cx - 4), VY(cy + 18), 4, c);
+        gfx_thick_line(VS, VX(cx - 6), VY(cy), VX(cx + 16), VY(cy), 5, c);
+        gfx_thick_line(VS, VX(cx + 16), VY(cy), VX(cx + 8), VY(cy - 8), 5, c);
+        gfx_thick_line(VS, VX(cx + 16), VY(cy), VX(cx + 8), VY(cy + 8), 5, c);
+        break;
+    default:
+        break;
+    }
+}
+
 static void draw_menu(void)
 {
     struct gfx_rect m = menu_rect();
@@ -1079,7 +1136,7 @@ static void draw_menu(void)
     m.y += drop;
     if (!visible(m))
         return;
-    gfx_blend_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 32, SHELL_POPOVER, (uint32_t)al);
+    gfx_blend_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 56, SHELL_POPOVER, (uint32_t)al);     /* round: 56 */
     static const char *const labels[MENU_ITEMS] = { "Power off", "Restart", "Lock", "Log Out" };
     uint32_t face = gfx_mix(SHELL_FG, SHELL_POPOVER, 30);
     for (int k = 0; k < menu_items(); k++) {
@@ -1088,10 +1145,12 @@ static void draw_menu(void)
         int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
         uint32_t bg = disabled ? face : hit_bg((struct hit){ menu_kinds[k], 0 }, face);
         gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg, (uint32_t)al);
-        if (al > 160)
-            text_draw(VS, VX(r.x + (r.w - text_width(labels[k], TEXT_BOLD)) / 2),
-                      VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD,
-                      disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG);
+        if (al > 160) {                     /* its icon, then its name, the two centred */
+            uint32_t fg = disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG;
+            int tw = text_width(labels[k], TEXT_BOLD), w = 40 + 20 + tw, x = r.x + (r.w - w) / 2;
+            menu_icon(menu_kinds[k], x + 20, r.y + r.h / 2, fg);
+            text_draw(VS, VX(x + 60), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD, fg);
+        }
     }
 }
 
