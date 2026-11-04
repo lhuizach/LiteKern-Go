@@ -114,6 +114,10 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       off. New app call SYS_TIME (the local time). Not yet: sound (no audio), alarms
       while Clock is closed (no background service), choosing days
 - [ ] Gallery: photo grid, viewer, swipe between photos
+- [ ] Motion pass: smooth (pixel) scrolling with momentum after a flick in every
+      list and page; the app switcher, keyboard, sheets, dialogs, power menu and
+      volume pop-up sliding or fading in and out; tab and page changes that slide.
+      Already animated: opening apps, lock/unlock, home pages, quick settings
 - [ ] Pick native Linux games with the brother, check they build for aarch64
 
 **Done when:** the v1 apps work in the VM.

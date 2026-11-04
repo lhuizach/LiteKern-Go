@@ -56,6 +56,36 @@ void gfx_rect_outline(struct gfx_surface *s, int x, int y, int w, int h, uint32_
     gfx_fill_rect(s, x + w - 1, y + 1, 1, h - 2, colour);
 }
 
+static void put(struct gfx_surface *s, int x, int y, uint32_t colour, uint32_t alpha);
+
+void gfx_thick_line(struct gfx_surface *s, int x0, int y0, int x1, int y1, int width, uint32_t colour)
+{
+    /* In eighths of a pixel: the segment's ends at pixel centres, samples
+     * at 2i+1 within each pixel, and the half width as the radius. */
+    int64_t ax = 8 * x0 + 4, ay = 8 * y0 + 4, dx = 8 * (x1 - x0), dy = 8 * (y1 - y0);
+    int64_t len2 = dx * dx + dy * dy, r2 = (int64_t)(4 * width) * (4 * width);
+    int pad = width / 2 + 2;
+    int minx = (x0 < x1 ? x0 : x1) - pad, maxx = (x0 > x1 ? x0 : x1) + pad;
+    int miny = (y0 < y1 ? y0 : y1) - pad, maxy = (y0 > y1 ? y0 : y1) + pad;
+    for (int py = miny; py <= maxy; py++)
+        for (int px = minx; px <= maxx; px++) {
+            int n = 0;
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) {
+                    int64_t sx = 8 * px + 2 * i + 1 - ax, sy = 8 * py + 2 * j + 1 - ay, ex = sx, ey = sy;
+                    if (len2) {
+                        int64_t t = sx * dx + sy * dy;
+                        t = t < 0 ? 0 : t > len2 ? len2 : t;
+                        ex = sx - dx * t / len2;
+                        ey = sy - dy * t / len2;
+                    }
+                    n += ex * ex + ey * ey <= r2;
+                }
+            if (n)
+                put(s, px, py, colour, (uint32_t)(n * 255 / 16));
+        }
+}
+
 void gfx_line(struct gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t colour)
 {
     if (x0 == x1 || y0 == y1) {     /* straight: one clipped fill */
@@ -340,6 +370,32 @@ void gfx_blit_alpha_scaled(struct gfx_surface *dst, struct gfx_rect d, const uin
         return;
     }
     struct gfx_rect c = clip(dst, d.x, d.y, d.w, d.h);
+    if (d.w < w && d.h < h) {
+        /* Smaller: each pixel the average of the source pixels it covers
+         * (alpha-weighted), so icons stay smooth instead of losing pixels. */
+        for (int row = c.y; row < c.y + c.h; row++) {
+            int sy0 = (row - d.y) * h / d.h, sy1 = (row - d.y + 1) * h / d.h;
+            uint32_t *dp = dst->px + row * dst->stride;
+            for (int col = c.x; col < c.x + c.w; col++) {
+                int sx0 = (col - d.x) * w / d.w, sx1 = (col - d.x + 1) * w / d.w;
+                uint32_t sa = 0, sr = 0, sg = 0, sb = 0, n = 0;
+                for (int y = sy0; y < sy1; y++)
+                    for (int x = sx0; x < sx1; x++, n++) {
+                        uint32_t p = argb[y * stride + x], a = p >> 24;
+                        sa += a;
+                        sr += (p >> 16 & 0xff) * a;
+                        sg += (p >> 8 & 0xff) * a;
+                        sb += (p & 0xff) * a;
+                    }
+                if (!sa)
+                    continue;
+                uint32_t rgb = (sr / sa) << 16 | (sg / sa) << 8 | sb / sa, a = sa / n * alpha / 255;
+                if (a)
+                    dp[col] = gfx_mix(rgb, dp[col], a);
+            }
+        }
+        return;
+    }
     uint32_t step_x = (uint32_t)(((uint64_t)w << 16) / (uint32_t)d.w);
     uint32_t step_y = (uint32_t)(((uint64_t)h << 16) / (uint32_t)d.h);
     for (int row = c.y; row < c.y + c.h; row++) {

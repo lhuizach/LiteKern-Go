@@ -654,21 +654,18 @@ int wm_grabbed(void)
 static void draw_icon(struct gfx_surface *s, enum wm_icon icon, int cx, int cy, uint32_t c)
 {
     switch (icon) {
+    /* LiteKern Go: twice LiteKern X's size, drawn smooth. */
     case WM_ICON_BACK:
-        for (int i = 0; i < 2; i++) {
-            gfx_line(s, cx + 3 + i, cy - 5, cx - 2 + i, cy, c);
-            gfx_line(s, cx - 2 + i, cy, cx + 3 + i, cy + 5, c);
-        }
+        gfx_thick_line(s, cx + 6, cy - 12, cx - 6, cy, 5, c);
+        gfx_thick_line(s, cx - 6, cy, cx + 6, cy + 12, 5, c);
         break;
     case WM_ICON_UP:
-        for (int i = 0; i < 2; i++) {
-            gfx_line(s, cx - 5, cy + 3 + i, cx, cy - 2 + i, c);
-            gfx_line(s, cx, cy - 2 + i, cx + 5, cy + 3 + i, c);
-        }
+        gfx_thick_line(s, cx - 12, cy + 6, cx, cy - 6, 5, c);
+        gfx_thick_line(s, cx, cy - 6, cx + 12, cy + 6, 5, c);
         break;
     case WM_ICON_ADD:
-        gfx_fill_rect(s, cx - 6, cy - 1, 13, 2, c);
-        gfx_fill_rect(s, cx - 1, cy - 6, 2, 13, c);
+        gfx_thick_line(s, cx - 13, cy, cx + 13, cy, 5, c);
+        gfx_thick_line(s, cx, cy - 13, cx, cy + 13, 5, c);
         break;
     case WM_ICON_NONE:
         break;

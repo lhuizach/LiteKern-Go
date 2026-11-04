@@ -231,16 +231,17 @@ void wg_list_set_count(struct wg_list *l, int count)
 static void draw_row_icon(struct gfx_surface *s, enum wg_icon icon, int x, int cy)
 {
     switch (icon) {
+    /* LiteKern Go: twice LiteKern X's size (48 x 40), smooth corners. */
     case WG_ICON_FOLDER:
-        gfx_fill_round_rect(s, x, cy - 8, 9, 4, 1, 0x3584e4);        /* tab */
-        gfx_fill_round_rect(s, x, cy - 6, 20, 14, 2, 0x3584e4);      /* back */
-        gfx_fill_round_rect(s, x, cy - 3, 20, 11, 2, 0x62a0ea);      /* front */
+        gfx_fill_round_rect(s, x, cy - 18, 20, 10, 4, 0x3584e4);     /* tab */
+        gfx_fill_round_rect(s, x, cy - 13, 46, 32, 5, 0x3584e4);     /* back */
+        gfx_fill_round_rect(s, x, cy - 6, 46, 25, 5, 0x62a0ea);      /* front */
         break;
     case WG_ICON_FILE:
-        gfx_fill_round_rect(s, x + 3, cy - 9, 14, 18, 2, 0xdeddda);
-        gfx_fill_rect(s, x + 6, cy - 3, 8, 1, 0x9a9996);             /* lines of text */
-        gfx_fill_rect(s, x + 6, cy, 8, 1, 0x9a9996);
-        gfx_fill_rect(s, x + 6, cy + 3, 5, 1, 0x9a9996);
+        gfx_fill_round_rect(s, x + 7, cy - 20, 32, 40, 5, 0xdeddda);
+        gfx_fill_rect(s, x + 14, cy - 8, 18, 3, 0x9a9996);           /* lines of text */
+        gfx_fill_rect(s, x + 14, cy - 1, 18, 3, 0x9a9996);
+        gfx_fill_rect(s, x + 14, cy + 6, 11, 3, 0x9a9996);
         break;
     case WG_ICON_NONE:
         break;
@@ -274,7 +275,7 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
         int x = 14;
         if (row.icon != WG_ICON_NONE) {
             draw_row_icon(&c, row.icon, x, cy);
-            x += 32;
+            x += 64;
         }
         int dw = row.detail ? text_width(row.detail, TEXT_BODY) : 0, ty = cy - text_height(TEXT_BODY) / 2;
         if (row.detail)

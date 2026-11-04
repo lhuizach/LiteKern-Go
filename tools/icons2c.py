@@ -8,7 +8,7 @@ ARRAY names the C array (default "icons"); assets/splash.json uses it for the
 
 Every icon listed in icons.json becomes a 0xAARRGGBB pixel array and an
 entry in `icons[]` (kernel/icon.h). The build fails with a clear message if
-a file is missing or isn't 48x48 RGBA (docs/ASSET-PROMPTS.md §2).
+a file is missing or isn't 112x112 RGBA (docs/ASSET-PROMPTS.md §2).
 """
 import json
 import os
@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lkx_png import read_rgba  # noqa: E402
 
-SIZE = 48
+SIZE = 112                  # LiteKern Go: the home screen's size, so it's drawn 1:1
 
 
 def fail(msg):

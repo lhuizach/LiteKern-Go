@@ -38,6 +38,9 @@ struct gfx_rect gfx_rect_union(struct gfx_rect a, struct gfx_rect b);   /* bound
 void gfx_fill_rect(struct gfx_surface *s, int x, int y, int w, int h, uint32_t colour);
 void gfx_rect_outline(struct gfx_surface *s, int x, int y, int w, int h, uint32_t colour);
 void gfx_line(struct gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t colour);
+/* LiteKern Go: a line `width` px thick between pixel centres, anti-aliased
+ * (4x4 samples a pixel), with round ends: the header's icons at 2x. */
+void gfx_thick_line(struct gfx_surface *s, int x0, int y0, int x1, int y1, int width, uint32_t colour);
 
 /* Solid shapes with hard (not anti-aliased) edges; Phase 3 adds smoothing. */
 void gfx_fill_round_rect(struct gfx_surface *s, int x, int y, int w, int h, int r, uint32_t colour);
