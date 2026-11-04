@@ -12,6 +12,7 @@
 #include "kernel/apps.h"
 #include "kernel/desktop.h"
 #include "kernel/errno.h"
+#include "kernel/icon.h"
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/sys_app.h"
@@ -50,6 +51,9 @@ struct proc {
     uint32_t last_call_ms;
     uint32_t timer_ms, timer_due;
     uint32_t free_before;
+    int stopped;            /* the Task Manager ended it */
+    uint64_t cpu_ticks;     /* its CPU time at the last SYS_TASKS (clock ticks) */
+    uint32_t cpu_ms, started_ms;
 };
 
 static struct proc procs[PROC_MAX];
@@ -134,7 +138,7 @@ int lkx_start(const struct app *a, struct wm_window *w)
     p->win = w;
     p->pid = pid;
     p->sock = sv[0];
-    p->last_call_ms = uptime_ms();
+    p->last_call_ms = p->started_ms = uptime_ms();
     p->free_before = free_before;
     return 0;
 }
@@ -179,6 +183,8 @@ static void ended(struct proc *p)
     waitpid(p->pid, &status, 0);
     if (p->hung)
         kprintf("lkx: %s stopped responding and was stopped\n", a->name);
+    else if (p->stopped)
+        kprintf("lkx: %s was stopped from the Task Manager\n", a->name);
     else if (WIFSIGNALED(status))
         kprintf("lkx: %s crashed (%s) and was stopped; the system carries on\n", a->name,
                 signal_name(WTERMSIG(status)));
@@ -485,6 +491,106 @@ void plat_more_apps(void)
     }
     if (d)
         closedir(d);
+}
+
+/* --- the Task Manager (SYS_TASKS, SYS_TASK_STOP) ---------------------------------------------- */
+
+static unsigned long long proc_field(const char *path, const char *key)
+{
+    char line[160];
+    unsigned long long v = 0;
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    size_t n = strlen(key);
+    while (fgets(line, sizeof(line), f))
+        if (!strncmp(line, key, n)) {
+            v = strtoull(line + n, 0, 10);
+            break;
+        }
+    fclose(f);
+    return v;
+}
+
+/* A process's CPU time (user + system, clock ticks), from /proc/PID/stat. */
+static uint64_t cpu_ticks(pid_t pid)
+{
+    char path[48], buf[512];
+    snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    char *p = strrchr(buf, ')');            /* past the name, which may hold spaces */
+    unsigned long long ut = 0, st = 0;
+    if (p)
+        sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &ut, &st);
+    return ut + st;
+}
+
+int lkx_tasks(struct k86_task *out, int max, struct k86_meminfo *mem)
+{
+    long hz = sysconf(_SC_CLK_TCK);
+    uint32_t now = uptime_ms();
+    int n = 0;
+    for (int i = 0; i < PROC_MAX && n < max; i++) {
+        struct proc *p = &procs[i];
+        if (!p->used)
+            continue;
+        struct k86_task *t = &out[n++];
+        memset(t, 0, sizeof(*t));
+        snprintf(t->name, sizeof(t->name), "%s", p->app->name);
+        t->id = (int32_t)p->pid;
+        t->flags = (p->win && p->win == wm_top_visible() ? K86_TASK_FRONT : 0) | (p == running_proc ? K86_TASK_SELF : 0);
+        char path[48];
+        snprintf(path, sizeof(path), "/proc/%d/status", (int)p->pid);
+        t->memory_kib = (uint32_t)proc_field(path, "VmRSS:");
+        uint64_t ticks = cpu_ticks(p->pid);
+        uint32_t dt = now - p->cpu_ms;
+        if (p->cpu_ms && dt && hz > 0)
+            t->cpu_permille = (uint32_t)((ticks - p->cpu_ticks) * 1000000ull / ((uint64_t)hz * dt));
+        p->cpu_ticks = ticks;
+        p->cpu_ms = now;
+        t->seconds = (now - p->started_ms) / 1000;
+    }
+    memset(mem, 0, sizeof(*mem));
+    mem->total_kib = (uint32_t)proc_field("/proc/meminfo", "MemTotal:");
+    mem->available_kib = (uint32_t)proc_field("/proc/meminfo", "MemAvailable:");
+    mem->shell_kib = (uint32_t)proc_field("/proc/self/status", "VmRSS:");
+    return n;
+}
+
+int lkx_task_icon(int32_t id, uint32_t *out)
+{
+    for (int i = 0; i < PROC_MAX; i++) {
+        struct proc *p = &procs[i];
+        if (!p->used || (int32_t)p->pid != id)
+            continue;
+        const struct icon *ic = p->app->icon ? icon_find(p->app->icon) : 0;
+        if (!ic || ic->w != K86_ICON || ic->h != K86_ICON)
+            return -ENOENT;
+        memcpy(out, ic->px, K86_ICON * K86_ICON * 4);
+        return 0;
+    }
+    return -ESRCH;
+}
+
+int lkx_task_stop(int32_t id)
+{
+    for (int i = 0; i < PROC_MAX; i++) {
+        struct proc *p = &procs[i];
+        if (!p->used || (int32_t)p->pid != id)
+            continue;
+        if (p == running_proc)
+            return -EINVAL;                 /* not itself */
+        p->stopped = 1;
+        kill(p->pid, SIGKILL);
+        ended(p);
+        return 0;
+    }
+    return -ESRCH;
 }
 
 int lkx_running(const struct app *a)

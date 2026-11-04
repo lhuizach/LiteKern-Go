@@ -1,0 +1,11 @@
+{
+  "name": "Task Manager",
+  "icon": "taskmgr",
+  "entry": "taskmgr.lkx",
+  "version": "1.0",
+  "order": 7,
+  "width": 720,
+  "height": 1224,
+  "min_width": 360,
+  "min_height": 600
+}

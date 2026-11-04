@@ -13,6 +13,7 @@
 
 #include "kernel/apps.h"
 #include "kernel/idt.h"
+#include "kernel/kern86_abi.h"
 #include "kernel/wm.h"
 
 /* Add every app found in the ramdisk to the app list (kernel/apps.h). */
@@ -43,5 +44,11 @@ int lkx_set_timer(uint32_t ms);
 int lkx_set_memory(uint32_t bytes);
 /* Is the app running? */
 int lkx_running(const struct app *a);
+
+/* LiteKern Go's Task Manager (SYS_TASKS, SYS_TASK_STOP; kern86_abi.h).
+ * The kernel version has no memory of its own to report: -ENOSYS. */
+int lkx_tasks(struct k86_task *out, int max, struct k86_meminfo *mem);
+int lkx_task_stop(int32_t id);
+int lkx_task_icon(int32_t id, uint32_t *out);  /* K86_ICON x K86_ICON pixels */
 
 #endif

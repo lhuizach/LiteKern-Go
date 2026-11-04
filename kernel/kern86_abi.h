@@ -269,6 +269,34 @@ struct k86_dirent {
 #define SYS_NOTIFY          40
 #define K86_NOTE_TITLE      48
 #define K86_NOTE_BODY       96
+/* LiteKern Go's Task Manager. SYS_TASKS: ebx: struct k86_task * out, ecx:
+ * how many fit, edx: struct k86_meminfo * out: the running apps (the
+ * caller too, marked), and the phone's memory; returns how many apps.
+ * SYS_TASK_STOP: ebx: an app's id (from SYS_TASKS): it's ended at once,
+ * anything unsaved in it lost; -EINVAL for the caller itself, -ESRCH if
+ * it's gone already. */
+#define SYS_TASKS           42
+#define SYS_TASK_STOP       43
+/* SYS_TASK_ICON: ebx: an app's id, ecx: uint32_t * out (K86_ICON x K86_ICON
+ * 0xAARRGGBB pixels): its home screen icon. -ENOENT if it has none. */
+#define SYS_TASK_ICON       44
+#define K86_ICON            112
+#define K86_TASKS_MAX       16
+#define K86_TASK_FRONT      1   /* flags: its window is the one in front */
+#define K86_TASK_SELF       2   /* ... it's the one asking */
+struct k86_task {
+    char name[32];
+    int32_t id;
+    uint32_t flags;
+    uint32_t memory_kib;        /* in RAM now */
+    uint32_t cpu_permille;      /* of one core, since the last SYS_TASKS (or its start) */
+    uint32_t seconds;           /* running this long */
+};
+struct k86_meminfo {
+    uint32_t total_kib, available_kib;
+    uint32_t shell_kib;         /* the shell itself (the home screen, the status bar...) */
+};
+
 /* LiteKern Go: ebx: struct k86_time * out: the local time (the time zone's),
  * as the status bar shows it. -ENODEV without a clock. */
 #define SYS_TIME            41

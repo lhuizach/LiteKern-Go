@@ -84,7 +84,7 @@ click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 # The home screen (kernel/desktop.c): apps in 4 columns of 168 x 184 px tiles
 # from y 276. tap_app N taps the N-th (0: Files, 1 Calculator, 2 Settings,
-# 3 Clock, 4 Blocksmith, 5 Gallery, then Log; the tests' apps come before Log).
+# 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager, then Log; the tests' apps come before Log).
 tile_x() { echo $(( (W - 4 * 168) / 2 + 84 + ($1 % 4) * 168 )); }
 tile_y() { echo $(( 56 + 220 + 72 + ($1 / 4) * 184 )); }
 tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:1.5; }
@@ -115,7 +115,7 @@ check "the home screen: its clock, a swipe to All apps, Home back to the first p
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.
-path; tap_app 6; add phone_home sleep:1
+path; tap_app 7; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
@@ -311,6 +311,17 @@ check "Gallery: the pictures' grid, one opened, a swipe to the next, Delete" \
     '^user: gallery: delete Screenshot_[0-9_]+\.png: done$' \
     '!crashed|stopped|PANIC'
 
+# The Task Manager (the 7th icon): Calculator opened first, then Home; it
+# lists both (itself marked), with their memory; Calculator's Stop
+# (597,610) asks, Enter stops it.
+path; open_app 1; add phone_home sleep:0.8; tap_app 6; add sleep:1.5; go 597 610; click; add sleep:0.8 ret sleep:1.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "Task Manager: the running apps, and Stop ends one" \
+    '^user: taskmgr: open, 2 apps running$' \
+    '^user: taskmgr: stop Calculator: done$' \
+    '^lkx: Calculator was stopped from the Task Manager$' \
+    '!crashed|PANIC'
+
 # Calculator's keys by touch: 7 (101,770), x (617,770), 1 (101,1052), Del
 # (274,629), 6 (446,911), = (617,1193): 7 x 6 = 42.
 path; open_app 1; go 101 770; click; go 617 770; click; go 101 1052; click; go 274 629; click
@@ -395,7 +406,7 @@ check "the app switcher: a tap goes to an app, a swipe up closes one, Close all 
 
 # Notify's two notifications (the tests' image), then Power: their cards
 # under the lock screen's clock (white titles, 80..640 x 580..800).
-path; tap_app 9; add phone_home sleep:0.8 phone_power sleep:1.5
+path; tap_app 10; add phone_home sleep:0.8 phone_power sleep:1.5
 cp build/test-apps/litekernx.img build-linux/test/locknote.img
 SCREEN="has=ffffff@80,580,640,800" run $SHELL_BIN build-linux/test/locknote.img "$P"
 check "the lock screen shows notifications under the clock" \
@@ -516,9 +527,9 @@ check "Files opened and closed with Back 15 times, ending cleanly each time" \
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their home screen icons: Crash, Badcalls, Hang are the 7th to 9th.
+# Their home screen icons: Crash, Badcalls, Hang are the 8th to 10th.
 path
-for i in 6 7 8; do add phone_home sleep:0.5; tap_app "$i"; done
+for i in 7 8 9; do add phone_home sleep:0.5; tap_app "$i"; done
 add sleep:11 phone_home sleep:0.5; tap_app 0
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
@@ -546,12 +557,12 @@ check "apps: a crash, bad calls and a hang each end only the app" \
     '^user: files: open Boot disk' \
     '!still running|PANIC|Segmentation'
 
-# Notifications and quick settings (the tests' image): Notify (the 10th icon)
+# Notifications and quick settings (the tests' image): Notify (the 11th icon)
 # posts two; the status bar is pulled down (from 360,20 to 920): the panel,
 # with them newest first. A tap on the first ("Again", 360,526) opens its app
 # and dismisses it. Pulled again: Dark mode (276,236) and Do not disturb
 # (444,236) tiles, then Back closes it. Home held opens it too.
-path; tap_app 9; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
+path; tap_app 10; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
 go 360 526; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 276 236; click; add sleep:0.5
 go 444 236; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img

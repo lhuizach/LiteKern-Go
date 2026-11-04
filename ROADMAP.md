@@ -128,6 +128,11 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       power menu and toasts fade and rise, the volume pop-up slides in from the edge,
       the keyboard slides up and down. Not yet: dialogs and Files' sheet (app-drawn),
       tab and page changes sliding, the switcher's cards following a swipe-up
+- [x] Task Manager: the phone's memory (a bar: apps, system, free), the running apps
+      with their icons, memory, CPU and whether in front, refreshed every second;
+      Stop ends one after asking. New app calls SYS_TASKS, SYS_TASK_STOP, SYS_TASK_ICON
+- [x] Dialogs and Files' long-press sheet fade and rise in (wg_animate); the wm and
+      widgets self-tests rewritten for the phone (no test fails now)
 - [ ] Pick native Linux games with the brother, check they build for aarch64
 
 **Done when:** the v1 apps work in the VM.

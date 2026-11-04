@@ -231,6 +231,24 @@ int lkx_set_memory(uint32_t bytes)
     return 0;
 }
 
+int lkx_tasks(struct k86_task *out, int max, struct k86_meminfo *mem)
+{
+    (void)out, (void)max, (void)mem;
+    return -ENOSYS;                         /* LiteKern Go's, on Linux: platform/lkx.c */
+}
+
+int lkx_task_stop(int32_t id)
+{
+    (void)id;
+    return -ENOSYS;
+}
+
+int lkx_task_icon(int32_t id, uint32_t *out)
+{
+    (void)id, (void)out;
+    return -ENOSYS;
+}
+
 int lkx_running(const struct app *a)
 {
     for (int i = 0; i < PROC_MAX; i++)

@@ -626,6 +626,18 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
         wm_set_keyboard_wanted(lkx_window(), a1 == K86_KEYBOARD_NUMBERS ? K86_KEYBOARD_NUMBERS : a1 != 0);
         return 0;
     case SYS_TIME:           return time_out(a1);
+    case SYS_TASKS: {
+        int max = (int)a2 > K86_TASKS_MAX ? K86_TASKS_MAX : (int)a2;
+        if (max < 0 || user_check(a1, (uint32_t)max * sizeof(struct k86_task), 1) ||
+            user_check(a3, sizeof(struct k86_meminfo), 1))
+            return -EFAULT;
+        return lkx_tasks((struct k86_task *)a1, max, (struct k86_meminfo *)a3);
+    }
+    case SYS_TASK_STOP:      return lkx_task_stop((int32_t)a1);
+    case SYS_TASK_ICON:
+        if (user_check(a2, K86_ICON * K86_ICON * 4, 1))
+            return -EFAULT;
+        return lkx_task_icon((int32_t)a1, (uint32_t *)a2);
     case SYS_NOTIFY: {
         char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];
         int err;

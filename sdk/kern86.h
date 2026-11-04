@@ -276,6 +276,22 @@ static inline int k86_keyboard_wanted(int wanted)
     return k86_call(SYS_WINDOW_KEYBOARD, (uintptr_t)was, 0, 0, 0);
 }
 
+/* LiteKern Go's Task Manager: the running apps (SYS_TASKS), ending one. */
+static inline int k86_tasks(struct k86_task *out, int max, struct k86_meminfo *mem)
+{
+    return k86_call(SYS_TASKS, (uintptr_t)out, (uintptr_t)max, (uintptr_t)mem, 0);
+}
+
+static inline int k86_task_stop(int32_t id)
+{
+    return k86_call(SYS_TASK_STOP, (uintptr_t)id, 0, 0, 0);
+}
+
+static inline int k86_task_icon(int32_t id, uint32_t *out)
+{
+    return k86_call(SYS_TASK_ICON, (uintptr_t)id, (uintptr_t)out, 0, 0);
+}
+
 /* LiteKern Go: the local time (SYS_TIME). */
 static inline int k86_time(struct k86_time *out)
 {

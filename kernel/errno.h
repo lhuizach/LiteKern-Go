@@ -6,6 +6,7 @@
 
 #define EPERM   1       /* not allowed (not an admin) */
 #define ENOENT  2       /* no such file or entry */
+#define ESRCH   3       /* no such process (an app gone already) */
 #define EIO     5       /* I/O error */
 #define ENOMEM  12      /* out of memory / table full */
 #define EACCES  13      /* a wrong password */
