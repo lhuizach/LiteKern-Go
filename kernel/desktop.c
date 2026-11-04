@@ -1642,9 +1642,6 @@ void desktop_start(void)
     /* Self-tests may have left windows: they belong to no app, but show. */
     damage_all();
     shell_flush();
-    /* The boot budget's finish line (docs/BOOT-BUDGET.md: <= 5 s from stage 1). */
-    kprintf("[boot] desktop t=%u\n", uptime_ms());
-    kprintf("desktop: ready\n");     /* everything is up: the tests wait for this */
     if (users_need_login())
         lockscreen_login();     /* someone has to log in first (kernel/users.h) */
     if (splash_active()) {
@@ -1653,6 +1650,9 @@ void desktop_start(void)
         splash_end();
         cursor_init();          /* hidden during the splash */
     }
+    /* The boot budget's finish line (docs/BOOT-BUDGET.md: <= 5 s from stage 1). */
+    kprintf("[boot] desktop t=%u\n", uptime_ms());
+    kprintf("desktop: ready\n");     /* everything is up, the logo gone: the tests wait for this */
 }
 
 int desktop_started(void)

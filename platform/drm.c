@@ -38,6 +38,7 @@
 #include <unistd.h>
 
 static int card = -1, ep = -1, ino = -1, tty = -1;
+static int shadowed;                /* the driver shows only what DIRTYFB says changed */
 static uint8_t *scan;               /* the dumb buffer, mapped */
 static uint32_t pitch, fb_id, crtc_id;
 static int sw, sh;
@@ -72,6 +73,19 @@ static int open_display(int *w, int *h)
     if (card < 0) {
         kprintf("drm: no /dev/dri/card0\n");
         return -1;
+    }
+    /* Drivers with a shadow copy (VirtualBox's vmwgfx and vboxvideo, virtio,
+     * qxl) show a frame only once told (DIRTYFB), so they're told after each
+     * copy: animations drawn in loops of their own (the boot logo, the lock
+     * screen's slide) would show nothing otherwise. Telling one that scans
+     * out directly (QEMU's bochs) costs a whole frame each time, so it's
+     * told when the loop sleeps, as before. */
+    char name[32] = "";
+    struct drm_version v = { .name_len = sizeof(name) - 1, .name = name };
+    if (!ioctl(card, DRM_IOCTL_VERSION, &v)) {
+        shadowed = !strcmp(name, "vmwgfx") || !strcmp(name, "vboxvideo") || !strcmp(name, "virtio_gpu") ||
+                   !strcmp(name, "qxl");
+        kprintf("drm: driver %s%s\n", name, shadowed ? " (told of each change)" : "");
     }
     struct drm_mode_card_res res = { 0 };
     if (ioctl(card, DRM_IOCTL_MODE_GETRESOURCES, &res) || !res.count_connectors || !res.count_crtcs) {
@@ -250,6 +264,8 @@ none:
     return -1;
 }
 
+static void flush(void);
+
 static void d_present(const uint32_t *px, int stride, int x, int y, int w, int h)
 {
     if (!scan || x < 0 || y < 0 || x + w > sw || y + h > sh)
@@ -267,6 +283,8 @@ static void d_present(const uint32_t *px, int stride, int x, int y, int w, int h
         nclips = 1;
     }
     clips[nclips++] = c;
+    if (shadowed)
+        flush();                            /* VirtualBox's window: at once (d_open) */
 }
 
 static void flush(void)
