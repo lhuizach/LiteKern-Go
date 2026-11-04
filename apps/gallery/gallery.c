@@ -428,7 +428,8 @@ static void viewer_pointer(const struct wg_pointer *p)
         wg_dialog_init(&dialog, "Delete this picture?", "It will be gone for good.", "Delete", WG_BUTTON_DESTRUCTIVE,
                        0);
         layout_viewer();
-        draw_viewer();
+        dialog.appear = 0;                  /* it fades in, the card rising */
+        wg_animate(&dialog.appear, 0, 256, 180, draw_viewer, k86_uptime_ms);
         return;
     }
     if (b_lock.dirty || b_wall.dirty || b_delete.dirty) {

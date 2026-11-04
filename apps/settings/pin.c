@@ -22,6 +22,7 @@ static int nsteps, at, active, op;
 static char first[K86_PASSWORD];
 static void (*finished)(const char *message, int bad);
 static void (*redraw)(void);
+static int appearing;                   /* the first dialog fades in (pin_start) */
 
 static void copy(char *dst, const char *src, int size)
 {
@@ -62,6 +63,12 @@ static void show(const char *error)
     if (error)
         wg_dialog_set_body(&dialog, error, 1);
     wg_dialog_layout(&dialog, c->w, c->h);
+    if (appearing) {                        /* the first one fades in, the card rising */
+        appearing = 0;
+        dialog.appear = 0;
+        wg_animate(&dialog.appear, 0, 256, 180, redraw, k86_uptime_ms);
+        return;
+    }
     redraw();
 }
 
@@ -86,6 +93,7 @@ void pin_start(struct gfx_surface *canvas, int what, int has_pin, int user, void
         return;
     active = 1;
     k86_logf("settings: lock PIN %s", op == PIN_SET ? "set" : op == PIN_CHANGE ? "change" : "remove");
+    appearing = 1;
     show(0);
 }
 

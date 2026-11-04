@@ -169,6 +169,7 @@ struct wg_dialog {
     int nbuttons;
     struct gfx_rect r;          /* the card, set by wg_dialog_layout */
     int dirty;
+    int appear;                 /* LiteKern Go: 0..256 while it fades in (wg_animate), 256 shown */
 };
 
 /* A dialog with a Cancel button and one action button; with an entry if
@@ -178,8 +179,14 @@ void wg_dialog_init(struct wg_dialog *d, const char *title, const char *body,
 void wg_dialog_set_body(struct wg_dialog *d, const char *body, int error);
 /* Centre the card in a w x h area. */
 void wg_dialog_layout(struct wg_dialog *d, int w, int h);
-/* Dim the whole surface (what's behind), then draw the card. */
+/* Dim the whole surface (what's behind), then draw the card. While it
+ * appears (appear < 256) the dimming fades in and the card rises into place. */
 void wg_dialog_show(struct gfx_surface *s, struct wg_dialog *d);
+
+/* LiteKern Go: move *value from `from` to `to` over `ms`, eased (fast,
+ * then settling), calling redraw() (which presents) for each frame; now()
+ * is the clock (k86_uptime_ms). For a dialog's or a sheet's appearing. */
+void wg_animate(int *value, int from, int to, int ms, void (*redraw)(void), uint32_t (*now)(void));
 /* Redraw just the card (after input set dirty flags). */
 void wg_dialog_draw(struct gfx_surface *s, struct wg_dialog *d);
 /* The index of the button chosen, or WG_DIALOG_NONE. Enter chooses the

@@ -223,7 +223,8 @@ static void ask_password(const char *ssid, const char *error)
         wg_dialog_set_body(&dialog, error, 1);
     asking = 1;
     wg_dialog_layout(&dialog, c->w, c->h);
-    network_page_draw();
+    dialog.appear = 0;                      /* it fades in, the card rising */
+    wg_animate(&dialog.appear, 0, 256, 180, network_page_draw, k86_uptime_ms);
 }
 
 static void connect_selected(void)

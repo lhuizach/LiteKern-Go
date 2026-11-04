@@ -67,6 +67,7 @@ static struct wg_button b_wallpaper, b_lock;     /* under a picture */
 /* The sheet a long press brings up: the item, and its choices. */
 enum { SHEET_OPEN, SHEET_RENAME, SHEET_DELETE, NSHEET };
 static int sheet = -1;                  /* the item, or -1: no sheet */
+static int sheet_appear = 256;          /* 0..256 while it slides up (wg_animate) */
 static int sheet_pressed = -1;
 
 /* A finger on a viewer: where it went down (dragging text, swiping pictures). */
@@ -309,7 +310,7 @@ static struct gfx_rect sheet_rect(void)
 {
     const struct theme *t = theme_get();
     int h = 24 + text_height(TEXT_BOLD) + 16 + NSHEET * t->row_h + 24;
-    return (struct gfx_rect){ 0, canvas.h - h, canvas.w, h };
+    return (struct gfx_rect){ 0, canvas.h - h + (256 - sheet_appear) * h / 256, canvas.w, h };
 }
 
 static struct gfx_rect sheet_item(int k)
@@ -323,7 +324,7 @@ static struct gfx_rect sheet_item(int k)
 static void draw_sheet(void)
 {
     const struct theme *t = theme_get();
-    gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, 120);
+    gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, (uint32_t)(120 * sheet_appear / 256));
     struct gfx_rect r = sheet_rect();
     gfx_fill_round_rect(&canvas, r.x, r.y, r.w, r.h + 32, 32, t->dialog_bg);
     text_draw_fit(&canvas, MARGIN, r.y + 24, items[sheet].e.name, canvas.w - 2 * MARGIN, TEXT_BOLD, t->fg);
@@ -749,7 +750,8 @@ static void open_dialog(enum action a)
         return;
     }
     dialog_for = a;
-    draw_all();
+    dialog.appear = 0;                      /* it fades in, the card rising */
+    wg_animate(&dialog.appear, 0, 256, 180, draw_all, k86_uptime_ms);
 }
 
 /* A name the kernel would refuse, said the way a person would. */
@@ -846,12 +848,14 @@ static void open_sheet(int i)
     sheet_pressed = -1;
     wg_list_select(&list, i);
     k86_logf("files: sheet %s", items[i].e.name);
-    draw_all();
+    wg_animate(&sheet_appear, 0, 256, 200, draw_all, k86_uptime_ms);     /* up from the bottom */
 }
 
 static void close_sheet(void)
 {
+    wg_animate(&sheet_appear, 256, 0, 160, draw_all, k86_uptime_ms);     /* back down */
     sheet = -1;
+    sheet_appear = 256;
     draw_all();
 }
 

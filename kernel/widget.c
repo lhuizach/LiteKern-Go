@@ -612,7 +612,7 @@ static int body_width(const struct wg_dialog *d)
 void wg_dialog_init(struct wg_dialog *d, const char *title, const char *body,
                     const char *action, enum wg_button_style action_style, int has_entry)
 {
-    *d = (struct wg_dialog){ .title = title, .has_entry = has_entry, .nbuttons = 2 };
+    *d = (struct wg_dialog){ .title = title, .has_entry = has_entry, .nbuttons = 2, .appear = 256 };
     wg_dialog_set_body(d, body, 0);
     d->buttons[0] = (struct wg_button){ .label = "Cancel", .style = WG_BUTTON_NORMAL };
     d->buttons[1] = (struct wg_button){ .label = action, .style = action_style };
@@ -685,10 +685,36 @@ void wg_dialog_draw(struct gfx_surface *s, struct wg_dialog *d)
     d->dirty = 0;
 }
 
+/* The card and what's on it, dy px lower (for drawing while it appears). */
+static void dialog_shift(struct wg_dialog *d, int dy)
+{
+    d->r.y += dy;
+    d->entry.r.y += dy;
+    for (int i = 0; i < d->nbuttons; i++)
+        d->buttons[i].r.y += dy;
+}
+
 void wg_dialog_show(struct gfx_surface *s, struct wg_dialog *d)
 {
-    gfx_darken(s, 0, 0, s->w, s->h, A_DIM_BEHIND);
+    int a = d->appear < 0 ? 0 : d->appear > 256 ? 256 : d->appear, dy = (256 - a) * 60 / 256;
+    gfx_darken(s, 0, 0, s->w, s->h, (uint32_t)(A_DIM_BEHIND * a / 256));
+    dialog_shift(d, dy);
     wg_dialog_draw(s, d);
+    dialog_shift(d, -dy);
+}
+
+void wg_animate(int *value, int from, int to, int ms, void (*redraw)(void), uint32_t (*now)(void))
+{
+    uint32_t t0 = now();
+    for (;;) {
+        uint32_t el = now() - t0;
+        int t = el >= (uint32_t)ms ? 1024 : (int)(el * 1024 / (uint32_t)ms), u = 1024 - t;
+        int e = 1024 - (int)((int64_t)u * u / 1024 * u / 1024);     /* ease out: fast, then settling */
+        *value = from + (to - from) * e / 1024;
+        redraw();
+        if (t >= 1024)
+            break;
+    }
 }
 
 int wg_dialog_pointer(struct wg_dialog *d, const struct wg_pointer *p)
