@@ -1,5 +1,7 @@
-/* LiteKern X — the boot splash (Phase 3 §5): the logo and a progress bar
- * while the kernel starts, instead of the scrolling log.
+/* LiteKern X — the boot splash (Phase 3 §5): the logo while the system
+ * starts, instead of the scrolling log. LiteKern Go: the G logo and the
+ * name on black, fading in; shown at least 1.5 s, then it cross-fades into
+ * the first screen (the lock screen or the home screen).
  *
  * `make SPLASH=logo` (the default) or `make SPLASH=log` (the scrolling
  * boot log, as before). Behind the splash the log keeps being recorded (the
@@ -18,5 +20,14 @@ int splash_active(void);
 
 /* The desktop takes over from here. */
 void splash_end(void);
+
+/* The cross-fade: begin() (1 if there's a splash to fade from) holds the
+ * screen, the first screen is drawn, then end() fades it in. */
+int splash_fade_begin(void);
+void splash_fade_end(void);
+
+/* No fades and no minimum time: the logo, then the first screen at once
+ * (lkx-shell's headless backend, so the tests don't wait on it). */
+void splash_set_brief(int brief);
 
 #endif

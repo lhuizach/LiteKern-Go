@@ -98,9 +98,18 @@ static uint32_t copy_out_with_overlay(struct gfx_rect r)
     return (uint32_t)(r.w * r.h);
 }
 
+static int held;
+
+void screen_hold(int on)
+{
+    held = on;
+}
+
 uint32_t screen_present(void)
 {
     uint32_t pixels = 0;
+    if (held)
+        return 0;
     /* The areas with the cursor in them first, then the rest: when it jumps
      * (a fast move), it appears in its new place before it's wiped from the
      * old one, so the display never catches a moment with no cursor at all

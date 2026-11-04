@@ -34,6 +34,10 @@ void screen_damage_all(void);
  * number of pixels copied. */
 uint32_t screen_present(void);
 
+/* LiteKern Go: while held, screen_present() shows nothing and keeps the
+ * damage (a screen is drawn, unseen, to fade into: kernel/splash.c). */
+void screen_hold(int on);
+
 /* The overlay (the mouse cursor): an ARGB image composited over the back
  * buffer on its way to the display, never drawn into it. At most
  * SCREEN_OVERLAY_MAX pixels square. Setting or moving it damages the old and

@@ -34,10 +34,11 @@ Run createvm --name $Name --ostype Linux_64 --register
 
 # CPU, memory, firmware
 Run modifyvm $Name --cpus 4 --cpuexecutioncap $CpuCap --memory 2048 `
-    --firmware bios --ioapic on --pae on --longmode on --rtcuseutc on `
+    --firmware efi --ioapic on --pae on --longmode on --rtcuseutc on `
     --boot1 disk --boot2 dvd --boot3 none --boot4 none
 
-# Screen: 720x1280 portrait
+# Screen: 720x1280 portrait, from the EFI firmware on (no resize at the boot logo)
+Run setextradata $Name VBoxInternal2/EfiGraphicsResolution 720x1280
 Run modifyvm $Name --graphicscontroller vboxsvga --vram 32 --accelerate3d off
 Run setextradata $Name "CustomVideoMode1" "720x1280x32"
 Run setextradata $Name "GUI/LastGuestSizeHint" "720,1280"

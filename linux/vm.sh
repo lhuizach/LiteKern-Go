@@ -55,7 +55,8 @@ vbox)
         exit 1
     fi
     export VM="LiteKern Go" DISK_UUID=4c4b5800-0000-4000-8000-000000000003 STORAGECTL=SATA
-    export KEEP_DISK=1 IMAGE DIR=build-linux/vbox MOUSE=usbtablet
+    # EFI: it boots the kernel straight from EFI/BOOT/BOOTX64.EFI (no bootloader text).
+    export KEEP_DISK=1 IMAGE DIR=build-linux/vbox MOUSE=usbtablet FIRMWARE=efi EFI_RES=720x1280
     export WAIT_FOR="${WAIT_FOR:-^desktop: ready}"
     exec bash vm/vbox.sh "$@"
     ;;

@@ -11,7 +11,7 @@
 # the Windows drive, and Buildroot won't build in a path with spaces).
 #
 # The stick keeps the kernel version's layout (the Makefile's): the ramdisk
-# (apps, wallpapers) at sector 2048 and the FAT32 partition at 16384, so
+# (apps, wallpapers) at sector 4096 and the FAT32 partition at 16384, so
 # lkx-shell opens the stick just as it opens build/litekernx.img on the PC.
 # What changes: the boot code. SYSLINUX's MBR starts the FAT32 partition's
 # SYSLINUX, which loads Linux and the system (an initramfs, run from RAM)
@@ -119,7 +119,10 @@ with open(img, "r+b") as f:
 EOF
 mmd -i "$IMAGE@@$FAT_OFFSET" ::/syslinux 2>/dev/null || true
 mcopy -o -i "$IMAGE@@$FAT_OFFSET" "$OUT/images/bzImage" ::/syslinux/bzImage
-mcopy -o -i "$IMAGE@@$FAT_OFFSET" "$OUT/images/rootfs.cpio.gz" ::/syslinux/rootfs.gz
+# The same kernel (the system built in) for EFI firmware: the VirtualBox VM
+# boots it with no bootloader, so nothing but the logo shows (linux/kernel.config).
+mmd -i "$IMAGE@@$FAT_OFFSET" ::/EFI ::/EFI/BOOT 2>/dev/null || true
+mcopy -o -i "$IMAGE@@$FAT_OFFSET" "$OUT/images/bzImage" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -o -i "$IMAGE@@$FAT_OFFSET" linux/syslinux.cfg ::/syslinux/syslinux.cfg
 "$SYSLINUX/bios/mtools/syslinux" --offset "$FAT_OFFSET" --directory /syslinux --install "$IMAGE"
 echo "== done: $IMAGE ($(du -h "$IMAGE" | cut -f1))"

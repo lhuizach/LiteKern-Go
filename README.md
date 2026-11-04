@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="96" alt="LiteKern X logo">
+  <img src="assets/logo.svg" width="96" alt="LiteKern Go logo">
 </p>
 
 <h1 align="center">LiteKern X</h1>

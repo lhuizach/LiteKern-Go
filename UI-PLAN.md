@@ -78,8 +78,18 @@ sized for a 1024x600 netbook at about 118 ppi, so everything gets bigger.
 
 ### Boot splash
 
-LiteKern logo centred on black, then a fade to the lock screen. Reuses
-`splash.c`. No text scrolling past.
+The LiteKern Go logo (the blue G with a grey bar, `tools/make-logo.py`)
+and "LiteKern Go" under it, centred on black. It fades in, stays at least
+1.5 s, then cross-fades into the lock screen or the home screen
+(`kernel/splash.c`). No text scrolling past: Linux's messages go to the
+serial port only, and the VM boots the kernel straight from EFI, so no
+bootloader text either.
+
+On the phone, before it: Samsung's own screen ("Samsung Galaxy A5",
+"Powered by Android") stays, as it's the untouched bootloader's; Android's
+"SAMSUNG" boot animation goes. **Unverified:** whether lk2nd shows anything
+in a normal boot, the black gap before our logo, and Samsung's yellow
+"not SEANDROID enforcing" text after a custom boot image is flashed.
 
 ### Lock screen
 
@@ -317,4 +327,4 @@ codes and backlight, brightness, vibration, speed on the Snapdragon 410.
   exist.
 - **Games:** which native Linux games, and do they need landscape?
 - **PIN lock:** wanted, or swipe only?
-- **Name and icon** for the phone on the lock and boot screens: "LiteKern Go"?
+- ~~**Name and icon** for the phone on the lock and boot screens~~: "LiteKern Go", the G logo (decided).

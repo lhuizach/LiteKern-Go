@@ -44,6 +44,9 @@ usage: vm/vbox.sh COMMAND
              IMAGE=... boots another image; WAIT_FOR=regex changes the line
              waited for (e.g. a self-test's summary); TYPE="text" types it
              into the VM afterwards and TYPED=regex waits for the result
+  film       update, boot headless, and save a screenshot every 0.25 s for
+             FILM_S seconds (default 10) to $DIR/film/NNN.png: what the
+             screen shows while it starts. Then power off
   stop       power the VM off
   status     show the VM's state
   destroy    unregister the VM and delete its files
@@ -113,6 +116,12 @@ update() {
 # start, so a VM made before this setting gets it too.
 MOUSE=${MOUSE:-}
 pointer() {
+    if [ -n "$FIRMWARE" ]; then                     # FIRMWARE=efi: LiteKern Go's VM
+        vbm modifyvm "$VM" --firmware "$FIRMWARE"
+        # The firmware's screen already the phone's 720x1280: the window doesn't
+        # change shape (and VirtualBox resize it) just as the boot logo shows.
+        [ -n "$EFI_RES" ] && vbm setextradata "$VM" VBoxInternal2/EfiGraphicsResolution "$EFI_RES"
+    fi
     [ -n "$MOUSE" ] || return 0
     vbm modifyvm "$VM" --usb-ohci on --mouse "$MOUSE"
 }
@@ -157,8 +166,24 @@ test_boot() {
     esac
 }
 
+film() {
+    update
+    pointer
+    rm -rf "$DIR/film"
+    mkdir -p "$DIR/film"
+    vbm startvm "$VM" --type headless >/dev/null
+    local n=$(( ${FILM_S:-10} * 4 )) i
+    for ((i = 0; i < n; i++)); do
+        vbm controlvm "$VM" screenshotpng "$(win "$DIR/film/$(printf %03d $i).png")" >/dev/null 2>&1 || true
+        sleep 0.25
+    done
+    vbm controlvm "$VM" poweroff >/dev/null 2>&1 || true
+    echo "film: $(ls "$DIR/film" | wc -l) pictures in $DIR/film"
+}
+
 case "${1:-}" in
     create)  create ;;
+    film)    film ;;
     update)  update ;;
     start)   start ;;
     test)    test_boot ;;

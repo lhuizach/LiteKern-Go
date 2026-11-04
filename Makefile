@@ -27,14 +27,15 @@ KERNEL_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(KERNEL_SRCS))) \
                $(BUILD)/gen/cursors.o $(BUILD)/gen/icons.o $(BUILD)/gen/uifont.o $(BUILD)/gen/splash.o
 
 # The disk image: the boot area (MBR, stage 2, kernel), then the ramdisk at
-# RAMDISK_LBA (1 MiB: apps, wallpapers; read by the kernel at boot through
+# RAMDISK_LBA (2 MiB: apps, wallpapers; read by the kernel at boot through
 # the BIOS, kernel/ramdisk.h), then the FAT32 partition for files at FAT_START
 # (8 MiB). The normal image gets the FAT32 partition; test images (other BUILD
 # dirs) don't, to stay small. Its starting contents are assets/disk/. FAT32
 # needs at least 65525 clusters, so with 512-byte clusters 64 MiB is about
 # the smallest sensible.
-# LiteKern Go: 1 MiB, room for the kernel with its 2x fonts.
-RAMDISK_LBA := 2048
+# LiteKern Go: 2 MiB, room for the kernel with its 2x fonts, 112 px icons
+# and the 256 px logo.
+RAMDISK_LBA := 4096
 FAT_MB      ?= $(if $(filter build,$(strip $(BUILD))),64,0)
 FAT_START   := 16384
 
@@ -181,8 +182,8 @@ $(BUILD)/sdk/uifont.o: $(BUILD)/gen/uifont.c kernel/text.h
 	@mkdir -p $(dir $@)
 	$(CC) $(APP_CFLAGS) -c -o $@ $<
 
-# The boot splash's logo (assets/logo.png, 128x128).
-$(BUILD)/gen/splash.c: assets/splash.json assets/logo.png tools/icons2c.py tools/lkx_png.py
+# The boot splash's logo (assets/logo.png, 256x256: tools/make-logo.py).
+$(BUILD)/gen/splash.c: assets/splash.json assets/logo.png assets/tux.png tools/icons2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
 	python3 tools/icons2c.py assets/splash.json $@ splash_images
 

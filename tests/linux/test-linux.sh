@@ -278,11 +278,11 @@ check "Clock: the stopwatch's Start, Lap, Stop and Reset" \
     '^user: clock: stopwatch stop$' \
     '^user: clock: stopwatch reset$'
 
-# An alarm: + Add alarm (360,1088), the minute's + (534,336), Save (360,812):
+# An alarm: + Add alarm (360,1088), the hour's + (186,336: an hour from now, so it can't ring during the test), Save (360,812):
 # saved in Clock/alarms.txt. After a restart it's still there; its switch
 # (604,356) turns it off.
 cp build/litekernx.img build-linux/test/clock.img
-path; open_app 3; go 360 1088; click; add sleep:0.5; go 534 336; click; go 360 812; click; add sleep:0.5
+path; open_app 3; go 360 1088; click; add sleep:0.5; go 186 336; click; go 360 812; click; add sleep:0.5
 run $SHELL_BIN build-linux/test/clock.img "$P"
 check "Clock: an alarm made and saved" \
     '^user: clock: new alarm$' \

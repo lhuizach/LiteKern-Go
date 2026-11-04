@@ -114,6 +114,10 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       off. New app call SYS_TIME (the local time). Not yet: sound (no audio), alarms
       while Clock is closed (no background service), choosing days
 - [ ] Gallery: photo grid, viewer, swipe between photos
+- [x] Boot screen: the new G logo (tools/make-logo.py) and "LiteKern Go" on black,
+      fading in and cross-fading into the first screen; no Linux or bootloader text
+      (the VM boots the kernel from EFI; messages on serial only). The ramdisk moved
+      to sector 4096 to make room. Not yet: the phone's own boot (phase 6)
 - [ ] Motion pass: smooth (pixel) scrolling with momentum after a flick in every
       list and page; the app switcher, keyboard, sheets, dialogs, power menu and
       volume pop-up sliding or fading in and out; tab and page changes that slide.

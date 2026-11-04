@@ -1634,10 +1634,7 @@ void desktop_start(void)
         wallpaper_set(DEFAULT_WALLPAPER);   /* that one's gone: the build's */
     }
     splash_progress(90);
-    if (splash_active()) {
-        splash_end();
-        cursor_init();          /* hidden during the splash */
-    }
+    int fade = splash_fade_begin();     /* the first screen fades in from the logo */
     console_set_visible(0);     /* the log keeps recording, but no longer draws over us */
     wm_set_area((struct gfx_rect){ 0, T()->topbar_h, S()->w, S()->h - T()->topbar_h });
     started = 1;
@@ -1650,6 +1647,12 @@ void desktop_start(void)
     kprintf("desktop: ready\n");     /* everything is up: the tests wait for this */
     if (users_need_login())
         lockscreen_login();     /* someone has to log in first (kernel/users.h) */
+    if (splash_active()) {
+        if (fade)
+            splash_fade_end();
+        splash_end();
+        cursor_init();          /* hidden during the splash */
+    }
 }
 
 int desktop_started(void)

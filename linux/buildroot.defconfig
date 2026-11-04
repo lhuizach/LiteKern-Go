@@ -31,6 +31,9 @@ BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_LITEKERNX_PATH)/overlay $(BASE_DIR)/lkx-overl
 # Nothing of the system is written to the stick while it runs.
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
+# ... built into the kernel too, so the VM's EFI firmware can start it alone
+# (linux/kernel.config): one file, EFI/BOOT/BOOTX64.EFI.
+BR2_TARGET_ROOTFS_INITRAMFS=y
 # BR2_TARGET_ROOTFS_TAR is not set
 
 # Networking (phase L5): Wi-Fi (wpa_supplicant, WPA2 and WPA3), the

@@ -4,7 +4,7 @@
 Usage: python3 tools/icons2c.py assets/icons.json OUT.c [ARRAY]
 
 ARRAY names the C array (default "icons"); assets/splash.json uses it for the
-128x128 logo ("splash_images"). The size comes from the JSON file.
+256x256 logo ("splash_images"). The size comes from the JSON file.
 
 Every icon listed in icons.json becomes a 0xAARRGGBB pixel array and an
 entry in `icons[]` (kernel/icon.h). The build fails with a clear message if
@@ -33,8 +33,8 @@ def main():
     base = os.path.join(os.path.dirname(spec_path), "icons")
     spec = json.load(open(spec_path, encoding="utf-8"))
     size = spec.get("size")
-    if spec.get("version") != 1 or size not in (SIZE, 128):
-        fail(f"{spec_path}: expected version 1, size {SIZE} (or 128 for the splash)")
+    if spec.get("version") != 1 or size not in (SIZE, 256):
+        fail(f"{spec_path}: expected version 1, size {SIZE} (or 256 for the splash)")
 
     arrays, entries = [], []
     for name, file in spec["icons"].items():

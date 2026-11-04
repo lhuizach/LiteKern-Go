@@ -290,6 +290,7 @@ int main(int argc, char **argv)
         screen_set_hardware_cursor(be->cursor);
     status_show(STATUS_READY);
     theme_set(theme_find_style(DEFAULT_STYLE), theme_find_accent(DEFAULT_ACCENT));
+    splash_set_brief(!strcmp(be->name, "headless"));    /* the tests: no waiting on fades */
     splash_start();
     if (screen_ready() && !splash_active() && cursor_init() < 0)
         kprintf("cursor: no \"arrow\" cursor built in\n");
