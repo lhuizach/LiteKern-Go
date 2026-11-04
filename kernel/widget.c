@@ -176,6 +176,46 @@ static int max_top(const struct wg_list *l)
     return m < 0 ? 0 : m;
 }
 
+/* top was set (by the app, the keys, the wheel): pos follows it. */
+static void sync_pos(struct wg_list *l)
+{
+    if (l->pos / T()->row_h != l->top || l->pos > max_top(l) * T()->row_h) {
+        l->pos = l->top * T()->row_h;
+        l->vel = 0;
+    }
+}
+
+static void set_pos(struct wg_list *l, int pos)
+{
+    int max = max_top(l) * T()->row_h;
+    pos = pos > max ? max : pos < 0 ? 0 : pos;
+    if (pos != l->pos)
+        l->dirty = 1;
+    l->pos = pos;
+    l->top = pos / T()->row_h;
+}
+
+int wg_list_gliding(const struct wg_list *l)
+{
+    return l->vel != 0;
+}
+
+void wg_list_tick(struct wg_list *l, uint32_t now_ms)
+{
+    if (!l->vel)
+        return;
+    uint32_t dt = now_ms - l->tick_ms;
+    dt = dt > 50 ? 50 : dt;
+    l->tick_ms = now_ms;
+    int before = l->pos;
+    set_pos(l, l->pos - (int)(l->vel * (int32_t)dt / 256));
+    for (uint32_t s = 0; s < (dt + 8) / 16; s++)
+        l->vel = l->vel * 94 / 100;         /* slowing down, a frame at a time */
+    if ((l->vel > -8 && l->vel < 8) || l->pos == before)
+        l->vel = 0;                         /* stopped, or at an end */
+    l->hover = -1;
+}
+
 static void scroll_to(struct wg_list *l, int i)
 {
     int shown = wg_list_rows_shown(l);
@@ -260,10 +300,12 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
     int scrollbar = l->count > shown;
     int text_right = c.w - 14 - (scrollbar ? 10 : 0);
 
+    sync_pos(l);
+    int off = l->pos % t->row_h;            /* the top row's part scrolled out of sight */
     gfx_fill_rect(s, l->r.x, l->r.y, l->r.w, l->r.h, under);
     gfx_fill_rect(&c, 0, 0, c.w, c.h, card);
-    for (int k = 0; k < shown && l->top + k < l->count; k++) {
-        int i = l->top + k, y = k * t->row_h, cy = y + t->row_h / 2;
+    for (int k = 0; k <= shown && l->top + k < l->count; k++) {
+        int i = l->top + k, y = k * t->row_h - off, cy = y + t->row_h / 2;
         struct wg_row row = { 0, 0, WG_ICON_NONE };
         l->row(l->ctx, i, &row);
         if (i == l->selected)
@@ -287,7 +329,7 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
         int track = card_h - 8, thumb = track * shown / l->count;
         if (thumb < 16)
             thumb = 16;
-        int y = 4 + (track - thumb) * l->top / max_top(l);
+        int y = 4 + (track - thumb) * l->pos / (max_top(l) * t->row_h);
         gfx_fill_round_rect(&c, c.w - 8, y, 4, thumb, 2, gfx_mix(t->ink, card, 110));
     }
     gfx_round_corners(s, l->r.x, l->r.y, l->r.w, card_h, 12, under);
@@ -300,8 +342,9 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
     int shown = wg_list_rows_shown(l);
     struct gfx_rect card = { l->r.x, l->r.y, l->r.w, shown * t->row_h };
     int row = -1;
+    sync_pos(l);
     if (inside(card, p->x, p->y)) {
-        row = l->top + (p->y - l->r.y) / t->row_h;
+        row = (l->pos + p->y - l->r.y) / t->row_h;
         if (row >= l->count)
             row = -1;
     }
@@ -314,12 +357,18 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
         int dy = p->y - l->drag_y0;
         if (p->up || !p->held) {
             int tapped = !l->dragging && row == l->last_click_row;
+            if (l->dragging && p->time_ms - l->vel_ms > 80)
+                l->vel = 0;                 /* it stopped before it let go: no glide */
+            if (!l->dragging)
+                l->vel = 0;
+            l->tick_ms = p->time_ms;
             l->dragging = 0;
             l->last_click_row = -1;
             return tapped ? WG_LIST_ACTIVATE : WG_LIST_NONE;
         }
         if (!l->dragging && (dy > WG_SWIPE_SLOP || dy < -WG_SWIPE_SLOP)) {
             l->dragging = 1;
+            l->drag_pos0 = l->pos + (dy > 0 ? WG_SWIPE_SLOP : -WG_SWIPE_SLOP);   /* no jump at the start */
             l->last_click_row = -1;
             if (l->selected != l->sel_before) {
                 l->selected = l->sel_before;
@@ -327,13 +376,15 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
             }
         }
         if (l->dragging) {
-            int top = l->drag_top0 - dy / t->row_h;
-            top = top > max_top(l) ? max_top(l) : top < 0 ? 0 : top;
-            if (top != l->top) {
-                l->top = top;
-                l->hover = -1;
-                l->dirty = 1;
+            uint32_t dt = p->time_ms - l->vel_ms;
+            if (dt > 0) {                   /* the finger's speed, for a glide */
+                int32_t v = (int32_t)((p->y - l->vel_y) * 256 / (int)dt);
+                l->vel = (l->vel + v) / 2;
+                l->vel_ms = p->time_ms;
+                l->vel_y = p->y;
             }
+            set_pos(l, l->drag_pos0 - dy);  /* by the pixel */
+            l->hover = -1;
         }
         return WG_LIST_NONE;
     }
@@ -353,6 +404,10 @@ enum wg_list_result wg_list_pointer(struct wg_list *l, const struct wg_pointer *
     }
     l->drag_y0 = p->y;
     l->drag_top0 = l->top;
+    l->drag_pos0 = l->pos;
+    l->vel = 0;                             /* a finger stops a glide */
+    l->vel_ms = p->time_ms;
+    l->vel_y = p->y;
     l->dragging = 0;
     l->sel_before = l->selected;
     if (row < 0) {

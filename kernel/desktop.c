@@ -159,6 +159,8 @@ static void draw_topbar(void);
 static void draw_menu(void);
 static void draw_volume(void);
 static void draw_toast(void);
+/* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
+static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
 /* Everything in r, bottom to top. */
 static void compose(struct gfx_rect r)
@@ -167,19 +169,23 @@ static void compose(struct gfx_rect r)
     struct gfx_view *outer = V;
     V = &v;
     wallpaper_draw(VS, v.ox, v.oy, 0);
-    if (sw_open)
-        draw_switcher();
-    else if (home_shown())
-        draw_home();
-    else
-        wm_draw(VS, v.ox, v.oy);
+    if (sw_open && sw_alpha >= 255) {
+        draw_switcher();                /* all there: nothing under it shows */
+    } else {
+        if (home_shown())
+            draw_home();
+        else
+            wm_draw(VS, v.ox, v.oy);
+        if (sw_alpha > 0)
+            draw_switcher();            /* fading in or out over what's under it */
+    }
     if (started && !home_shown() && !sw_open)
         osk_draw(VS, v.ox, v.oy);
     if (started) {
         draw_qs();                      /* under the status bar, which stays on top */
         draw_topbar();
         draw_volume();
-        if (menu_open)
+        if (menu_open || menu_alpha > 0)
             draw_menu();
         draw_toast();
     }
@@ -261,6 +267,28 @@ static void spring_snap(struct spring *s)
 {
     s->x = s->t;
     s->v = 0;
+}
+
+/* --- the overlays' fades (the motion pass) ------------------------------------------------
+ * The switcher, the power menu, the volume pop-up and toasts fade (and
+ * slide a little) in and out on springs, FX(1) all there; fx_tick() steps
+ * them a frame at a time and sets the *_alpha the drawing uses. */
+static struct spring swv, menuv, volv, toastv;
+static int fx_moving;
+static uint32_t last_fx_tick;
+
+static void fx_start(struct spring *s, int on)
+{
+    s->t = on ? FX(1) : 0;
+    if (!fx_moving)
+        last_fx_tick = uptime_ms();
+    fx_moving = 1;
+}
+
+static int fx_alpha(const struct spring *s)
+{
+    int a = s->x * 255 / FX(1);
+    return a < 0 ? 0 : a > 255 ? 255 : a;
 }
 
 /* --- the dock ----------------------------------------------------------------------- */
@@ -1046,20 +1074,24 @@ static void draw_topbar(void)
 static void draw_menu(void)
 {
     struct gfx_rect m = menu_rect();
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, 140);     /* what's behind, dimmed */
+    int al = menu_alpha, drop = (255 - al) * 48 / 255;     /* fading in, it rises a little */
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(140 * al / 255));     /* what's behind, dimmed */
+    m.y += drop;
     if (!visible(m))
         return;
-    gfx_fill_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 32, SHELL_POPOVER);
+    gfx_blend_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 32, SHELL_POPOVER, (uint32_t)al);
     static const char *const labels[MENU_ITEMS] = { "Power off", "Restart", "Lock", "Log Out" };
     uint32_t face = gfx_mix(SHELL_FG, SHELL_POPOVER, 30);
     for (int k = 0; k < menu_items(); k++) {
         struct gfx_rect r = menu_item_rect(k);
+        r.y += drop;
         int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
         uint32_t bg = disabled ? face : hit_bg((struct hit){ menu_kinds[k], 0 }, face);
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
-        text_draw(VS, VX(r.x + (r.w - text_width(labels[k], TEXT_BOLD)) / 2),
-                  VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD,
-                  disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG);
+        gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg, (uint32_t)al);
+        if (al > 160)
+            text_draw(VS, VX(r.x + (r.w - text_width(labels[k], TEXT_BOLD)) / 2),
+                      VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD,
+                      disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG);
     }
 }
 
@@ -1420,6 +1452,7 @@ static void menu_set(int open)
     if (menu_open == open)
         return;
     menu_open = open;
+    fx_start(&menuv, open);
     kprintf("shell: power menu %s\n", open ? "open" : "closed");
     if (open)
         wm_pointer_gone();
@@ -1776,6 +1809,7 @@ static void sw_set(int open)
     sw_open = open;
     sw_mode = SWM_NONE;
     sw_card = -1;
+    fx_start(&swv, open);               /* it fades in, or out over what's under it */
     if (open) {
         sw_n = 0;
         for (int i = 0; i < wm_count() && sw_n < WM_MAX; i++)
@@ -1834,28 +1868,34 @@ static void sw_go(int i)
 static void draw_switcher(void)
 {
     const struct theme *t = T();
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, 120);
+    int al = sw_alpha, lift = (255 - al) * 160 / 255;      /* fading in, the cards rise into place */
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(120 * al / 255));
     if (!sw_n) {
         const char *none = "No recent apps";
-        text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(S()->h / 2), none, TEXT_BODY, SHELL_FG);
+        if (al > 160)
+            text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(S()->h / 2), none, TEXT_BODY, SHELL_FG);
         return;
     }
     for (int i = 0; i < sw_n; i++) {
         struct gfx_rect r = sw_card_rect(i);
+        r.y += lift;
         if (!visible((struct gfx_rect){ r.x, r.y - SW_LABEL_H, r.w, r.h + SW_LABEL_H }))
             continue;
         const struct app *a = wm_owner(sw_win[i]);
         if (a)
-            draw_icon(a, (struct gfx_rect){ r.x, r.y - SW_LABEL_H + 8, 44, 44 }, 255);
-        text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
-                      name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
+            draw_icon(a, (struct gfx_rect){ r.x, r.y - SW_LABEL_H + 8, 44, 44 }, (uint32_t)al);
+        if (al > 160)
+            text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
+                          name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
         gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
-                        (struct gfx_rect){ 0, 0, sw_snap[i].w, sw_snap[i].h }, 255, SW_RADIUS);
+                        (struct gfx_rect){ 0, 0, sw_snap[i].w, sw_snap[i].h }, (uint32_t)al, SW_RADIUS);
     }
     struct gfx_rect c = sw_clear_rect();
-    gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg);
-    text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2), VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2),
-              "Close all", TEXT_BOLD, t->fg);
+    c.y += lift;
+    gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
+    if (al > 160)
+        text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2),
+                  VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2), "Close all", TEXT_BOLD, t->fg);
 }
 
 static void sw_pointer(int x, int y, uint8_t buttons, int down)
@@ -2584,6 +2624,7 @@ static void vol_hide(void)
     if (!vol_until)
         return;
     vol_until = 0;
+    fx_start(&volv, 0);                 /* it slides back out */
     shell_damage(vol_rect());
 }
 
@@ -2593,13 +2634,15 @@ static void vol_change(int up)
     volume = v < 0 ? 0 : v > 100 ? 100 : v;
     kprintf("shell: volume %s, %d%%\n", up ? "up" : "down", volume);
     vol_until = uptime_ms() + VOL_SHOW_MS;
+    fx_start(&volv, 1);                 /* in from the right edge */
     shell_damage(vol_rect());
 }
 
 static void draw_volume(void)
 {
     struct gfx_rect r = vol_rect();
-    if (!vol_until || !visible(r))
+    r.x += (255 - vol_alpha) * (r.w + 40) / 255;        /* sliding in from the edge */
+    if (vol_alpha <= 0 || !visible(r))
         return;
     const struct theme *t = T();
     gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.w / 2, SHELL_POPOVER);
@@ -2624,6 +2667,7 @@ static void show_toast(const char *text)
     shell_damage(toast_rect());
     toast = text;
     toast_until = uptime_ms() + TOAST_MS;
+    fx_start(&toastv, 1);
     shell_damage(toast_rect());
     kprintf("shell: toast \"%s\"\n", text);
 }
@@ -2631,10 +2675,12 @@ static void show_toast(const char *text)
 static void draw_toast(void)
 {
     struct gfx_rect r = toast_rect();
-    if (!toast || !visible(r))
+    r.y += (255 - toast_alpha) * 40 / 255;              /* rising as it fades in */
+    if (!toast || toast_alpha <= 0 || !visible(r))
         return;
-    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, SHELL_POPOVER);
-    text_draw(VS, VX(r.x + 32), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2), toast, TEXT_BODY, SHELL_FG);
+    gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, SHELL_POPOVER, (uint32_t)toast_alpha);
+    if (toast_alpha > 160)
+        text_draw(VS, VX(r.x + 32), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2), toast, TEXT_BODY, SHELL_FG);
 }
 
 static char *put_num(char *p, int v, int digits)
@@ -2648,6 +2694,9 @@ static char *put_num(char *p, int v, int digits)
 static void screenshot(void)
 {
     vol_hide();
+    spring_snap(&volv);                 /* gone at once: not in the picture */
+    vol_alpha = 0;
+    shell_damage(vol_rect());
     shell_flush();
     struct rtc_time c = { 0 };
     if (rtc)
@@ -2689,11 +2738,40 @@ static void volume_tick(void)
         vol_hide();
         shell_flush();
     }
-    if (toast && (int32_t)(now - toast_until) >= 0) {
-        shell_damage(toast_rect());
-        toast = 0;
-        shell_flush();
+    if (toast && toastv.t && (int32_t)(now - toast_until) >= 0)
+        fx_start(&toastv, 0);           /* it fades out: fx_tick lets go of it then */
+}
+
+/* The overlays' springs, a frame at a time (see fx_start). */
+static void fx_tick(void)
+{
+    if (!fx_moving)
+        return;
+    uint32_t now = uptime_ms(), steps = (now - last_fx_tick) / TICK_MS;
+    if (!steps)
+        return;
+    last_fx_tick = now;
+    int moving = 0, was_sw = sw_alpha, was_menu = menu_alpha;
+    for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++) {
+        moving = 0;
+        moving |= spring_step(&swv, 16, 128);       /* about a quarter of a second, no overshoot */
+        moving |= spring_step(&menuv, 16, 128);
+        moving |= spring_step(&volv, 16, 128);
+        moving |= spring_step(&toastv, 16, 128);
     }
+    sw_alpha = fx_alpha(&swv);
+    menu_alpha = fx_alpha(&menuv);
+    vol_alpha = fx_alpha(&volv);
+    toast_alpha = fx_alpha(&toastv);
+    if (sw_alpha != was_sw || menu_alpha != was_menu)
+        damage_all();
+    struct gfx_rect v = vol_rect(), tr = toast_rect();
+    shell_damage((struct gfx_rect){ v.x, v.y, S()->w - v.x, v.h });
+    shell_damage((struct gfx_rect){ tr.x, tr.y, tr.w, tr.h + 40 });
+    if (toast && !toastv.t && !toast_alpha)
+        toast = 0;                      /* faded out */
+    fx_moving = moving;
+    shell_flush();
 }
 
 static int phone_key(const struct key_event *k)
@@ -2865,6 +2943,7 @@ void desktop_tick(void)
     qs_tick();
     power_tick();
     volume_tick();
+    fx_tick();
     osk_tick();
     keyboard_follow();
     uint32_t ticks;
@@ -2901,7 +2980,8 @@ void desktop_tick(void)
 int desktop_busy(void)
 {
     /* A key held: its long press (or repeat) is timed, so no sleeping. */
-    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms;
+    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms ||
+           fx_moving || osk_moving();
 }
 
 static void log_event(const struct wm_event *ev)

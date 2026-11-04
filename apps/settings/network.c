@@ -340,6 +340,11 @@ void network_page_key(const struct key_event *k)
     }
 }
 
+struct wg_list *network_page_list(void)
+{
+    return &list;
+}
+
 int network_page_busy(void)
 {
     return asking;

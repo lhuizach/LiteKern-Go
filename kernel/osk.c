@@ -15,6 +15,7 @@
 #define REPEAT_DELAY_MS 500
 #define REPEAT_MS 60
 #define DOUBLE_SHIFT_MS 350     /* Shift twice this quickly: caps lock */
+#define SLIDE_MS 180            /* up from the bottom edge, and back down */
 
 enum kind { K_CHAR, K_SHIFT, K_BACK, K_PAGE, K_SPACE, K_ENTER };
 
@@ -55,6 +56,8 @@ static const struct key pages[2][ROWS][11] = {
 };
 
 static int shown, page, mode;
+static int leaving;             /* hidden, still sliding down out of sight */
+static uint32_t slide_ms;       /* when the slide began */
 static int shift;               /* 0 off, 1 for the next letter, 2 caps lock */
 static uint32_t shift_ms;       /* when Shift was last tapped */
 static int held_row = -1, held_col = -1;    /* the key under the finger */
@@ -118,6 +121,8 @@ void osk_show(int show)
         return;
     }
     shown = !!show;
+    leaving = !shown;
+    slide_ms = uptime_ms();
     shift = 0;
     held_row = held_col = -1;
     kprintf("osk: %s\n", shown ? "shown" : "hidden");
@@ -225,8 +230,35 @@ int osk_pointer(int x, int y, uint8_t buttons)
     return 1;
 }
 
+/* How far down it is, sliding: 0 in place, OSK_H out of sight. Eased out. */
+static int slide_off(void)
+{
+    uint32_t el = uptime_ms() - slide_ms;
+    if (el >= SLIDE_MS)
+        return leaving ? OSK_H : 0;
+    int t = (int)(el * 1024 / SLIDE_MS), u = 1024 - t;
+    int e = 1024 - (int)((int64_t)u * u / 1024 * u / 1024);     /* 0..1024, fast then settling */
+    return leaving ? OSK_H * e / 1024 : OSK_H - OSK_H * e / 1024;
+}
+
+int osk_moving(void)
+{
+    return (shown || leaving) && uptime_ms() - slide_ms < SLIDE_MS + 20;
+}
+
 void osk_tick(void)
 {
+    if (shown || leaving) {
+        uint32_t el = uptime_ms() - slide_ms;
+        if (el < SLIDE_MS + 20) {
+            shell_damage((struct gfx_rect){ 0, top() - PREVIEW_H, S()->w, OSK_H + PREVIEW_H });
+            shell_flush();
+        } else if (leaving) {
+            leaving = 0;                    /* all the way down: gone */
+            shell_damage(osk_bounds());
+            shell_flush();
+        }
+    }
     if (!shown || held_row < 0 || pages[page][held_row][held_col].kind != K_BACK)
         return;
     uint32_t now = uptime_ms();
@@ -246,8 +278,9 @@ static void label_of(const struct key *k, char out[8])
 
 void osk_draw(struct gfx_surface *dst, int ox, int oy)
 {
-    if (!shown)
+    if (!shown && !leaving)
         return;
+    oy -= slide_off();                  /* drawn lower while it slides */
     const struct theme *t = T();
     uint32_t bg = t->headerbar_bg;
     gfx_fill_rect(dst, 0 - ox, top() - oy, S()->w, OSK_H, bg);

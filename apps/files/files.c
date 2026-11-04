@@ -826,6 +826,17 @@ static void dialog_choice(int choice)
 
 /* --- events ---------------------------------------------------------------------------- */
 
+/* The timer: a frame at a time while the list glides after a flick, else
+ * every 100 ms while a finger is held on a row (a long press?), else off. */
+static void timer_follow(void)
+{
+    static uint32_t was = 1;
+    uint32_t want = wg_list_gliding(&list) ? 16 : wg_list_pressing(&list) && vol >= 0 ? 100 : 0;
+    if (want != was)
+        k86_timer_set(want);
+    was = want;
+}
+
 static void open_sheet(int i)
 {
     if (i < 0 || i >= nitems || vol < 0)
@@ -975,7 +986,7 @@ static void pointer(const struct k86_event *ev)
         return;
     }
     enum wg_list_result r = wg_list_pointer(&list, &p);
-    k86_timer_set(wg_list_pressing(&list) && vol >= 0 ? 100 : 0);     /* watching for a long press */
+    timer_follow();
     if (r == WG_LIST_ACTIVATE) {
         activate(list.selected);
         return;
@@ -1057,12 +1068,14 @@ int main(void)
             if (ev.id == BACK_ID)
                 go_back();
             break;
-        case K86_EVENT_TIMER: {             /* a finger held on a row: a long press? */
+        case K86_EVENT_TIMER: {             /* the list gliding, or a finger held on a row */
+            wg_list_tick(&list, k86_uptime_ms());
+            if (!viewing && sheet < 0 && dialog_for == NONE)
+                draw_dirty();
             int row = wg_list_long_press(&list, k86_uptime_ms());
             if (row >= 0)
                 open_sheet(row);
-            else if (!wg_list_pressing(&list))
-                k86_timer_set(0);
+            timer_follow();
             break;
         }
         case K86_EVENT_THEME:

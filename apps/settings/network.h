@@ -3,10 +3,12 @@
 #define SETTINGS_NETWORK_H
 
 #include "kernel/gfx.h"
+#include "kernel/widget.h"
 #include "sdk/kern86.h"
 
 int network_page_available(void);                   /* the machine has Ethernet or Wi-Fi */
-int network_page_busy(void);                        /* the password dialog shows (it takes Back, and types) */
+int network_page_busy(void);
+struct wg_list *network_page_list(void);            /* the networks, to glide */                        /* the password dialog shows (it takes Back, and types) */
 void network_page_open(struct gfx_surface *canvas);  /* read the state, lay out, draw */
 void network_page_draw(void);
 void network_page_layout(void);                     /* the window was resized */

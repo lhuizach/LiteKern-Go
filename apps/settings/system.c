@@ -146,6 +146,11 @@ void system_page_open(struct gfx_surface *canvas, int page)
     system_page_draw();
 }
 
+struct wg_list *system_page_list(void)
+{
+    return which == SYSTEM_TIME ? &zones : 0;
+}
+
 void system_page_tick(void)
 {
     struct k86_machine before = m;

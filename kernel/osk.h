@@ -24,8 +24,10 @@ struct gfx_rect osk_bounds(void);
 void osk_draw(struct gfx_surface *dst, int ox, int oy);
 /* The pointer (the finger), in screen coordinates: 1 if the keyboard took it. */
 int osk_pointer(int x, int y, uint8_t buttons);
-/* Backspace's repeat. */
+/* Backspace's repeat, and its slide in and out. */
 void osk_tick(void);
+/* 1 while it slides (the shell keeps drawing). */
+int osk_moving(void);
 
 /* What the shell provides (kernel/desktop.c): a key for the app in front. */
 void shell_osk_key(const struct key_event *k);

@@ -113,15 +113,21 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       timer typed on a keypad, a stopwatch with laps; a notification when one goes
       off. New app call SYS_TIME (the local time). Not yet: sound (no audio), alarms
       while Clock is closed (no background service), choosing days
-- [ ] Gallery: photo grid, viewer, swipe between photos
-- [x] Boot screen: the new G logo (tools/make-logo.py) and "LiteKern Go" on black,
+- [x] Gallery: a grid of the pictures in Pictures (and its Screenshots, Camera) and
+      Downloads, newest first, thumbnails made in the background; it scrolls by the
+      pixel and glides after a flick; a tap opens one, a swipe goes to the next;
+      Wallpaper, Lock Screen, Delete. Decoding is Files'. Not yet: albums, sharing,
+      zooming in on a picture, videos
+- [x] Boot screen: the new G logo (tools/make-logo.py) on black, "Powered by Linux" with Tux,
       fading in and cross-fading into the first screen; no Linux or bootloader text
       (the VM boots the kernel from EFI; messages on serial only). The ramdisk moved
       to sector 4096 to make room. Not yet: the phone's own boot (phase 6)
-- [ ] Motion pass: smooth (pixel) scrolling with momentum after a flick in every
-      list and page; the app switcher, keyboard, sheets, dialogs, power menu and
-      volume pop-up sliding or fading in and out; tab and page changes that slide.
-      Already animated: opening apps, lock/unlock, home pages, quick settings
+- [x] Motion pass: lists scroll by the pixel and glide on after a flick, slowing
+      down (the list widget: Files, Settings' lists; Settings' Display and Lock Screen
+      pages, Gallery's grid too); the app switcher fades in with its cards rising, the
+      power menu and toasts fade and rise, the volume pop-up slides in from the edge,
+      the keyboard slides up and down. Not yet: dialogs and Files' sheet (app-drawn),
+      tab and page changes sliding, the switcher's cards following a swipe-up
 - [ ] Pick native Linux games with the brother, check they build for aarch64
 
 **Done when:** the v1 apps work in the VM.

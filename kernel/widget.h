@@ -95,6 +95,12 @@ struct wg_list {
     int drag_y0, drag_top0;     /* where the finger went down, and the list's top then */
     int dragging;               /* it moved: the list scrolls with it */
     int sel_before;             /* the selection before the press (put back if it's a drag) */
+    /* LiteKern Go: scrolled by the pixel (top is pos's row: setting top
+     * moves pos there), gliding on after a flick (vel: px a ms x 256). */
+    int pos, drag_pos0;
+    int32_t vel;
+    uint32_t vel_ms, tick_ms;
+    int vel_y;
 };
 
 void wg_list_draw(struct gfx_surface *s, struct wg_list *l);
@@ -119,6 +125,10 @@ int wg_list_scroll(struct wg_list *l, int x, int y, int notches);
 int wg_list_long_press(struct wg_list *l, uint32_t now_ms);
 /* A press is under way on a row (a long press could come). */
 int wg_list_pressing(const struct wg_list *l);
+/* After a flick it glides on, slowing down: while wg_list_gliding(), call
+ * wg_list_tick() every frame (an app timer, ~16 ms); it sets dirty. */
+int wg_list_gliding(const struct wg_list *l);
+void wg_list_tick(struct wg_list *l, uint32_t now_ms);
 /* Change the row count (keeping the selection in range) / select a row and
  * scroll it into view. */
 void wg_list_set_count(struct wg_list *l, int count);

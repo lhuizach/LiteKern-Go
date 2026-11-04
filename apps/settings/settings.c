@@ -138,6 +138,9 @@ static char lock_msg[64];
 static int lock_msg_bad;
 
 static int scroll, content_h, press_y, scroll0, dragging;
+static int32_t glide;                   /* a flick's speed: px a ms x 256 (the lists' wg_list_tick) */
+static uint32_t glide_ms;
+static int glide_y;
 static struct gfx_rect bright_r;        /* the brightness slider's track (w 0: none) */
 static int bright_held, bright_value;
 
@@ -490,6 +493,57 @@ static void header(void)
     k86_header(&h);
 }
 
+/* The timer: a frame at a time while a list glides after a flick, else
+ * every 2 s on the pages that refresh themselves, else off. */
+static uint32_t next_refresh;
+static void set_scroll(int s);
+
+static struct wg_list *page_list(void)
+{
+    return page == P_HOME ? &home : page == P_WIFI ? network_page_list() : page == P_TIME ? system_page_list() : 0;
+}
+
+static void timer_follow(void)
+{
+    static uint32_t was = 1;
+    struct wg_list *l = page_list();
+    uint32_t want = (l && wg_list_gliding(l)) || glide ? 16 : page == P_WIFI || page == P_BATTERY ? 2000 : 0;
+    if (want != was)
+        k86_timer_set(want);
+    was = want;
+}
+
+static void timer(void)
+{
+    uint32_t now = k86_uptime_ms();
+    struct wg_list *l = page_list();
+    if (l && wg_list_gliding(l)) {
+        wg_list_tick(l, now);
+        draw();
+    }
+    if (glide && (page == P_DISPLAY || page == P_LOCK)) {  /* Display, Lock Screen: their own scrolling */
+        uint32_t dt = now - glide_ms;
+        dt = dt > 50 ? 50 : dt;
+        glide_ms = now;
+        int before = scroll;
+        set_scroll(scroll - (int)(glide * (int32_t)dt / 256));
+        for (uint32_t s = 0; s < (dt + 8) / 16; s++)
+            glide = glide * 94 / 100;
+        if ((glide > -8 && glide < 8) || scroll == before)
+            glide = 0;
+        spots_draw();
+    } else {
+        glide = 0;
+    }
+    if ((page == P_WIFI || page == P_BATTERY) && (int32_t)(now - next_refresh) >= 0) {
+        next_refresh = now + 2000;
+        if (page == P_WIFI)
+            network_page_tick();
+        else
+            system_page_tick();
+    }
+}
+
 static void show_page(enum page p)
 {
     if (p == page)
@@ -498,7 +552,7 @@ static void show_page(enum page p)
     page = p;
     k86_logf("settings: page %s", names[page]);
     header();
-    k86_timer_set(page == P_WIFI || page == P_BATTERY ? 2000 : 0);    /* they refresh themselves */
+    next_refresh = k86_uptime_ms() + 2000;  /* Wi-Fi and Battery refresh themselves */
     scroll = 0;
     pressed = -1;
     lock_msg[0] = '\0';
@@ -651,7 +705,9 @@ static void spots_pointer(const struct k86_event *ev)
         return;
     }
     if (p.down) {
-        press_y = p.y;
+        press_y = glide_y = p.y;
+        glide_ms = p.time_ms;
+        glide = 0;                          /* a finger stops a glide */
         scroll0 = scroll;
         dragging = 0;
         pressed = spot_at(p.x, cy);
@@ -664,6 +720,12 @@ static void spots_pointer(const struct k86_event *ev)
         pressed = -1;
     }
     if (p.held && dragging) {
+        uint32_t dt = p.time_ms - glide_ms;
+        if (dt > 0) {                       /* the finger's speed, for a glide */
+            glide = (glide + (int32_t)((p.y - glide_y) * 256 / (int)dt)) / 2;
+            glide_ms = p.time_ms;
+            glide_y = p.y;
+        }
         set_scroll(scroll0 - (p.y - press_y));
         spots_draw();
         return;
@@ -674,8 +736,12 @@ static void spots_pointer(const struct k86_event *ev)
     pressed = -1;
     if (dragging) {
         dragging = 0;
+        if (p.time_ms - glide_ms > 80)
+            glide = 0;                      /* it stopped before it let go: no glide */
+        glide_ms = p.time_ms;
         return;
     }
+    glide = 0;
     if (was >= 0 && was == spot_at(p.x, cy))
         choose(&spots[was]);
     else
@@ -772,6 +838,7 @@ int main(void)
         struct k86_event ev;
         k86_back_wanted(page != P_HOME || busy());     /* the phone's Back: back to the list */
         k86_keyboard_wanted(pin_active() ? K86_KEYBOARD_NUMBERS : busy());
+        timer_follow();
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {
@@ -803,10 +870,7 @@ int main(void)
                 show_page(P_HOME);
             break;
         case K86_EVENT_TIMER:
-            if (page == P_WIFI)
-                network_page_tick();
-            else if (page == P_BATTERY)
-                system_page_tick();
+            timer();
             break;
         case K86_EVENT_THEME:
             reload();
