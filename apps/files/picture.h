@@ -26,4 +26,11 @@ int picture_wallpaper(int where, const char **why);
 /* Let go of its memory. */
 void picture_close(void);
 
+/* LiteKern Go's Gallery: the open picture's middle square, scaled to
+ * size x size, over black (0x00RRGGBB). 0, or -1 with none open. */
+int picture_thumb(uint32_t *out, int size);
+
+/* Which app's name its log lines start with ("files" unless set; 0: no "picture ..." line). */
+extern const char *picture_app;
+
 #endif

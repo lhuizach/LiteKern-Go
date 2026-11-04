@@ -9,6 +9,8 @@
 #define FILE_MAX (32u * 1024 * 1024)   /* SYS_FS_READ's limit */
 #define SHOWN_MAX (1024u * 768)         /* the fitted copy: never bigger than a screen */
 
+const char *picture_app = "files";      /* the log's "files: picture ..." (Gallery: "gallery"; 0: quiet) */
+
 static struct image pic;
 static uint32_t file_size;
 static char name[K86_NAME_MAX];
@@ -122,7 +124,8 @@ int picture_open(int vol, const char *dir, const struct k86_dirent *e, const cha
     uint32_t t0 = k86_uptime_ms();
     image_busy = still_here;
     if (image_decode(data, (uint32_t)n, alloc, &pic, why)) {
-        k86_logf("files: can't open picture %s: %s", e->name, *why);
+        if (picture_app)
+            k86_logf("%s: can't open picture %s: %s", picture_app, e->name, *why);
         release();
         return -1;
     }
@@ -136,14 +139,45 @@ int picture_open(int vol, const char *dir, const struct k86_dirent *e, const cha
     file_size = (uint32_t)n;
     memcpy(name, e->name, sizeof(name));
     name[sizeof(name) - 1] = '\0';
-    k86_logf("files: picture %s %dx%d %s, decoded in %u ms", e->name, pic.w, pic.h, pic.format,
-             k86_uptime_ms() - t0);
+    if (picture_app)
+        k86_logf("%s: picture %s %dx%d %s, decoded in %u ms", picture_app, e->name, pic.w, pic.h, pic.format,
+                 k86_uptime_ms() - t0);
     return 0;
 }
 
 void picture_close(void)
 {
     release();
+}
+
+int picture_thumb(uint32_t *out, int size)
+{
+    if (!pic.px || size <= 0)
+        return -1;
+    int side = pic.w < pic.h ? pic.w : pic.h, ox = (pic.w - side) / 2, oy = (pic.h - side) / 2;
+    for (int y = 0; y < size; y++) {
+        k86_uptime_ms();                    /* still here */
+        int y0 = oy + (int)((int64_t)y * side / size), y1 = oy + (int)((int64_t)(y + 1) * side / size);
+        if (y1 <= y0)
+            y1 = y0 + 1;
+        for (int x = 0; x < size; x++) {
+            int x0 = ox + (int)((int64_t)x * side / size), x1 = ox + (int)((int64_t)(x + 1) * side / size);
+            if (x1 <= x0)
+                x1 = x0 + 1;
+            /* A big picture's block is sampled 4 x 4 at most: quick, and smooth enough. */
+            int sx = (x1 - x0 + 3) / 4, sy = (y1 - y0 + 3) / 4;
+            uint32_t r = 0, g = 0, b = 0, n = 0;
+            for (int yy = y0; yy < y1; yy += sy)
+                for (int xx = x0; xx < x1; xx += sx, n++) {
+                    uint32_t c = pic.px[yy * pic.w + xx], a = c >> 24;
+                    r += (c >> 16 & 255) * a / 255;     /* over black */
+                    g += (c >> 8 & 255) * a / 255;
+                    b += (c & 255) * a / 255;
+                }
+            out[y * size + x] = (r / n) << 16 | (g / n) << 8 | b / n;
+        }
+    }
+    return 0;
 }
 
 /* --- drawing ---------------------------------------------------------------------------------- */
@@ -271,6 +305,6 @@ int picture_wallpaper(int where, const char **why)
         *why = "The wallpaper couldn't be changed.";
         return -1;
     }
-    k86_logf("files: %s %s", where == K86_WALLPAPER_LOCK ? "lock screen picture" : "wallpaper", name);
+    k86_logf("%s: %s %s", picture_app, where == K86_WALLPAPER_LOCK ? "lock screen picture" : "wallpaper", name);
     return 0;
 }
