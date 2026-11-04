@@ -84,7 +84,7 @@ click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 # The home screen (kernel/desktop.c): apps in 4 columns of 168 x 184 px tiles
 # from y 276. tap_app N taps the N-th (0: Files, 1 Calculator, 2 Settings,
-# 3 Blocksmith, then Log; the tests' apps come before Log).
+# 3 Clock, 4 Blocksmith, then Log; the tests' apps come before Log).
 tile_x() { echo $(( (W - 4 * 168) / 2 + 84 + ($1 % 4) * 168 )); }
 tile_y() { echo $(( 56 + 220 + 72 + ($1 / 4) * 184 )); }
 tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:1.5; }
@@ -115,7 +115,7 @@ check "the home screen: its clock, a swipe to All apps, Home back to the first p
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.
-path; tap_app 4; add phone_home sleep:1
+path; tap_app 5; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
@@ -257,6 +257,43 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^screen: has ffffff in 330,110,700,230: yes$' \
     '!crashed|stopped|PANIC'
 
+# Clock (the 4th icon): its tabs along the bottom (y 1220: Alarm 120, Timer
+# 360, Stopwatch 600). The timer: 5 typed (5 s), Enter starts it; it goes off.
+path; open_app 3; go 360 1220; click; add sleep:0.5 5 ret sleep:6.5
+run $SHELL_BIN build-linux/test/disk.img "$P" --keyboard qwerty
+check "Clock: the timer counts down and goes off, with a notification" \
+    '^user: clock: tab Timer$' \
+    '^user: clock: timer start 00:00:05$' \
+    '^user: clock: timer done$' \
+    '^notify: Clock: Timer$' \
+    '!crashed|stopped|PANIC'
+
+# The stopwatch: Start (524,532), a lap (196,532), Stop, Reset.
+path; open_app 3; go 600 1220; click; add sleep:0.5; go 524 532; click; add sleep:1.2; go 196 532; click
+add sleep:0.3; go 524 532; click; add sleep:0.3; go 196 532; click; add sleep:0.3
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "Clock: the stopwatch's Start, Lap, Stop and Reset" \
+    '^user: clock: stopwatch start$' \
+    '^user: clock: stopwatch lap 1 00:01\.[0-9]{2}$' \
+    '^user: clock: stopwatch stop$' \
+    '^user: clock: stopwatch reset$'
+
+# An alarm: + Add alarm (360,1088), the minute's + (534,336), Save (360,812):
+# saved in Clock/alarms.txt. After a restart it's still there; its switch
+# (604,356) turns it off.
+cp build/litekernx.img build-linux/test/clock.img
+path; open_app 3; go 360 1088; click; add sleep:0.5; go 534 336; click; go 360 812; click; add sleep:0.5
+run $SHELL_BIN build-linux/test/clock.img "$P"
+check "Clock: an alarm made and saved" \
+    '^user: clock: new alarm$' \
+    '^user: clock: alarm set [0-9]{2}:[0-9]{2}$' \
+    '^user: clock: alarms saved \(1\): done$'
+path; open_app 3; go 604 356; click; add sleep:0.5
+run $SHELL_BIN build-linux/test/clock.img "$P"
+check "Clock: the alarm kept across a restart; its switch turns it off" \
+    '^user: clock: 1 alarm$' \
+    '^user: clock: alarm [0-9]{2}:[0-9]{2} off$'
+
 # Calculator's keys by touch: 7 (101,770), x (617,770), 1 (101,1052), Del
 # (274,629), 6 (446,911), = (617,1193): 7 x 6 = 42.
 path; open_app 1; go 101 770; click; go 617 770; click; go 101 1052; click; go 274 629; click
@@ -341,7 +378,7 @@ check "the app switcher: a tap goes to an app, a swipe up closes one, Close all 
 
 # Notify's two notifications (the tests' image), then Power: their cards
 # under the lock screen's clock (white titles, 80..640 x 580..800).
-path; tap_app 7; add phone_home sleep:0.8 phone_power sleep:1.5
+path; tap_app 8; add phone_home sleep:0.8 phone_power sleep:1.5
 cp build/test-apps/litekernx.img build-linux/test/locknote.img
 SCREEN="has=ffffff@80,580,640,800" run $SHELL_BIN build-linux/test/locknote.img "$P"
 check "the lock screen shows notifications under the clock" \
@@ -440,7 +477,7 @@ unset LKX_POWER_SUPPLY LKX_BACKLIGHT
 # Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
 # saves it as "Test" (SYS_FS_WRITE).
 cp build/litekernx.img build-linux/test/blocksmith.img
-path; open_app 3; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
+path; open_app 4; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
 run $SHELL_BIN build-linux/test/blocksmith.img "$P" --keyboard qwerty
 check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: run$' \
@@ -462,9 +499,9 @@ check "Files opened and closed with Back 15 times, ending cleanly each time" \
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their home screen icons: Crash, Badcalls, Hang are the 5th to 7th.
+# Their home screen icons: Crash, Badcalls, Hang are the 6th to 8th.
 path
-for i in 4 5 6; do add phone_home sleep:0.5; tap_app "$i"; done
+for i in 5 6 7; do add phone_home sleep:0.5; tap_app "$i"; done
 add sleep:11 phone_home sleep:0.5; tap_app 0
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
@@ -492,12 +529,12 @@ check "apps: a crash, bad calls and a hang each end only the app" \
     '^user: files: open Boot disk' \
     '!still running|PANIC|Segmentation'
 
-# Notifications and quick settings (the tests' image): Notify (the 8th icon)
+# Notifications and quick settings (the tests' image): Notify (the 9th icon)
 # posts two; the status bar is pulled down (from 360,20 to 920): the panel,
 # with them newest first. A tap on the first ("Again", 360,526) opens its app
 # and dismisses it. Pulled again: Dark mode (276,236) and Do not disturb
 # (444,236) tiles, then Back closes it. Home held opens it too.
-path; tap_app 7; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
+path; tap_app 8; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
 go 360 526; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 276 236; click; add sleep:0.5
 go 444 236; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img

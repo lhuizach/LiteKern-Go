@@ -269,6 +269,15 @@ struct k86_dirent {
 #define SYS_NOTIFY          40
 #define K86_NOTE_TITLE      48
 #define K86_NOTE_BODY       96
+/* LiteKern Go: ebx: struct k86_time * out: the local time (the time zone's),
+ * as the status bar shows it. -ENODEV without a clock. */
+#define SYS_TIME            41
+struct k86_time {
+    uint16_t year;              /* e.g. 2026 */
+    uint8_t month, day;         /* 1-12, 1-31 */
+    uint8_t hour, minute, second;
+    uint8_t weekday;            /* 0 = Sunday */
+};
 
 #define K86_BATTERY_DISCHARGING 0
 #define K86_BATTERY_CHARGING    1

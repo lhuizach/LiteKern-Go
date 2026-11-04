@@ -13,6 +13,7 @@
 #include "kernel/users.h"
 #include "kernel/kern86_abi.h"
 #include "kernel/printk.h"
+#include "kernel/rtc.h"
 #include "kernel/screensaver.h"
 #include "kernel/settings.h"
 #include "kernel/storage.h"
@@ -565,6 +566,18 @@ static int machine_out(uintptr_t out)
     return 0;
 }
 
+static int time_out(uintptr_t out)
+{
+    device_t *rtc = device_find("rtc0");
+    struct rtc_time t;
+    if (user_check(out, sizeof(struct k86_time), 1))
+        return -EFAULT;
+    if (!rtc || rtc->state != DEVICE_BOUND || dev_read(rtc, &t, sizeof(t)) != (int)sizeof(t))
+        return -ENODEV;
+    *(struct k86_time *)out = (struct k86_time){ t.year, t.month, t.day, t.hour, t.minute, t.second, t.weekday };
+    return 0;
+}
+
 int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4, uintptr_t a5)
 {
     switch (nr) {
@@ -612,6 +625,7 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
             return -EINVAL;
         wm_set_keyboard_wanted(lkx_window(), a1 == K86_KEYBOARD_NUMBERS ? K86_KEYBOARD_NUMBERS : a1 != 0);
         return 0;
+    case SYS_TIME:           return time_out(a1);
     case SYS_NOTIFY: {
         char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];
         int err;

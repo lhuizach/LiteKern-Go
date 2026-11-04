@@ -108,8 +108,11 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
 - [x] Calculator reworked for portrait: a big display on the top part, round keys
       filling the rest (the thumb's end of the screen), a Del key, +/- by the 0.
       Not yet: a history of past sums, a scientific mode
-- [ ] Blocksmith checked with touch
-- [ ] Clock: alarms, timer, stopwatch
+- [x] Blocksmith: stays a PC app, not reworked for the phone (the owner's call)
+- [x] Clock: alarms (daily, a switch each, kept in Clock/alarms.txt; Snooze 5 min), a
+      timer typed on a keypad, a stopwatch with laps; a notification when one goes
+      off. New app call SYS_TIME (the local time). Not yet: sound (no audio), alarms
+      while Clock is closed (no background service), choosing days
 - [ ] Gallery: photo grid, viewer, swipe between photos
 - [ ] Pick native Linux games with the brother, check they build for aarch64
 

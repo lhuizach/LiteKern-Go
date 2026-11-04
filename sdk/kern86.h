@@ -276,6 +276,12 @@ static inline int k86_keyboard_wanted(int wanted)
     return k86_call(SYS_WINDOW_KEYBOARD, (uintptr_t)was, 0, 0, 0);
 }
 
+/* LiteKern Go: the local time (SYS_TIME). */
+static inline int k86_time(struct k86_time *out)
+{
+    return k86_call(SYS_TIME, (uintptr_t)out, 0, 0, 0);
+}
+
 /* LiteKern Go: a notification (SYS_NOTIFY). */
 static inline int k86_notify(const char *title, const char *body)
 {
