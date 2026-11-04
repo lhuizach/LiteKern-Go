@@ -13,6 +13,9 @@
 #
 # Timings measured in this VM do NOT count against the boot budget —
 # only the real EeePC does (see docs/BOOT-BUDGET.md).
+#
+# LiteKern Go's image is 64-bit: linux/vm.sh and tests/linux/test-image.sh
+# set QEMU_BIN=qemu-system-x86_64, QEMU_CPU (host with KVM) and QEMU_MEM.
 set -euo pipefail
 
 usage() {
@@ -48,11 +51,11 @@ fi
 mkdir -p build
 
 args=(
-    -name "LiteKern X (EeePC 1000HE profile)"
+    -name "${QEMU_NAME:-LiteKern X (EeePC 1000HE profile)}"
     -machine "${QEMU_MACHINE:-pc}"      # tests use q35 for its 945-style PAM registers
-    -cpu n270
+    -cpu "${QEMU_CPU:-n270}"
     -smp 1
-    -m 1G
+    -m "${QEMU_MEM:-1G}"
     -vga std
     -rtc base=localtime
     -drive "file=$image,format=raw,if=ide,index=0,media=disk"
@@ -72,4 +75,4 @@ case "$mode" in
         ;;
 esac
 
-exec qemu-system-i386 "${args[@]}" "${extra[@]}"
+exec "${QEMU_BIN:-qemu-system-i386}" "${args[@]}" "${extra[@]}"

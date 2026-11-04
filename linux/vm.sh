@@ -31,8 +31,10 @@ qemu)
     # QEMU emulating the CPU). It needs this user in the kvm group:
     #   wsl -u root usermod -aG kvm $USER   then   wsl --shutdown
     accel=()
+    export QEMU_BIN=qemu-system-x86_64 QEMU_CPU=max QEMU_MEM=2G QEMU_NAME="LiteKern Go"
     if [ -w /dev/kvm ]; then
         accel=(-accel kvm)
+        QEMU_CPU=host
         echo "QEMU: KVM (hardware virtualization)"
     else
         echo "QEMU: no KVM, so the CPU is emulated: slow. To fix, from PowerShell:"

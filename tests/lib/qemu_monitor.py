@@ -37,6 +37,7 @@ def keys(sock_path, names):
     """Each name is a QEMU sendkey key ("a", "shift-a", "ret"), or one of
     move:DX,DY / press:BUTTONS / release (monitor mouse_move / mouse_button;
     sleep:SECONDS pauses; gap:SECONDS sets the pause after each step (default 0.15);
+    hold:KEY:MS holds a key that long (LiteKern Go: Power, F12 in the VMs);
     BUTTONS is QEMU's mask: 1 left, 2 right, 4 middle)."""
     s = socket.socket(socket.AF_UNIX)
     s.connect(sock_path)
@@ -54,9 +55,14 @@ def keys(sock_path, names):
             cmd = "mouse_button " + name[6:]
         elif name == "release":
             cmd = "mouse_button 0"
+        elif name.startswith("hold:"):     # hold:KEY:MS
+            key, ms = name[5:].rsplit(":", 1)
+            cmd = f"sendkey {key} {ms}"
         else:
             cmd = "sendkey " + name
         s.sendall(cmd.encode() + b"\n")
+        if name.startswith("hold:"):
+            time.sleep(int(name.rsplit(":", 1)[1]) / 1000)  # QEMU returns at once
         time.sleep(0.15)            # let the guest take each event before the next
     time.sleep(0.2)
     s.close()
