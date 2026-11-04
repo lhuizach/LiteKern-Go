@@ -6,6 +6,7 @@
 #include "kernel/font.h"
 #include "kernel/printk.h"
 #include "kernel/theme.h"
+#include "kernel/text.h"
 #include "kernel/widget.h"
 
 #define SW 480
@@ -80,7 +81,7 @@ static void test_button(void)
 
     struct wg_button d = { .r = { 20, 80, 100, 34 }, .label = "Delete", .style = WG_BUTTON_DESTRUCTIVE };
     wg_button_draw(&s, &d);
-    check(px(24, 97) == t->destructive_bg, "button: destructive is red");
+    check(px(70, 97) == t->destructive_bg, "button: destructive is red");
 }
 
 static const char *const names[] = { "alpha", "beta", "gamma", "delta", "epsilon", "zeta",
@@ -106,13 +107,25 @@ static void test_list(void)
     check(px(10, 10) == t->window_bg && px(160, 10 + rh / 2 - 12) != t->window_bg,
           "list: a card with rounded corners");
 
+    /* LiteKern Go (touch): a tap opens; a drag scrolls by the pixel, and a
+     * flick glides on, slowing to a stop. */
     check(wg_list_pointer(&l, at(100, 10 + rh + 5, 1, 1, 0, 1000)) == WG_LIST_CHANGED &&
-              l.selected == 1, "list: a click selects the row under it");
-    wg_list_pointer(&l, at(100, 10 + rh + 5, 0, 0, 1, 1050));
-    check(wg_list_pointer(&l, at(100, 10 + rh + 5, 1, 1, 0, 1200)) == WG_LIST_ACTIVATE,
-          "list: a second click soon after activates");
-    check(wg_list_pointer(&l, at(100, 10 + rh + 5, 1, 1, 0, 3000)) == WG_LIST_CHANGED,
-          "list: a click much later only selects");
+              l.selected == 1, "list: pressing a row selects it");
+    check(wg_list_pointer(&l, at(100, 10 + rh + 5, 0, 0, 1, 1050)) == WG_LIST_ACTIVATE,
+          "list: lifting the finger on it opens it (a single tap)");
+    wg_list_pointer(&l, at(100, 10 + 3 * rh, 1, 1, 0, 2000));
+    wg_list_pointer(&l, at(100, 10 + 3 * rh - 40, 1, 0, 0, 2020));
+    wg_list_pointer(&l, at(100, 10 + 3 * rh - 80, 1, 0, 0, 2040));
+    int pos = l.pos;
+    check(wg_list_pointer(&l, at(100, 10 + 3 * rh - 80, 0, 0, 1, 2050)) == WG_LIST_NONE && pos > 0 &&
+              pos < 2 * rh && l.selected == 1,
+          "list: a drag scrolls by the pixel, opens nothing, keeps the selection");
+    check(wg_list_gliding(&l), "list: let go while moving, it glides on");
+    wg_list_tick(&l, 2066);
+    check(l.pos > pos, "list: the glide carries it further");
+    for (int i = 0; i < 300 && wg_list_gliding(&l); i++)
+        wg_list_tick(&l, 2066 + 16 * (uint32_t)(i + 1));
+    check(!wg_list_gliding(&l), "list: and it slows to a stop");
 
     struct key_event down = key(KEY_DOWN, 0), end = key(KEY_END, 0), home = key(KEY_HOME, 0);
     check(wg_list_key(&l, &down) == WG_LIST_CHANGED && l.selected == 2, "list: Down moves on");
@@ -185,12 +198,12 @@ static void test_entry(void)
 
     wg_entry_set(&e, "abcdef");
     e.focused = 0;
-    check(wg_entry_pointer(&e, at(10 + 10 + 2 * FONT_W + 1, 20, 1, 1, 0, 0)) == WG_ENTRY_CHANGED &&
+    check(wg_entry_pointer(&e, at(10 + 10 + text_width("ab", TEXT_BODY) + 1, 20, 1, 1, 0, 0)) == WG_ENTRY_CHANGED &&
               e.focused && e.cursor == 2, "entry: a click focuses it and places the cursor");
 
     gfx_fill_rect(&s, 0, 0, SW, SH, t->window_bg);
     wg_entry_draw(&s, &e);
-    check(px(10 + 5, 11) == gfx_mix(t->accent_bg, t->window_bg, 128), "entry: focused shows the ring");
+    check(px(10 + 100, 11) == gfx_mix(t->accent_bg, t->window_bg, 128), "entry: focused shows the ring");
 }
 
 static void test_dialog(void)

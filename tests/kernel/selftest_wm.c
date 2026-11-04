@@ -1,14 +1,14 @@
-/* LiteKern X — window system self-test (Phase 2 §3; floating windows since
- * Phase 3 §6). Test builds only (-DLKX_SELFTEST_WM); see
- * tests/kernel/test-kernel.sh.
+/* LiteKern Go — window system self-test, for the phone's window manager
+ * (kernel/wm.c: every window full-screen under the status bar, its header
+ * bar always there, no window controls). Test builds only
+ * (-DLKX_SELFTEST_WM); tests/linux/test-linux.sh runs it.
  *
- * Checks a window's header bar and buttons pixel by pixel, and that input
- * becomes the right events (content clicks in content coordinates, header
- * buttons by id, close, keys to the focused window), then two windows:
- * focus and stacking, dragging, resizing (with RESIZE events and the
- * minimum size), maximising and minimising. Leaves a Files-style mock-up
- * open for the screenshot; the test then closes it with a real click on its
- * close button. */
+ * Checks a window's place and header bar pixel by pixel, that input becomes
+ * the right events (header buttons by id, content clicks in content
+ * coordinates, pointer moves merged, keys to the focused window), then two
+ * windows: the one in front covers the other, minimising hands the focus
+ * back, and when the area shrinks (the on-screen keyboard) both are refitted
+ * and told (RESIZE). Leaves a Files-style mock-up open for the screenshot. */
 #include "kernel/desktop.h"
 #include "kernel/errno.h"
 #include "kernel/font.h"
@@ -66,7 +66,7 @@ static void mockup(struct wm_window *w)
                                          "todo.txt", "kernel.bin" };
     static const char *const sizes[] = { "3 items", "12 items", "48 items", "2 KB", "512 bytes",
                                          "28 KB" };
-    int x = 40, y = 24, wd = c->w - 80, n = 6;
+    int x = 32, y = 24, wd = c->w - 64, n = 6;
 
     gfx_fill_rect(c, 0, 0, c->w, c->h, t->window_bg);
     gfx_text(c, x, y, "Home", t->fg_dim, GFX_TRANSPARENT);
@@ -79,8 +79,8 @@ static void mockup(struct wm_window *w)
         if (i)
             gfx_fill_rect(c, x + 12, ry, wd - 24, 1, t->border);
         uint32_t icon = i < 3 ? t->accent : t->fg_dim;
-        gfx_fill_round_rect(c, x + 14, ry + 12, 18, 14, 3, icon);
-        gfx_text(c, x + 44, ry + (t->row_h - FONT_H) / 2, names[i], t->fg, GFX_TRANSPARENT);
+        gfx_fill_round_rect(c, x + 14, ry + (t->row_h - 28) / 2, 36, 28, 5, icon);
+        gfx_text(c, x + 64, ry + (t->row_h - FONT_H) / 2, names[i], t->fg, GFX_TRANSPARENT);
         gfx_text(c, x + wd - 14 - gfx_text_width(sizes[i]), ry + (t->row_h - FONT_H) / 2,
                  sizes[i], t->fg_dim, GFX_TRANSPARENT);
     }
@@ -91,69 +91,57 @@ static void mockup(struct wm_window *w)
 void selftest_wm_run(void)
 {
     const struct theme *t = theme_get();
-    struct gfx_surface *s = screen_surface();
     struct wm_event ev;
-    int top = t->topbar_h, hh = t->headerbar_h;
+    int hh = t->headerbar_h;
 
     struct wm_window *w = wm_create("Files", 760, 480, 0, 0);
     wm_present();
     check(w && wm_focused() == w, "a window opens, focused");
-    struct gfx_rect r = wm_rect(w);
-    check(r.w == 760 && r.h == 480 && r.x == (s->w - 760) / 2 && r.y == top + (s->h - top - 480) / 2,
-          "it opens centred below the top bar, at the size asked for");
+    struct gfx_rect r = wm_rect(w), a = wm_area();
+    check(r.x == a.x && r.y == a.y && r.w == a.w && r.h == a.h && wm_is_maximised(w),
+          "it opens full-screen under the status bar, whatever size it asked for");
     struct gfx_surface *c = wm_content(w);
-    check(c->w == 758 && c->h == 480 - hh - 2 && c->stride >= s->w,
-          "content: inside the 1 px frame, below the header bar; stride for the largest size");
-    int ct = r.y + 1 + hh;                              /* first content row on screen */
-    check(px(r.x + 200, r.y + 6) == t->headerbar_bg && px(r.x + 30, ct - 1) == t->headerbar_border,
-          "header bar and its bottom border use the theme");
+    check(c->w == r.w && c->h == r.h - hh, "content: the whole width, under the header bar");
+    int ct = r.y + hh;                                  /* first content row on screen */
+    check(px(r.x + 200, r.y + 6) == t->headerbar_bg, "the header bar uses the theme");
     check(px(r.x + 20, ct + 20) == t->window_bg, "content starts as the window background");
     int bright = 0;
-    for (int x = r.x + r.w / 2 - 40; x < r.x + r.w / 2 + 40; x++)
-        for (int y = r.y + 10; y < r.y + 36; y++)
+    for (int x = r.x + r.w / 2 - 60; x < r.x + r.w / 2 + 60; x++)
+        for (int y = r.y + 10; y < r.y + hh - 10; y++)
             bright += px(x, y) == t->fg;
     check(bright > 20, "the title is drawn in the middle of the header bar");
-    int cx = r.x + r.w - 24, cy = r.y + 24;            /* close button centre */
-    int mx = cx - 36, nx = cx - 72;                     /* maximise, minimise */
-    check(px(cx, cy - 10) == t->button_bg && px(mx, cy - 10) == t->button_bg &&
-              px(nx, cy - 10) == t->button_bg,
-          "minimise, maximise and close: round buttons at the right");
-    check(px(r.x + 2, r.y + 1) != t->headerbar_bg, "the window's corners are rounded");
+    int cy = r.y + hh / 2;
+    check(px(r.x + r.w - 30, cy) == t->headerbar_bg && px(r.x + r.w - 100, cy) == t->headerbar_bg,
+          "no minimise, maximise or close: the phone's keys do that");
+    wm_set_maximised(w, 0);
+    wm_present();
+    check(wm_is_maximised(w) && wm_rect(w).w == a.w && wm_rect(w).h == a.h, "it can't be made smaller");
 
-    check(wm_add_button(w, WM_LEFT, WM_ICON_BACK, 0, 1) == 0 && wm_add_button(w, WM_LEFT, WM_ICON_UP, 0, 2) == 0 &&
-              wm_add_button(w, WM_RIGHT, WM_ICON_ADD, 0, 3) == 0 &&
+    check(wm_add_button(w, WM_LEFT, WM_ICON_BACK, 0, 1) == 0 && wm_add_button(w, WM_RIGHT, WM_ICON_ADD, 0, 3) == 0 &&
               wm_add_button(w, WM_RIGHT, WM_ICON_NONE, "Rename", 4) == 0,
-          "header buttons: icons on the left, icon and text on the right");
-    int bx = r.x + 1 + t->spacing + t->button_size / 2; /* the first left button's centre */
+          "header buttons: icons and text, on the left and right");
+    wm_present();
+    int bx = r.x + t->spacing + t->button_size / 2;    /* the back button's centre */
     drain(w);
-
-    mouse(cx, cy, 0);
-    check(px(cx, cy - 10) == t->button_hover, "hovering the close button highlights it");
-    mouse(cx, cy, MOUSE_LEFT);
-    check(px(cx, cy - 10) == t->button_active, "pressing it shows the pressed colour");
-    mouse(cx, cy, 0);
-    check(next(w, &ev) && ev.type == WM_EVENT_CLOSE && !next(w, &ev), "releasing on it asks the app to close");
-
-    mouse(bx, cy, 0);
     mouse(bx, cy, MOUSE_LEFT);
     mouse(bx, cy, 0);
     check(next(w, &ev) && ev.type == WM_EVENT_HEADER && ev.id == 1, "a header button reports its id");
-
     mouse(bx, cy, MOUSE_LEFT);
-    mouse(bx + 200, cy + 200, MOUSE_LEFT);
-    mouse(bx + 200, cy + 200, 0);
+    mouse(bx + 200, cy + 300, MOUSE_LEFT);
+    mouse(bx + 200, cy + 300, 0);
     check(!next(w, &ev), "a press dragged off its button does nothing");
 
+    drain(w);
     mouse(r.x + 100, ct + 50, MOUSE_LEFT);
     mouse(r.x + 100, ct + 50, 0);
-    check(next(w, &ev) && ev.type == WM_EVENT_CLICK && ev.x == 99 && ev.y == 50,
-          "a content click arrives in content coordinates");
+    check(next(w, &ev) && ev.type == WM_EVENT_CLICK && ev.x == 100 && ev.y == 50,
+          "a content tap arrives in content coordinates");
 
     drain(w);
     mouse(r.x + 300, ct + 100, 0);
     mouse(r.x + 310, ct + 110, 0);
     mouse(r.x + 320, ct + 120, 0);
-    check(wm_poll_event(w, &ev) && ev.type == WM_EVENT_POINTER && ev.x == 319 && ev.y == 120 &&
+    check(wm_poll_event(w, &ev) && ev.type == WM_EVENT_POINTER && ev.x == 320 && ev.y == 120 &&
               !ev.changed && !wm_poll_event(w, &ev),
           "pointer moves reach the app, merged into the latest position");
     mouse(r.x + 320, ct + 120, MOUSE_LEFT);
@@ -163,7 +151,7 @@ void selftest_wm_run(void)
                   ev.buttons == MOUSE_LEFT;
     while (ok_down && wm_poll_event(w, &ev) && ev.type != WM_EVENT_POINTER)
         ;                       /* the CLICK convenience event sits in between */
-    int ok_drag = ev.type == WM_EVENT_POINTER && ev.x == 329 && !ev.changed;
+    int ok_drag = ev.type == WM_EVENT_POINTER && ev.x == 330 && !ev.changed;
     int ok_up = wm_poll_event(w, &ev) && ev.type == WM_EVENT_POINTER && ev.changed == MOUSE_LEFT &&
                 !ev.buttons;
     check(ok_down && ok_drag && ok_up, "press, drag and release arrive in order");
@@ -176,7 +164,7 @@ void selftest_wm_run(void)
           "keys go to the focused window (presses only)");
 
     int ok = 1;
-    for (int i = 4; i < WM_MAX_BUTTONS; i++)
+    for (int i = 3; i < WM_MAX_BUTTONS; i++)
         ok &= wm_add_button(w, WM_RIGHT, WM_ICON_NONE, "x", 10 + i) == 0;
     check(ok && wm_add_button(w, WM_RIGHT, WM_ICON_NONE, "x", 99) == -ENOMEM, "button limit -> -ENOMEM");
     wm_clear_buttons(w);
@@ -187,84 +175,51 @@ void selftest_wm_run(void)
     check(px(r.x + 6, ct - 2) == t->headerbar_bg && px(r.x + 6, ct + 5) == 0xff00ff,
           "drawing into the content can't reach the header bar");
 
-    /* A second window: it opens moved along, in front, and takes the keys. */
-    struct wm_window *w2 = wm_create("Second", 760, 480, 0, 0);
+    wm_request_close(w);
+    check(next(w, &ev) && ev.type == WM_EVENT_CLOSE && !next(w, &ev), "Back's close reaches the app as CLOSE");
+
+    /* A second window: full-screen too, in front, and it takes the keys. */
+    struct wm_window *w2 = wm_create("Second", 400, 300, 0, 0);
     wm_present();
     struct gfx_rect r2 = wm_rect(w2);
-    check(w2 && r2.x == r.x + 32 && r2.y == r.y + 32 && wm_focused() == w2 && wm_at(1) == w2,
-          "a second window opens moved along, in front and focused");
-    check(px(r2.x + 200, r2.y + 6) == t->headerbar_bg && px(r.x + 6, ct + 5) == 0xff00ff,
-          "both are drawn, the new one on top");
-    drain(w);
-    drain(w2);
-    mouse(r.x + 6, ct + 5, MOUSE_LEFT);
-    mouse(r.x + 6, ct + 5, 0);
-    check(wm_focused() == w && wm_at(1) == w && next(w, &ev) && ev.type == WM_EVENT_CLICK,
-          "clicking the one behind brings it to the front, and the click reaches it");
-    drain(w);
-
-    /* Drag by the header bar. */
-    mouse(r.x + 200, r.y + 20, MOUSE_LEFT);
-    mouse(r.x + 220, r.y + 30, MOUSE_LEFT);
-    mouse(r.x + 260, r.y + 60, MOUSE_LEFT);
-    mouse(r.x + 260, r.y + 60, 0);
-    struct gfx_rect m = wm_rect(w);
-    check(m.x == r.x + 60 && m.y == r.y + 40 && m.w == r.w && m.h == r.h && !next(w, &ev),
-          "dragging the header bar moves the window (and sends the app nothing)");
-    check(px(m.x + 200, m.y + 6) == t->headerbar_bg, "it's drawn where it went");
-
-    /* Resize from the bottom-right corner. */
-    drain(w);
-    mouse(m.x + m.w + 2, m.y + m.h + 2, MOUSE_LEFT);
-    mouse(m.x + m.w - 100, m.y + m.h - 50, MOUSE_LEFT);
-    mouse(m.x + m.w - 100, m.y + m.h - 50, 0);
-    struct gfx_rect z = wm_rect(w);
-    check(z.w == m.w - 102 && z.h == m.h - 52 && z.x == m.x && z.y == m.y, "dragging a corner resizes");
-    check(next(w, &ev) && ev.type == WM_EVENT_RESIZE && ev.x == z.w - 2 && ev.y == z.h - hh - 2 &&
-              c->w == ev.x && c->h == ev.y && !next(w, &ev),
-          "the app hears the new size once (RESIZE), and its content follows");
-    mouse(z.x + z.w - 2, z.y + z.h - 2, MOUSE_LEFT);
-    mouse(z.x + 10, z.y + 10, MOUSE_LEFT);
-    mouse(z.x + 10, z.y + 10, 0);
-    check(wm_rect(w).w == WM_MIN_W && wm_rect(w).h == WM_MIN_H, "never smaller than the minimum");
-    wm_move_resize(w, m);
-    drain(w);
-
-    /* Maximise, restore, minimise. */
-    wm_set_maximised(w, 1);
-    wm_present();
-    struct gfx_rect a = wm_area();
-    check(wm_is_maximised(w) && wm_rect(w).x == a.x && wm_rect(w).y == a.y && wm_rect(w).w == a.w &&
-              wm_rect(w).h == a.h && next(w, &ev) && ev.type == WM_EVENT_RESIZE && ev.x == a.w &&
-              ev.y == a.h,
-          "maximised: it fills the space below the top bar, square-cornered");
-    check(wm_header_hidden(w) && wm_content(w)->h == a.h && px(a.x, a.y) != t->headerbar_bg,
-          "maximised: no header bar of its own (the top bar shows it): the content starts at the top");
-    wm_set_maximised(w, 0);
-    wm_present();
-    check(!wm_is_maximised(w) && wm_rect(w).x == m.x && wm_rect(w).w == m.w && next(w, &ev) &&
-              ev.type == WM_EVENT_RESIZE,
-          "restored: back where and as big as it was");
-    wm_set_minimised(w, 1);
-    wm_present();
-    check(wm_is_minimised(w) && wm_focused() == w2 && px(m.x + m.w - 4, m.y + m.h - 4) != t->window_bg,
-          "minimised: gone from the screen, the other window gets the focus");
+    check(w2 && r2.x == a.x && r2.y == a.y && r2.w == a.w && wm_focused() == w2 && wm_at(1) == w2,
+          "a second window opens full-screen, in front and focused");
+    check(px(r.x + 6, ct + 5) == t->window_bg, "it covers the first");
     k.pressed = 1;
     wm_input_key(&k);
     check(!next(w, &ev) && next(w2, &ev) && ev.type == WM_EVENT_KEY, "keys follow the focus");
-    wm_set_minimised(w, 0);
-    check(!wm_is_minimised(w) && wm_focused() == w, "restoring it brings it back in front");
 
-    /* Clean up: the second window goes; the first, as Files will look, stays
-     * centred for the screenshot. */
+    wm_set_minimised(w2, 1);
+    wm_present();
+    check(wm_is_minimised(w2) && wm_focused() == w && px(r.x + 6, ct + 5) == 0xff00ff,
+          "minimised (Home): the one behind shows again and gets the focus");
+    wm_set_minimised(w2, 0);
+    wm_present();
+    check(!wm_is_minimised(w2) && wm_focused() == w2, "brought back (the app switcher), it's in front again");
+
+    /* The on-screen keyboard takes the bottom: the windows are refitted above it. */
+    drain(w);
+    drain(w2);
+    struct gfx_rect small = { a.x, a.y, a.w, a.h - 400 };
+    wm_set_area(small);
+    wm_present();
+    check(wm_rect(w2).h == small.h && next(w2, &ev) && ev.type == WM_EVENT_RESIZE && ev.y == small.h - hh &&
+              wm_content(w2)->h == ev.y,
+          "the area shrinks (the keyboard): the window fits above it, and hears its new size");
+    check(wm_rect(w).h == small.h && next(w, &ev) && ev.type == WM_EVENT_RESIZE,
+          "the one behind is refitted too");
+    wm_set_area(a);
+    wm_present();
+    drain(w);
+    drain(w2);
+
+    /* Clean up: the second window goes; the first, as Files will look,
+     * stays for the screenshot. */
     wm_destroy(w2);
-    check(wm_count() == 1 && wm_focused() == w, "closing a window leaves the rest");
-    wm_move_resize(w, r);
+    check(wm_count() == 1 && wm_focused() == w, "closing a window leaves the rest, focused");
     wm_set_title(w, "Files");
     wm_add_button(w, WM_LEFT, WM_ICON_BACK, 0, 1);
-    wm_add_button(w, WM_LEFT, WM_ICON_UP, 0, 2);
     wm_add_button(w, WM_RIGHT, WM_ICON_ADD, 0, 3);
-    wm_add_button(w, WM_RIGHT, WM_ICON_NONE, "Rename", 4);
     mockup(w);
     drain(w);
 
