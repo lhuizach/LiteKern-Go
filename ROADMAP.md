@@ -105,7 +105,9 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
       has long press now), text dragged to scroll, pictures fitted with Set as
       Wallpaper / Set on Lock Screen under them and a swipe to the next one. Not yet:
       thumbnails, copy and move, sharing
-- [ ] Calculator reworked for portrait
+- [x] Calculator reworked for portrait: a big display on the top part, round keys
+      filling the rest (the thumb's end of the screen), a Del key, +/- by the 0.
+      Not yet: a history of past sums, a scientific mode
 - [ ] Blocksmith checked with touch
 - [ ] Clock: alarms, timer, stopwatch
 - [ ] Gallery: photo grid, viewer, swipe between photos

@@ -5,7 +5,9 @@
  * numbers of millionths: exact for six decimal places, up to 11 digits
  * before the point. Anything beyond, or a division by zero, shows "Error"
  * instead of a wrong answer. Keyboard: digits, '.', + - * / %, Enter or '='
- * to work it out, Backspace, Esc or C to clear, N to change the sign.
+ * to work it out, Backspace, Delete or C to clear, N to change the sign.
+ * LiteKern Go: the keys fill the phone's screen under a big display, and
+ * there's a Backspace key (the top row's second); the phone's Back closes it.
  * Results are logged ("user: calculator: 12 + 30 = 42") for the tests. */
 #include "kernel/string.h"
 #include "kernel/text.h"
@@ -19,10 +21,8 @@
 
 #define COLS 4
 #define ROWS 5
-#define BTN_W 84
-#define BTN_H 56
-#define GAP 10
-#define DISPLAY_H 112
+#define GAP 16
+#define MARGIN 24
 
 static struct k86_window win;
 static struct gfx_surface canvas;
@@ -42,8 +42,8 @@ struct key {
 };
 
 static const struct key keys[] = {
-    { "C", 'c', 0, 0, 1, WG_BUTTON_NORMAL },
-    { "+/" TEXT_MINUS, 'n', 1, 0, 1, WG_BUTTON_NORMAL },
+    { "C", 'c', 0, 0, 1, WG_BUTTON_DESTRUCTIVE },
+    { "Del", '\b', 1, 0, 1, WG_BUTTON_NORMAL },
     { "%", '%', 2, 0, 1, WG_BUTTON_NORMAL },
     { TEXT_DIVIDE, '/', 3, 0, 1, WG_BUTTON_NORMAL },
     { "7", '7', 0, 1, 1, WG_BUTTON_NORMAL }, { "8", '8', 1, 1, 1, WG_BUTTON_NORMAL },
@@ -52,7 +52,8 @@ static const struct key keys[] = {
     { "6", '6', 2, 2, 1, WG_BUTTON_NORMAL }, { TEXT_MINUS, '-', 3, 2, 1, WG_BUTTON_NORMAL },
     { "1", '1', 0, 3, 1, WG_BUTTON_NORMAL }, { "2", '2', 1, 3, 1, WG_BUTTON_NORMAL },
     { "3", '3', 2, 3, 1, WG_BUTTON_NORMAL }, { "+", '+', 3, 3, 1, WG_BUTTON_NORMAL },
-    { "0", '0', 0, 4, 2, WG_BUTTON_NORMAL }, { ".", '.', 2, 4, 1, WG_BUTTON_NORMAL },
+    { "+/" TEXT_MINUS, 'n', 0, 4, 1, WG_BUTTON_NORMAL }, { "0", '0', 1, 4, 1, WG_BUTTON_NORMAL },
+    { ".", '.', 2, 4, 1, WG_BUTTON_NORMAL },
     { "=", '=', 3, 4, 1, WG_BUTTON_SUGGESTED },
 };
 #define NKEYS ((int)(sizeof(keys) / sizeof(keys[0])))
@@ -291,19 +292,54 @@ static void press(char c)
 
 /* --- drawing ---------------------------------------------------------------------- */
 
+/* The display takes the top third; the keys share the rest, as big as fit. */
 static void layout(void)
 {
-    int w = COLS * BTN_W + (COLS - 1) * GAP;
-    int x0 = (canvas.w - w) / 2, y0 = 24;
-    display = (struct gfx_rect){ x0, y0, w, DISPLAY_H };
-    int top = y0 + DISPLAY_H + 16;
+    int w = canvas.w - 2 * MARGIN, x0 = MARGIN, y0 = MARGIN;
+    int dh = canvas.h / 3;
+    if (dh < 160)
+        dh = 160;
+    display = (struct gfx_rect){ x0, y0, w, dh };
+    int top = y0 + dh + GAP;
+    int bw = (w - (COLS - 1) * GAP) / COLS, bh = (canvas.h - MARGIN - top - (ROWS - 1) * GAP) / ROWS;
+    if (bh > bw)
+        bh = bw;                            /* never taller than wide */
+    top = canvas.h - MARGIN - ROWS * bh - (ROWS - 1) * GAP;     /* the keys at the bottom, under the thumb */
+    display.h = top - GAP - y0;
     for (int i = 0; i < NKEYS; i++) {
         const struct key *k = &keys[i];
+        struct wg_button keep = buttons[i];
         buttons[i] = (struct wg_button){
-            .r = { x0 + k->col * (BTN_W + GAP), top + k->row * (BTN_H + GAP),
-                   k->span * BTN_W + (k->span - 1) * GAP, BTN_H },
-            .label = k->label, .style = k->style };
+            .r = { x0 + k->col * (bw + GAP), top + k->row * (bh + GAP), k->span * bw + (k->span - 1) * GAP, bh },
+            .label = k->label, .style = k->style, .pressed = keep.pressed, .hover = keep.hover };
     }
+}
+
+static int is_op(char c)
+{
+    return c == '+' || c == '-' || c == '*' || c == '/';
+}
+
+/* A key: round, its label big. Digits plain, operators tinted, = the accent. */
+static void draw_key(int i)
+{
+    const struct theme *t = theme_get();
+    struct wg_button *b = &buttons[i];
+    const struct key *k = &keys[i];
+    struct gfx_rect r = b->r;
+    uint32_t bg = k->style == WG_BUTTON_SUGGESTED ? t->accent_bg
+                : is_op(k->action) ? gfx_mix(t->accent_bg, t->button_bg, 70)
+                : k->style == WG_BUTTON_DESTRUCTIVE ? gfx_mix(t->destructive, t->button_bg, 60) : t->button_bg;
+    uint32_t fg = k->style == WG_BUTTON_SUGGESTED ? t->accent_fg : t->fg;
+    if (b->pressed)
+        bg = gfx_mix(t->fg, bg, 50);
+    gfx_fill_rect(&canvas, r.x, r.y, r.w, r.h, t->window_bg);
+    gfx_fill_round_rect(&canvas, r.x, r.y, r.w, r.h, (r.h < r.w ? r.h : r.w) / 2, bg);
+    enum text_style st = (k->action >= '0' && k->action <= '9') || is_op(k->action) || k->action == '=' ||
+                         k->action == '.' ? TEXT_LARGE : TEXT_HEADING;     /* words smaller: C, Del, % */
+    text_draw(&canvas, r.x + (r.w - text_width(k->label, st)) / 2, r.y + (r.h - text_height(st)) / 2, k->label,
+              st, fg);
+    b->dirty = 0;
 }
 
 static void draw_display(void)
@@ -311,7 +347,7 @@ static void draw_display(void)
     const struct theme *t = theme_get();
     struct gfx_rect d = display;
     gfx_fill_rect(&canvas, d.x - 2, d.y - 2, d.w + 4, d.h + 4, t->window_bg);
-    gfx_fill_round_rect(&canvas, d.x, d.y, d.w, d.h, 12, t->light ? t->view_bg : gfx_mix(t->ink, t->window_bg, 20));
+    gfx_fill_round_rect(&canvas, d.x, d.y, d.w, d.h, 24, t->light ? t->view_bg : gfx_mix(t->ink, t->window_bg, 20));
     char value[40];
     if (error)
         memcpy(value, "Error", 6);
@@ -334,11 +370,11 @@ static void draw_display(void)
             *end++ = '0';
         *end = '\0';
     }
-    int pad = 18;
-    text_draw_fit(&canvas, d.x + d.w - pad - text_width(expr, TEXT_BODY), d.y + 14, expr,
-                  d.w - 2 * pad, TEXT_BODY, t->fg_dim);
+    int pad = 28;
+    text_draw_fit(&canvas, d.x + d.w - pad - text_width(expr, TEXT_HEADING), d.y + 24, expr,
+                  d.w - 2 * pad, TEXT_HEADING, t->fg_dim);
     int vw = text_width(value, TEXT_LARGE);
-    text_draw(&canvas, d.x + d.w - pad - vw, d.y + d.h - text_height(TEXT_LARGE) - 12, value,
+    text_draw(&canvas, d.x + d.w - pad - vw, d.y + d.h - text_height(TEXT_LARGE) - 24, value,
               TEXT_LARGE, error ? t->destructive : t->fg);
     k86_present(d.x - 2, d.y - 2, d.w + 4, d.h + 4);
 }
@@ -347,7 +383,7 @@ static void draw_all(void)
 {
     gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, theme_get()->window_bg);
     for (int i = 0; i < NKEYS; i++)
-        wg_button_draw(&canvas, &buttons[i]);
+        draw_key(i);
     k86_present(0, 0, canvas.w, canvas.h);
     draw_display();
 }
@@ -356,7 +392,7 @@ static void draw_dirty(void)
 {
     for (int i = 0; i < NKEYS; i++)
         if (buttons[i].dirty) {
-            wg_button_draw(&canvas, &buttons[i]);
+            draw_key(i);
             k86_present(buttons[i].r.x, buttons[i].r.y, buttons[i].r.w, buttons[i].r.h);
         }
 }
@@ -372,7 +408,7 @@ static void key(const struct key_event *k)
         c = '=';
     else if (k->key == KEY_BACKSPACE)
         c = '\b';
-    else if (k->key == KEY_ESC || k->key == KEY_DELETE)
+    else if (k->key == KEY_DELETE)
         c = 'c';
     else if (k->ascii >= 'A' && k->ascii <= 'Z')
         c = (char)(k->ascii + 32);

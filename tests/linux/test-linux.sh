@@ -257,6 +257,15 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^screen: has ffffff in 330,110,700,230: yes$' \
     '!crashed|stopped|PANIC'
 
+# Calculator's keys by touch: 7 (101,770), x (617,770), 1 (101,1052), Del
+# (274,629), 6 (446,911), = (617,1193): 7 x 6 = 42.
+path; open_app 1; go 101 770; click; go 617 770; click; go 101 1052; click; go 274 629; click
+go 446 911; click; go 617 1193; click; add sleep:0.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "Calculator by touch: its keypad, Del" \
+    '^user: calculator: 7 x 6 = 42$' \
+    '!crashed|stopped|PANIC'
+
 # Files lists the disk; a single tap on Documents (its first row, 300,261) opens it.
 # The phone's Back goes up to the disk first (Files asked for it), then closes Files.
 path; open_app 0; go 300 261; click; add sleep:1 phone_back sleep:1 phone_back sleep:1.5

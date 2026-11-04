@@ -4,8 +4,8 @@
   "entry": "calculator.lkx",
   "version": "1.0",
   "order": 2,
-  "width": 420,
-  "height": 548,
-  "min_width": 420,
-  "min_height": 548
+  "width": 720,
+  "height": 1224,
+  "min_width": 360,
+  "min_height": 600
 }
