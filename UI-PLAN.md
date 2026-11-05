@@ -34,7 +34,9 @@ Volume Down.
 | Power + Volume Down | Screenshot (saved to Pictures/Screenshots) | — |
 
 Back is passed to the app first. The app says whether it handled it (closed a
-page); if not, the shell does the default (closes the app, goes home).
+page); if not, the shell does the default: it goes home and keeps the app
+open behind, as Home does (Android 12's way). Apps are closed from Recent
+apps (swipe up, Close all) or the Task Manager.
 
 The touch keys have backlights. They turn on with any touch and off after a
 few seconds, like on stock Android.

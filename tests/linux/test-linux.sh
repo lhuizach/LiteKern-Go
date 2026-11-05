@@ -332,15 +332,17 @@ check "Calculator by touch: its keypad, Del" \
     '!crashed|stopped|PANIC'
 
 # Files lists the disk; a single tap on Documents (its first row, 300,261) opens it.
-# The phone's Back goes up to the disk first (Files asked for it), then closes Files.
+# The phone's Back goes up to the disk first (Files asked for it), then home,
+# Files kept open behind.
 path; open_app 0; go 300 261; click; add sleep:1 phone_back sleep:1 phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
-check "Files lists the disk; Back goes up a folder, then closes Files" \
+check "Files lists the disk; Back goes up a folder, then home (Files kept open)" \
     '^user: files: open Boot disk \(LITEKERNX\)$' \
     '^user: files: open folder Documents$' \
     '^shell: Back \(to Files\)$' \
-    '^shell: Back closes Files$' \
-    '^lkx: Files exited \(0\)$' \
+    '^shell: Back leaves Files open, goes home$' \
+    '^desktop: minimise Files$' \
+    '!lkx: Files exited' \
     '!crashed|stopped|PANIC'
 
 # A long press on README.TXT (its third row, 300,437): the sheet; Rename
@@ -414,12 +416,18 @@ check "the lock screen shows notifications under the clock" \
     '^lock: locked' \
     '^screen: has ffffff in 80,580,640,800: yes$'
 
-# Back closes an app with nothing to go back to.
-path; open_app 1; add phone_back sleep:1.5
+# Back, in an app with nothing to go back to, goes home: the app is kept
+# open behind (Android 12's way). Its icon brings it back as it was: the 7
+# typed before Back is still there (7 + 6 = 13). Home keeps it open too.
+path; open_app 1; add 7 phone_back sleep:1; tap_app 1; add shift-equal 6 ret sleep:0.5 phone_home sleep:1; tap_app 1
 run $SHELL_BIN build-linux/test/disk.img "$P"
-check "Back closes Calculator" \
-    '^shell: Back closes Calculator$' \
-    '^lkx: Calculator exited \(0\)$' \
+check "Back and Home go home, the app kept open: Calculator comes back as it was" \
+    '^shell: Back leaves Calculator open, goes home$' \
+    '^desktop: minimise Calculator$' \
+    '^desktop: restore Calculator$' \
+    '^user: calculator: 7 \+ 6 = 13$' \
+    '^shell: Home$' \
+    '!lkx: Calculator exited|crashed|PANIC' \
     '!shell: Back \(to'
 
 # Settings (apps/settings): a list of pages from y 172, rows 88 (Wi-Fi 216,
@@ -430,13 +438,13 @@ cp build/litekernx.img build-linux/test/settings.img
 path; open_app 2; go 360 304; click; add sleep:1; go 530 320; click; add sleep:1 phone_back sleep:0.8
 go 360 656; click; add sleep:0.8 phone_back sleep:0.5 phone_back sleep:1
 run $SHELL_BIN build-linux/test/settings.img "$P"
-check "Settings: the list of pages, Display's style saved, About, Back to the list, then Back closes it" \
+check "Settings: the list of pages, Display's style saved, About, Back to the list, then Back goes home" \
     '^user: settings: page display$' \
     '^user: settings: style light$' \
     '^settings: saved$' \
     '^user: settings: page about$' \
     '^user: settings: page home$' \
-    '^shell: Back closes Settings$' \
+    '^shell: Back leaves Settings open, goes home$' \
     '!refused|crashed|PANIC'
 run $SHELL_BIN build-linux/test/settings.img "sleep:0.5"
 check "Settings' choices are kept across a restart" \
@@ -514,14 +522,16 @@ check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: saved Test\.blocks \(23 blocks\)$' \
     '!blocksmith: error|crashed'
 
-# Stability: Files opened and closed with Back 15 times; each must end cleanly.
+# Stability: Files opened, sent home with Back, brought back, then closed
+# from Recent apps' Close all (360,1196), 10 times; each must end cleanly.
 path; add gap:0.1
-for i in $(seq 15); do tap_app 0; add phone_back sleep:0.6; done
+files() { go "$(tile_x 0)" "$(tile_y 0)"; click; add sleep:0.6; }
+for i in $(seq 10); do files; add phone_back sleep:0.5; files; add phone_recents sleep:0.5; go 360 1196; click; add sleep:0.6; done
 run $SHELL_BIN build-linux/test/disk.img "$P"
 n=$(grep -c '^lkx: Files exited (0)$' <<<"$out")
-out+=$'\n'"stress: $n of 15 ended"
-check "Files opened and closed with Back 15 times, ending cleanly each time" \
-    '^stress: 15 of 15 ended$' \
+out+=$'\n'"stress: $n of 10 ended"
+check "Files opened, sent home, back and closed 10 times, ending cleanly each time" \
+    '^stress: 10 of 10 ended$' \
     '!crashed|stopped|PANIC'
 
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to

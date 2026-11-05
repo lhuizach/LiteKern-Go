@@ -2889,8 +2889,9 @@ static int phone_key(const struct key_event *k)
     switch (k->key) {
     case KEY_PHONE_BACK: {
         /* The power menu first; on the home screen, back to its first page;
-         * in an app, to the app if it has something to close, else it
-         * closes (UI-PLAN.md). */
+         * in an app, to the app if it has something to close, else home,
+         * the app kept open behind (as on Android 12 and later: Recent
+         * apps or the Task Manager close it; UI-PLAN.md). */
         struct wm_window *w = wm_top_visible();
         if (menu_open) {
             menu_set(0);
@@ -2907,8 +2908,9 @@ static int phone_key(const struct key_event *k)
             esc = keymap_event(KEY_ESC, 0);
             wm_input_key(&esc);
         } else {
-            kprintf("shell: Back closes %s\n", name_of(w));
-            wm_request_close(w);
+            kprintf("shell: Back leaves %s open, goes home\n", name_of(w));
+            minimise_windows(&w, 1);
+            turn_to(0, 0);
         }
         break;
     }
