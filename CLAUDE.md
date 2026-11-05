@@ -42,6 +42,7 @@ Accepted trade-offs: some parts will be buggy, and Android apps (APKs) will not 
 - The stock BTU firmware must be downloaded before the first flash. It is the way back, flashed with Odin from download mode.
 - Download tools only from official sources and scan unsigned tools on VirusTotal before running them.
 - Do not suggest or perform anything that needs admin rights unless the owner says they have the code.
+- Never open, search or list `private/`, or any folder of the owner's holding IMEI, serial or MAC details. Never ask for those values or put them in chat, code or git.
 
 ## Environment
 

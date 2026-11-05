@@ -13,3 +13,6 @@ build-x64/
 Apps for zach/
 admin/
 /build-target-aarch64/
+
+# The owner's private notes (IMEI, serial, MACs): never committed
+/private/
