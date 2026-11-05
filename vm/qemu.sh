@@ -75,4 +75,4 @@ case "$mode" in
         ;;
 esac
 
-exec "${QEMU_BIN:-qemu-system-i386}" "${args[@]}" "${extra[@]}"
+exec "${QEMU_BIN:-qemu-system-x86_64}" "${args[@]}" "${extra[@]}"

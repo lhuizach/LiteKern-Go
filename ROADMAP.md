@@ -45,7 +45,7 @@ isn't, so most of the OS gets built there first.
 - [x] Ethernet "no cable" in the VM (it was only the link coming up a moment late)
 - [x] Rename `litekernx-linux.img` and other LiteKern X leftovers
 - [x] Remove Eee PC parts from the build (drivers, Hardware Probe)
-- [ ] Rerun the 32-bit test suite once, then decide whether to keep 32-bit
+- [x] 32-bit dropped: 64-bit only (x86_64 VMs, aarch64 phone). The i386 kernel, bootloader and `.lkx` build are gone from this repo (LiteKern X keeps its own)
 
 **Done when:** a clean build boots in the VM with no LiteKern X / Eee PC
 leftovers and no driver warnings.
@@ -171,8 +171,12 @@ This decides Camera, brightness, vibration and alarms in UI-PLAN.md.
 
 ## Phase 6 — Build environment for the phone
 
-- [ ] `pmbootstrap` in WSL2 (`.wslconfig`: memory=12GB, swap=16GB)
-- [ ] Build the stock Nura samsung-a5 kernel and image ourselves
+- [x] `.wslconfig` written (memory=12GB, swap=16GB); applies after WSL restarts
+- [x] `pmbootstrap` 3.12.1 cloned to `~/lkx-phone`; samsung-a5 recipe kept in `phone/` (archived upstream)
+- [ ] `sudo apt install kpartx`, then `pmbootstrap init` (needs the WSL password)
+- [x] Build the Nura v26.06 kernel ourselves, no root (`phone/build-kernel.sh`): same version, device tree byte-identical, config differs only in compiler lines
+- [x] `phone/make-boot.sh`: our kernel in Nura's boot image, `boot-our-kernel.img` (not flashed)
+- [ ] Build the whole Nura image with pmbootstrap
 - [ ] Boot our build of it on the phone (same result as phase 5)
 
 **Done when:** we can rebuild the phone's kernel and boot it.

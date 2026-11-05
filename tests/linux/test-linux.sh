@@ -15,7 +15,7 @@ W=720 H=1280
 # (the kernel build's, with them in the ramdisk).
 TEST_APPS="tests/apps/crash tests/apps/badcalls tests/apps/hang tests/apps/notify"
 make -s -f platform/Makefile EXTRA_APPS="$TEST_APPS" >/dev/null || exit 1
-rm -f build/test-apps/litekernx.img build/test-apps/stage1.bin     # FAT_MB isn't a make dependency
+rm -f build/test-apps/litekernx.img build/test-apps/mbr.bin     # FAT_MB isn't a make dependency
 make -s BUILD=build/test-apps FAT_MB=64 "EXTRA_APPS=$TEST_APPS" build/test-apps/litekernx.img >/dev/null || exit 1
 for t in wm gfx widgets; do
     make -s -f platform/Makefile SELFTEST=$t LBUILD=build-linux/selftest-$t >/dev/null || exit 1

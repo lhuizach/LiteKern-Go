@@ -7,7 +7,7 @@
 #define LKX_PMM_H
 
 #include <stdint.h>
-#include "boot/bootinfo.h"
+#include "kernel/bootinfo.h"
 
 #define PAGE_SIZE   4096u
 #define PMM_LIMIT   0x80000000u     /* 2 GiB: where user space starts (kernel/user.h) */

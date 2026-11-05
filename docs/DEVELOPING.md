@@ -8,7 +8,7 @@ Run these once, from PowerShell in the project folder:
 wsl sudo bash tools/setup-wsl.sh
 wsl make check-tools
 ```
-The toolchain is the host's `gcc -m32 -ffreestanding`, GNU `ld` and `nasm`, all in WSL. A proper `i686-elf` cross-compiler is a [Non-Goal](NON-GOALS.md) until host gcc causes real problems.
+LiteKern Go is 64-bit only: the host's `gcc` for the headless tests, Buildroot's compilers for the VM (x86_64) and the phone (aarch64), all in WSL.
 
 ## Everyday commands
 | Command | What it does |

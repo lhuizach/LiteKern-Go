@@ -15,7 +15,6 @@ static struct {
     char name[24], icon[24], path[PATH_MAX];
     int order;              /* "order" in kerns.json: lower comes first (default 100) */
     int width, height, min_w, min_h, pinned;
-    uint32_t size;
 } found[APPS_MAX];
 static int nfound;
 
@@ -79,9 +78,8 @@ static int ends_with(const char *s, const char *tail)
 }
 
 /* One app from its kerns.json (`json`, read from `manifest_name`). Its
- * program must be in the ramdisk, unless `outside` (the Linux build's own
- * apps: appreg_add()). */
-static void register_json(const char *manifest_name, char *json, int outside)
+ * program lives outside the ramdisk (platform/lkx.c finds it by this path). */
+static void register_json(const char *manifest_name, char *json)
 {
     char entry[24];
     if (nfound == APPS_MAX)
@@ -100,18 +98,12 @@ static void register_json(const char *manifest_name, char *json, int outside)
         return;
     memcpy(f->path, manifest_name, (size_t)dir);
     memcpy(f->path + dir, entry, strlen(entry) + 1);
-    uint32_t prog_size = 0;
-    if (!outside && ramdisk_size(f->path, &prog_size)) {     /* read when it's opened */
-        kprintf("lkx: %s: its program %s isn't in the ramdisk\n", manifest_name, f->path);
-        return;
-    }
     f->order = json_int(json, "order", 100);
     f->width = json_int(json, "width", 0);
     f->height = json_int(json, "height", 0);
     f->min_w = json_int(json, "min_width", 0);
     f->min_h = json_int(json, "min_height", 0);
     f->pinned = json_int(json, "pinned", 0);
-    f->size = prog_size;
     nfound++;
 }
 
@@ -126,7 +118,7 @@ static void register_one(const char *manifest_name)
     }
     memcpy(json, data, size);
     json[size] = '\0';
-    register_json(manifest_name, json, 0);
+    register_json(manifest_name, json);
 }
 
 void appreg_add(const char *manifest_name, const char *json)
@@ -136,7 +128,7 @@ void appreg_add(const char *manifest_name, const char *json)
     if (n > MANIFEST_MAX)
         return;
     memcpy(copy, json, (size_t)n + 1);
-    register_json(manifest_name, copy, 1);
+    register_json(manifest_name, copy);
 }
 
 void lkx_register_all(void)
@@ -166,7 +158,7 @@ void lkx_register_all(void)
                          .height = f->height, .min_width = f->min_w, .min_height = f->min_h,
                          .pinned = f->pinned };
         if (apps_add(&a) == 0)
-            kprintf("lkx: %s (%s, %u KB)\n", f->name, f->path, f->size / 1024);
+            kprintf("lkx: %s (%s)\n", f->name, f->path);
     }
     if (!nfound)
         kprintf("lkx: no apps in the ramdisk\n");

@@ -7,7 +7,7 @@
 #ifndef LKX_STATUS_H
 #define LKX_STATUS_H
 
-#include "boot/bootinfo.h"
+#include "kernel/bootinfo.h"
 
 enum status {
     STATUS_READY,   /* navy: kernel reached "ready" */

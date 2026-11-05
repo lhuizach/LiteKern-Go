@@ -7,7 +7,7 @@
 #define LKX_TIMING_H
 
 #include <stdint.h>
-#include "boot/bootinfo.h"
+#include "kernel/bootinfo.h"
 
 /* Calibrate the TSC against the PIT and remember T0. */
 void timing_init(const struct boot_info *bi);

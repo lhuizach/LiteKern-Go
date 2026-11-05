@@ -1,46 +1,27 @@
-# LiteKern X — top-level build.
-# Run inside WSL/Linux. From PowerShell in the project folder: `wsl make <target>`.
+# LiteKern Go — the generated files and the disk image.
+# Run inside WSL/Linux. From PowerShell in the project folder: `wsl make`.
+#
+# lkx-shell and the apps are built by platform/Makefile (which runs this one
+# first), the VM and phone systems by linux/build.sh. This one makes what they
+# share: the C generated from the assets, the ramdisk and the disk image.
+# Everything is 64-bit (x86_64 in the VMs, aarch64 on the phone).
 
 # Overridable so tests can build variants side by side, e.g.
-#   make BUILD=build/test-stub KERNEL=stub build/test-stub/litekernx.img
+#   make BUILD=build/test-apps FAT_MB=64 build/test-apps/litekernx.img
 BUILD  ?= build
-KERNEL ?= c                 # c = the real kernel, stub = tests/boot/kernel-stub.asm
-EXTRA_CFLAGS ?=
-EXTRA_KERNEL_SRCS ?=        # extra C / .asm files linked into the kernel (test builds)
+IMAGE  := $(BUILD)/litekernx.img
 
-QEMU  := bash vm/qemu.sh
-IMAGE := $(BUILD)/litekernx.img
-NASM  := nasm -f bin -I./
-
-CC      := gcc
-LD      := ld
-OBJCOPY := objcopy
-CFLAGS  := -m32 -march=i686 -mtune=bonnell -std=gnu11 -O2 -g \
-           -ffreestanding -fno-pie -fno-pic -fno-stack-protector \
-           -fno-asynchronous-unwind-tables -fcf-protection=none \
-           -mgeneral-regs-only -Wall -Wextra -Werror -I. -I$(BUILD)/gen $(EXTRA_CFLAGS)
-LIBGCC  := $(shell $(CC) -m32 -print-libgcc-file-name)
-
-KERNEL_SRCS := $(wildcard kernel/*.c drivers/*.c kernel/*.asm) $(EXTRA_KERNEL_SRCS)
-KERNEL_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(filter %.c,$(KERNEL_SRCS))) \
-               $(patsubst %.asm,$(BUILD)/%.asm.o,$(filter %.asm,$(KERNEL_SRCS))) \
-               $(BUILD)/gen/cursors.o $(BUILD)/gen/icons.o $(BUILD)/gen/uifont.o $(BUILD)/gen/splash.o
-
-# The disk image: the boot area (MBR, stage 2, kernel), then the ramdisk at
-# RAMDISK_LBA (2 MiB: apps, wallpapers; read by the kernel at boot through
-# the BIOS, kernel/ramdisk.h), then the FAT32 partition for files at FAT_START
-# (8 MiB). The normal image gets the FAT32 partition; test images (other BUILD
-# dirs) don't, to stay small. Its starting contents are assets/disk/. FAT32
-# needs at least 65525 clusters, so with 512-byte clusters 64 MiB is about
-# the smallest sensible.
-# LiteKern Go: 2 MiB, room for the kernel with its 2x fonts, 112 px icons
-# and the 256 px logo.
+# The disk image: the partition table, the ramdisk at RAMDISK_LBA (2 MiB:
+# manifests, wallpapers, read at start, kernel/ramdisk.h), then the FAT32
+# partition for files at FAT_START (8 MiB). The normal image gets the FAT32
+# partition; test images (other BUILD dirs) don't, to stay small. Its starting
+# contents are assets/disk/. FAT32 needs at least 65525 clusters, so with
+# 512-byte clusters 64 MiB is about the smallest sensible.
 RAMDISK_LBA := 4096
 FAT_MB      ?= $(if $(filter build,$(strip $(BUILD))),64,0)
 FAT_START   := 16384
 
-# Build-time defaults (Phase 3 section 5; settings aren't saved across
-# reboots until Phase 5): make STYLE=light ACCENT=teal WALLPAPER=crossing SPLASH=log
+# Build-time defaults: make STYLE=light ACCENT=teal WALLPAPER=crossing SPLASH=logo
 STYLE     ?= dark
 ACCENT    ?= blue
 WALLPAPER ?= crossing
@@ -51,51 +32,31 @@ KEYBOARD  ?= qwerty         # qwerty (US) or azerty (French); LiteKern Go: qwert
 
 # Cursors: assets/cursors.json + PNGs -> C, at build time (docs/ASSET-PROMPTS.md §3).
 CURSOR_ASSETS := assets/cursors.json $(wildcard assets/cursors/*.png)
-# App icons: assets/icons.json + 48x48 PNGs -> C (docs/ASSET-PROMPTS.md §2).
+# App icons: assets/icons.json + PNGs -> C (docs/ASSET-PROMPTS.md §2).
 ICON_ASSETS := assets/icons.json $(wildcard assets/icons/*.png)
 # Wallpapers: every assets/wallpapers/*.png, packed into the ramdisk
 # (docs/ASSET-PROMPTS.md §8).
-WALLPAPER_PNGS := $(wildcard assets/wallpapers/*.png)
-WALLPAPER_LKXW := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.lkxw,$(WALLPAPER_PNGS))
+WALLPAPER_PNGS   := $(wildcard assets/wallpapers/*.png)
+WALLPAPER_LKXW   := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.lkxw,$(WALLPAPER_PNGS))
 WALLPAPER_THUMBS := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.thumb.lkxw,$(WALLPAPER_PNGS))
 
-# KERN86 apps (Phase 2 section 5): each folder in apps/ holds kerns.json and C
-# sources, built against the SDK (sdk/) into a .lkx and packed into the
-# kernel's ramdisk. The SDK carries the kernel's own drawing and widget code.
-# EXTRA_APPS adds app folders from elsewhere (the tests' misbehaving apps).
+# Apps: each folder in apps/ holds kerns.json and C sources. Their programs are
+# built by platform/Makefile; the ramdisk carries the manifests, which is how
+# lkx-shell knows the apps. EXTRA_APPS adds app folders from elsewhere (the
+# tests' misbehaving apps).
 EXTRA_APPS   ?=
 APP_PATHS    := $(wildcard apps/*) $(EXTRA_APPS)
-APP_CFLAGS   := -m32 -march=i686 -mtune=bonnell -std=gnu11 -O2 -ffreestanding -fno-pie -fno-pic \
-                -fno-stack-protector -fno-asynchronous-unwind-tables -fcf-protection=none \
-                -mgeneral-regs-only -Wall -Wextra -Werror -I.
-SDK_OBJS     := $(BUILD)/sdk/crt0.asm.o $(BUILD)/sdk/sdk.o $(BUILD)/sdk/gfx.o \
-                $(BUILD)/sdk/widget.o $(BUILD)/sdk/theme.o $(BUILD)/sdk/string.o \
-                $(BUILD)/sdk/text.o $(BUILD)/sdk/uifont.o $(BUILD)/sdk/inflate.o
-APP_LKX      := $(foreach p,$(APP_PATHS),$(BUILD)/$(p)/$(notdir $(p)).lkx)
-RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/kerns.json \
-                apps/$(notdir $(p))/$(notdir $(p)).lkx=$(BUILD)/$(p)/$(notdir $(p)).lkx) \
+RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/kerns.json) \
                 $(foreach w,$(WALLPAPER_LKXW) $(WALLPAPER_THUMBS),wallpapers/$(notdir $(w))=$(w)) \
                 fonts/clock.lkxf=$(BUILD)/gen/fonts/clock.lkxf
 
-# Ring 3 test programs: flat binaries at USER_BASE, embedded into self-test
-# kernels by tests/kernel/user_programs.asm.
-USER_TEST_BINS := $(patsubst %.asm,$(BUILD)/%.user.bin,$(wildcard tests/kernel/user/*.asm))
+GENERATED := $(BUILD)/gen/defaults.h $(BUILD)/gen/cursors.c $(BUILD)/gen/uifont.c \
+             $(BUILD)/gen/splash.c $(BUILD)/gen/icons.c
 
-.PHONY: all run debug test test-boot test-fat test-image test-users test-kernel smoke smoke-gui check-tools clean \
-        vbox-create vbox vbox-test usb
+.PHONY: all test test-fat test-image test-users check-tools clean FORCE
+FORCE:
 
 all: $(IMAGE)
-
-# --- kernel -----------------------------------------------------------------
-
-$(BUILD)/%.o: %.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD)/%.asm.o: %.asm boot/bootinfo.inc
-	@mkdir -p $(dir $@)
-	nasm -f elf32 -I./ -DUSER_BIN_DIR='"$(BUILD)/tests/kernel/user"' \
-		-DBIOS_THUNK_FILE='"$(BUILD)/bios_thunk.bin"' -o $@ $<
 
 # The build-time defaults as a header, rewritten only when they change.
 $(BUILD)/gen/defaults.h: FORCE
@@ -104,48 +65,30 @@ $(BUILD)/gen/defaults.h: FORCE
 		'$(STYLE)' '$(ACCENT)' '$(WALLPAPER)' '$(SPLASH)' '$(SCREENSAVER)' '$(RAMDISK_LBA)' '$(strip $(KEYBOARD))' > $@.new; \
 	cmp -s $@.new $@ && rm -f $@.new || mv $@.new $@
 
-$(BUILD)/kernel/main.o $(BUILD)/kernel/ramdisk.o $(BUILD)/kernel/theme.o $(BUILD)/kernel/wallpaper.o \
-$(BUILD)/kernel/desktop.o $(BUILD)/kernel/splash.o $(BUILD)/kernel/screensaver.o \
-$(BUILD)/kernel/settings.o $(BUILD)/drivers/kbd.o: $(BUILD)/gen/defaults.h
+# --- generated from the assets ---------------------------------------------
 
-# --- apps and the ramdisk ------------------------------------------------------
-
-$(BUILD)/sdk/crt0.asm.o: sdk/crt0.asm
+$(BUILD)/gen/cursors.c: $(CURSOR_ASSETS) tools/cursors2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
-	nasm -f elf32 -o $@ $<
+	python3 tools/cursors2c.py assets/cursors.json $@
 
-$(BUILD)/sdk/sdk.o: sdk/sdk.c
+# The GUI font (kernel/text.h): the committed atlas -> C.
+$(BUILD)/gen/uifont.c: assets/fonts/ui-font.json assets/fonts/ui-font.png tools/font2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
-	$(CC) $(APP_CFLAGS) -MMD -MP -c -o $@ $<
+	python3 tools/font2c.py $< $@
 
-# The kernel's drawing and widget code, compiled again for ring 3.
-$(BUILD)/sdk/%.o: kernel/%.c
+# The lock screen's big clock: one face, read from the ramdisk when it first locks.
+$(BUILD)/gen/fonts/clock.lkxf: assets/fonts/clock-font.json assets/fonts/clock-font.png tools/font2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
-	$(CC) $(APP_CFLAGS) -MMD -MP -c -o $@ $<
+	python3 tools/font2c.py --bin $< $@
 
-# One app: its C files + the SDK, linked by sdk/app.ld; the flat binary
-# starts with the .lkx header. One rule per folder in apps/.
-define APP_RULE
-$(patsubst $(1)/%.c,$(BUILD)/$(1)/%.o,$(wildcard $(1)/*.c)): $(BUILD)/$(1)/%.o: $(1)/%.c
-	@mkdir -p $$(dir $$@)
-	$(CC) $(APP_CFLAGS) -MMD -MP -c -o $$@ $$<
-
-$(BUILD)/$(1)/$(notdir $(1)).lkx: $(patsubst $(1)/%.c,$(BUILD)/$(1)/%.o,$(wildcard $(1)/*.c)) $(SDK_OBJS) sdk/app.ld
-	$(LD) -m elf_i386 --no-warn-rwx-segments -T sdk/app.ld -o $$(basename $$@).elf $$(filter %.o,$$^) $(LIBGCC)
-	$(OBJCOPY) -O binary $$(basename $$@).elf $$@
-endef
-$(foreach p,$(APP_PATHS),$(eval $(call APP_RULE,$(p))))
-
-$(BUILD)/gen/ramdisk.bin: $(APP_LKX) $(WALLPAPER_LKXW) $(WALLPAPER_THUMBS) $(BUILD)/gen/fonts/clock.lkxf $(foreach p,$(APP_PATHS),$(p)/kerns.json) tools/mkramdisk.py
+# The boot splash's logo (assets/logo.png, 256x256: tools/make-logo.py).
+$(BUILD)/gen/splash.c: assets/splash.json assets/logo.png assets/tux.png tools/icons2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
-	python3 tools/mkramdisk.py $@ $(RAMDISK_ARGS)
-$(BUILD)/kernel/bios_thunk_blob.asm.o: $(BUILD)/bios_thunk.bin
+	python3 tools/icons2c.py assets/splash.json $@ splash_images
 
-# The real-mode BIOS disk thunk: a flat binary the kernel carries and copies
-# to low memory (drivers/bios_disk.c).
-$(BUILD)/bios_thunk.bin: boot/bios_thunk.asm
+$(BUILD)/gen/icons.c: $(ICON_ASSETS) tools/icons2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
-	$(NASM) -o $@ $<
+	python3 tools/icons2c.py assets/icons.json $@
 
 $(BUILD)/gen/wallpapers/%.thumb.lkxw: assets/wallpapers/%.png tools/wallpaper-pack.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
@@ -155,96 +98,20 @@ $(BUILD)/gen/wallpapers/%.lkxw: assets/wallpapers/%.png tools/wallpaper-pack.py 
 	@mkdir -p $(dir $@)
 	python3 tools/wallpaper-pack.py $< $@
 
-$(BUILD)/tests/kernel/user_programs.asm.o: $(USER_TEST_BINS)
+# --- the disk image ---------------------------------------------------------
 
-$(BUILD)/gen/cursors.c: $(CURSOR_ASSETS) tools/cursors2c.py tools/lkx_png.py
+$(BUILD)/gen/ramdisk.bin: $(WALLPAPER_LKXW) $(WALLPAPER_THUMBS) $(BUILD)/gen/fonts/clock.lkxf \
+                          $(foreach p,$(APP_PATHS),$(p)/kerns.json) tools/mkramdisk.py
 	@mkdir -p $(dir $@)
-	python3 tools/cursors2c.py assets/cursors.json $@
+	python3 tools/mkramdisk.py $@ $(RAMDISK_ARGS)
 
-$(BUILD)/gen/cursors.o: $(BUILD)/gen/cursors.c kernel/cursor.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(BUILD)/mbr.bin: $(BUILD)/gen/ramdisk.bin tools/mkmbr.py
+	@r=$$(( ($$(stat -c %s $<) + 511) / 512 )); \
+	python3 tools/mkmbr.py $@ $$(( $(RAMDISK_LBA) + r )) $(FAT_START) $$(( $(FAT_MB) * 2048 ))
 
-# The GUI font (kernel/text.h): the committed atlas -> C.
-$(BUILD)/gen/uifont.c: assets/fonts/ui-font.json assets/fonts/ui-font.png tools/font2c.py tools/lkx_png.py
-	@mkdir -p $(dir $@)
-	python3 tools/font2c.py $< $@
-
-$(BUILD)/gen/uifont.o: $(BUILD)/gen/uifont.c kernel/text.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-# The lock screen's big clock: one face, read from the ramdisk when it first
-# locks (it's 70 KB: too much for the kernel's 448 KiB).
-$(BUILD)/gen/fonts/clock.lkxf: assets/fonts/clock-font.json assets/fonts/clock-font.png tools/font2c.py tools/lkx_png.py
-	@mkdir -p $(dir $@)
-	python3 tools/font2c.py --bin $< $@
-
-$(BUILD)/sdk/uifont.o: $(BUILD)/gen/uifont.c kernel/text.h
-	@mkdir -p $(dir $@)
-	$(CC) $(APP_CFLAGS) -c -o $@ $<
-
-# The boot splash's logo (assets/logo.png, 256x256: tools/make-logo.py).
-$(BUILD)/gen/splash.c: assets/splash.json assets/logo.png assets/tux.png tools/icons2c.py tools/lkx_png.py
-	@mkdir -p $(dir $@)
-	python3 tools/icons2c.py assets/splash.json $@ splash_images
-
-$(BUILD)/gen/splash.o: $(BUILD)/gen/splash.c kernel/icon.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(BUILD)/gen/icons.c: $(ICON_ASSETS) tools/icons2c.py tools/lkx_png.py
-	@mkdir -p $(dir $@)
-	python3 tools/icons2c.py assets/icons.json $@
-
-$(BUILD)/gen/icons.o: $(BUILD)/gen/icons.c kernel/icon.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(BUILD)/%.user.bin: %.asm tests/kernel/user/user.inc
-	@mkdir -p $(dir $@)
-	$(NASM) -o $@ $<
-
-$(BUILD)/kernel.elf: $(KERNEL_OBJS) kernel/linker.ld
-	$(LD) -m elf_i386 --no-warn-rwx-segments -T kernel/linker.ld -o $@ $(KERNEL_OBJS) $(LIBGCC)
-
-ifeq ($(strip $(KERNEL)),stub)
-$(BUILD)/kernel.bin: tests/boot/kernel-stub.asm boot/bootinfo.inc | $(BUILD)
-	$(NASM) -o $@ $<
-else
-# Flat binary for stage 2. The header's file_size (offset 16) must match the
-# file exactly, or stage 2 would read past the end of the image.
-$(BUILD)/kernel.bin: $(BUILD)/kernel.elf
-	$(OBJCOPY) -O binary $< $@
-	@size=$$(stat -c %s $@); hdr=$$(od -An -t u4 -j 16 -N 4 $@ | tr -d ' '); \
-	if [ "$$size" -ne "$$hdr" ]; then \
-		echo "error: kernel.bin is $$size bytes but its header says $$hdr"; rm -f $@; exit 1; \
-	fi
-endif
-
--include $(KERNEL_OBJS:.o=.d)
-# The apps' and the SDK's too: a header they share (kernel/widget.h) changing
-# must rebuild every app, or an app and the SDK disagree on a struct's layout.
--include $(wildcard $(BUILD)/sdk/*.d $(foreach p,$(APP_PATHS),$(BUILD)/$(p)/*.d))
-
-# --- boot image -------------------------------------------------------------
-# Layout (docs/BOOT-PROTOCOL.md): stage 1 | stage 2 (whole sectors) | kernel
-
-$(BUILD)/stage2.bin: boot/stage2.asm boot/bootinfo.inc | $(BUILD)
-	$(NASM) -o $@ $<
-
-# Stage 1 needs stage 2's size and the total image size baked in.
-# Partition 1 (the LiteKern X boot area) covers LBA 1 up to the end of the
-# ramdisk.
-$(BUILD)/stage1.bin: boot/stage1.asm $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(BUILD)/gen/ramdisk.bin
-	@s2=$$(( $$(stat -c %s $(BUILD)/stage2.bin) / 512 )); \
-	k=$$(( ($$(stat -c %s $(BUILD)/kernel.bin) + 511) / 512 )); \
-	r=$$(( ($$(stat -c %s $(BUILD)/gen/ramdisk.bin) + 511) / 512 )); \
-	echo "nasm stage1 (stage 2 = $$s2 sectors, kernel = $$k sectors, ramdisk = $$r sectors)"; \
-	$(NASM) -DSTAGE2_SECTORS=$$s2 -DDISK_SECTORS=$$(( $(RAMDISK_LBA) + r )) \
-		-DFAT_START=$(FAT_START) -DFAT_SECTORS=$$(( $(FAT_MB) * 2048 )) -o $@ $<
-
-$(IMAGE): $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin $(BUILD)/gen/ramdisk.bin \
+$(IMAGE): $(BUILD)/mbr.bin $(BUILD)/gen/ramdisk.bin $(GENERATED) \
           $(if $(filter-out 0,$(FAT_MB)),$(BUILD)/fat.img)
-	cat $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin > $@
-	@if [ $$(stat -c %s $@) -gt $$(( $(RAMDISK_LBA) * 512 )) ]; then \
-		echo "error: the boot area overlaps the ramdisk"; rm -f $@; exit 1; fi
+	cp $(BUILD)/mbr.bin $@
 	truncate -s $$(( $(RAMDISK_LBA) * 512 )) $@
 	cat $(BUILD)/gen/ramdisk.bin >> $@
 	truncate -s %512 $@
@@ -266,9 +133,6 @@ $(BUILD)/gen/disk-files.md5: FORCE
 	   find assets/disk -type f -exec md5sum {} + 2>/dev/null | sort; } > $@.new; \
 	cmp -s $@.new $@ && rm -f $@.new || mv $@.new $@
 
-.PHONY: FORCE
-FORCE:
-
 $(BUILD)/fat.img: $(BUILD)/gen/disk-files.md5
 	@mkdir -p $(dir $@)
 	rm -f $@
@@ -278,15 +142,9 @@ $(BUILD)/fat.img: $(BUILD)/gen/disk-files.md5
 		MTOOLS_SKIP_CHECK=1 mcopy -s -m -i $@ assets/disk/* ::/; fi
 	@MTOOLS_SKIP_CHECK=1 mmd -i $@ ::/Pictures
 
-run: $(IMAGE)
-	$(QEMU) --image $(IMAGE)
+# --- tests (the shell's own: tests/linux/) ----------------------------------
 
-debug: $(IMAGE)
-	$(QEMU) --image $(IMAGE) --debug
-
-# --- tests ------------------------------------------------------------------
-
-test: smoke test-boot test-fat test-image test-users test-kernel
+test: test-fat test-image test-users
 
 # The FAT32 driver, built for Linux and checked with fsck.fat and mtools.
 test-fat:
@@ -304,88 +162,15 @@ test-users:
 	@bash tests/users/test-users.sh
 	@echo
 
-test-boot:
-	@bash tests/boot/test-stage1.sh
-	@echo
-	@bash tests/boot/test-stage2.sh
-
-test-kernel:
-	@bash tests/kernel/test-kernel.sh
-
-# --- real hardware (docs/HARDWARE-TEST.md) ----------------------------------
-# The normal image and the ring 3 self-test image, padded to 1 MiB so USB
-# writing tools (Rufus, balenaEtcher) accept them.
-
-USB_TEST_FLAGS := BUILD=build/test-user EXTRA_CFLAGS=-DLKX_SELFTEST_USER \
-                  "EXTRA_KERNEL_SRCS=tests/kernel/selftest_user.c tests/kernel/user_programs.asm"
-
-usb: $(IMAGE)
-	@$(MAKE) -s $(USB_TEST_FLAGS) build/test-user/litekernx.img
-	@$(MAKE) -s BUILD=build/diag-vbios EXTRA_CFLAGS=-DLKX_DIAG_VBIOS build/diag-vbios/litekernx.img
-	@$(MAKE) -s BUILD=build/test-gfx EXTRA_CFLAGS=-DLKX_SELFTEST_GFX \
-		EXTRA_KERNEL_SRCS=tests/kernel/selftest_gfx.c build/test-gfx/litekernx.img
-	@mkdir -p build/usb
-	@cp $(IMAGE) build/usb/litekernx.img
-	@cp build/test-user/litekernx.img build/usb/litekernx-ring3-test.img
-	@cp build/diag-vbios/litekernx.img build/usb/litekernx-vbios-diag.img
-	@cp build/test-gfx/litekernx.img build/usb/litekernx-gfx-test.img
-	@# The test images are padded to 1 MiB (q35's AHCI boot needs it); the
-	@# normal one already is bigger, and holds the FAT32 partition.
-	@truncate -s %1M build/usb/litekernx-ring3-test.img \
-		build/usb/litekernx-vbios-diag.img build/usb/litekernx-gfx-test.img
-	@echo "USB images (write one at a time; see docs/HARDWARE-TEST.md):"
-	@echo "  build/usb/litekernx.img             normal boot (65 MiB: with a FAT32 partition for files)"
-	@echo "  build/usb/litekernx-ring3-test.img  ring 3 self-test"
-	@echo "  build/usb/litekernx-vbios-diag.img  video BIOS diagnostic (1024x600 fix)"
-	@echo "  build/usb/litekernx-gfx-test.img    rendering pipeline self-test + timings"
-
-# --- VirtualBox VM (vm/vbox.sh) ---------------------------------------------
-# Not part of `make test`: it needs the Windows VirtualBox install.
-
-vbox-create:
-	@bash vm/vbox.sh create
-
-vbox: $(IMAGE)
-	@bash vm/vbox.sh start
-
-vbox-test: $(IMAGE)
-	@bash vm/vbox.sh test
-
-# --- VM smoke test ----------------------------------------------------------
-
-$(BUILD)/smoke.img: vm/smoke/smoke.asm | $(BUILD)
-	nasm -f bin -o $@ $<
-
-# Headless: boots the smoke image and checks the serial output + exit code.
-smoke: $(BUILD)/smoke.img
-	@set +e; \
-	out=$$(timeout 30 $(QEMU) --headless --image $<); rc=$$?; \
-	printf '%s\n' "$$out"; \
-	if [ $$rc -eq 33 ] && printf '%s' "$$out" | grep -q 'smoke test: OK'; then \
-		echo "PASS: VM boots the image and serial logging works"; \
-	else \
-		echo "FAIL: qemu exit status $$rc (expected 33)"; exit 1; \
-	fi
-
-# Same image in a window, so you can see the VM.
-smoke-gui: $(BUILD)/smoke.img
-	$(QEMU) --image $<
-
 # --- misc -------------------------------------------------------------------
 
 check-tools:
 	@missing=0; \
-	for t in gcc ld nasm gdb qemu-system-i386; do \
+	for t in gcc python3 mkfs.fat mcopy; do \
 		if command -v $$t >/dev/null; then echo "ok       $$t"; \
 		else echo "MISSING  $$t"; missing=1; fi; \
 	done; \
-	if echo 'int x;' | gcc -m32 -ffreestanding -fno-pie -c -x c - -o /dev/null 2>/dev/null; \
-	then echo "ok       gcc -m32 (freestanding i386)"; \
-	else echo "MISSING  gcc -m32 support (gcc-multilib)"; missing=1; fi; \
 	if [ $$missing -ne 0 ]; then echo "Install with: sudo bash tools/setup-wsl.sh"; exit 1; fi
-
-$(BUILD):
-	mkdir -p $@
 
 clean:
 	rm -rf $(BUILD)
