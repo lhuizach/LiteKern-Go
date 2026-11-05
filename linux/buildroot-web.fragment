@@ -1,0 +1,12 @@
+# LiteKern Go's real browser: WPE WebKit, added to the normal defconfig by
+# LKX_WEB=1 linux/build.sh, in its own output folder.
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+# WebKit takes 1-2 GB of RAM per compile job.
+BR2_JLEVEL=6
+BR2_PACKAGE_MESA3D=y
+BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_SOFTPIPE=y
+BR2_PACKAGE_MESA3D_OPENGL_EGL=y
+BR2_PACKAGE_MESA3D_OPENGL_ES=y
+BR2_PACKAGE_MESA3D_GBM=y
+BR2_PACKAGE_WPEWEBKIT=y
+BR2_PACKAGE_DEJAVU=y

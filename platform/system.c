@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/sysinfo.h>
 #include <time.h>
@@ -183,6 +184,8 @@ static void __attribute__((noreturn)) power(int how, const char *what)
     kprintf("power: %s\n", what);
     fflush(stdout);
     sync();
+    /* The system is a real disk now: leave it clean (no harm if this fails). */
+    mount("", "/", "", MS_REMOUNT | MS_RDONLY, 0);
     reboot(how);
     kprintf("power: Linux refused (%s)\n", what);
     plat_exit(1);

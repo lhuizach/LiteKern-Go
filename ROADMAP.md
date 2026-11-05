@@ -178,6 +178,7 @@ This decides Camera, brightness, vibration and alarms in UI-PLAN.md.
 - [x] `phone/make-boot.sh`: our kernel in Nura's boot image, `boot-our-kernel.img` (not flashed)
 - [ ] Build the whole Nura image with pmbootstrap
 - [ ] Boot our build of it on the phone (same result as phase 5)
+- [x] Real root filesystem: ext4, the third disk partition, in the x86 and ARM VMs (not the phone yet)
 
 **Done when:** we can rebuild the phone's kernel and boot it.
 
@@ -220,3 +221,10 @@ From CLAUDE.md and UI-PLAN.md:
 - PIN lock or swipe only
 - Which native games
 - Admin code for the installs
+
+## WebKit (in progress)
+
+- [ ] WPE WebKit 2.50 with a C++ toolchain: `LKX_WEB=1 linux/build.sh`, `linux/buildroot-web.fragment`
+- [ ] `lkx-web`: runs it in a LiteKern window, replacing NetSurf
+- [ ] Runs r3lay (the owner's Supabase app) and modern sites in the VM
+- [ ] `freedreno` for the phone's GPU, tested on the phone

@@ -6,8 +6,8 @@
 #
 #   bash vm/qemu-arm.sh [--headless] [--mouse] --image DISK [-- MORE QEMU ARGS]
 #
-# The kernel (build-linux/aarch64/Image, the system built in) is given
-# straight to QEMU; DISK is the stick (its ramdisk and FAT32, lkx-shell's).
+# The kernel (build-linux/aarch64/Image) is given
+# straight to QEMU; DISK is the stick (the ramdisk, FAT32 and the system).
 # A window, or with --headless none: the serial port (the log) on stdout.
 # Input: virtio's keyboard, and its tablet (the pointer where the PC's is) or
 # with --mouse its relative mouse (what the tests' mouse_move needs).
@@ -15,7 +15,7 @@
 set -euo pipefail
 QEMU=${QEMU_ARM:-$HOME/lkx-buildroot/output-go-aarch64/host/bin/qemu-system-aarch64}
 KERNEL=${KERNEL:-build-linux/aarch64/Image}
-APPEND="console=ttyAMA0,115200 quiet loglevel=3 video=720x1280 vt.global_cursor_default=0 ${EXTRA_APPEND:-}"
+APPEND="root=PARTUUID=20584b4c-03 rootfstype=ext4 rootwait console=ttyAMA0,115200 quiet loglevel=3 video=720x1280 vt.global_cursor_default=0 ${EXTRA_APPEND:-}"
 
 image= display=() pointer=(-device virtio-tablet-pci) extra=()
 while [ $# -gt 0 ]; do

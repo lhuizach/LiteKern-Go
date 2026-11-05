@@ -19,8 +19,8 @@
 # (apps, wallpapers) at sector 4096 and the FAT32 partition at 16384, so
 # lkx-shell opens the stick just as it opens build/litekernx.img on the PC.
 # What changes: the boot code. SYSLINUX's MBR starts the FAT32 partition's
-# SYSLINUX, which loads Linux and the system (an initramfs, run from RAM)
-# from its /syslinux folder.
+# SYSLINUX, which loads Linux from its /syslinux folder. The system is a third
+# partition, ext4, after the FAT32 one (ROOT_LBA).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # LiteKern Go's folder has a space in its name ("LiteKern Go"), which
@@ -52,7 +52,17 @@ aarch64)
     echo "LKX_ARCH: x86_64 or aarch64" >&2
     exit 2 ;;
 esac
+# LKX_WEB=1: with WPE WebKit (linux/buildroot-web.fragment), in its own output.
+if [ "${LKX_WEB:-0}" = 1 ]; then
+    OUT=$WORK/output-go-web-$ARCH
+    mkdir -p build-linux
+    cat "$DEFCONFIG" linux/buildroot-web.fragment > "build-linux/buildroot-web-$ARCH.defconfig.new"
+    cmp -s "build-linux/buildroot-web-$ARCH.defconfig.new" "build-linux/buildroot-web-$ARCH.defconfig" ||
+        cp "build-linux/buildroot-web-$ARCH.defconfig.new" "build-linux/buildroot-web-$ARCH.defconfig"
+    DEFCONFIG=build-linux/buildroot-web-$ARCH.defconfig
+fi
 FAT_OFFSET=$((16384 * 512))
+ROOT_LBA=$((16384 + 64 * 2048))     # after the 64 MiB FAT32 partition: 72 MiB
 
 step=${1:-all}
 mkdir -p "$WORK/dl"
@@ -121,11 +131,20 @@ make -s -C "$BR" O="$OUT"
 echo "== the image"
 mkdir -p build-linux
 cp build/litekernx.img "$IMAGE"
+# The system: partition 3, ext4 (tools/mkmbr.py wrote the first two).
+python3 - "$IMAGE" "$OUT/images/rootfs.ext4" "$ROOT_LBA" <<'EOF'
+import os, struct, sys
+img, root, lba = sys.argv[1], sys.argv[2], int(sys.argv[3])
+sectors = os.path.getsize(root) // 512
+with open(img, "r+b") as f:
+    f.seek(446 + 2 * 16)
+    chs = bytes.fromhex("feffff")           # the "use LBA" marker
+    f.write(bytes([0]) + chs + bytes([0x83]) + chs + struct.pack("<II", lba, sectors))
+EOF
+dd if="$OUT/images/rootfs.ext4" of="$IMAGE" bs=1M seek=$((ROOT_LBA / 2048)) conv=notrunc,sparse status=none
 if [ "$ARCH" = aarch64 ]; then
-    # QEMU's virt machine boots the kernel it's given (-kernel; the system
-    # built in, ~80 MB: more than the stick's FAT32 holds), the disk the
-    # same stick as the VM's: its ramdisk and FAT32 (lkx-shell's). The phone
-    # gets its own boot image later (phase 7).
+    # QEMU's virt machine boots the kernel it's given (-kernel), the disk the
+    # same stick as the VM's. The phone gets its own boot image later (phase 7).
     mkdir -p build-linux/aarch64
     cp "$OUT/images/Image" build-linux/aarch64/Image
     echo "== done: $IMAGE ($(du -h "$IMAGE" | cut -f1)), build-linux/aarch64/Image"
@@ -146,7 +165,7 @@ with open(img, "r+b") as f:
 EOF
 mmd -i "$IMAGE@@$FAT_OFFSET" ::/syslinux 2>/dev/null || true
 mcopy -o -i "$IMAGE@@$FAT_OFFSET" "$OUT/images/bzImage" ::/syslinux/bzImage
-# The same kernel (the system built in) for EFI firmware: the VirtualBox VM
+# The same kernel for EFI firmware: the VirtualBox VM
 # boots it with no bootloader, so nothing but the logo shows (linux/kernel.config).
 mmd -i "$IMAGE@@$FAT_OFFSET" ::/EFI ::/EFI/BOOT 2>/dev/null || true
 mcopy -o -i "$IMAGE@@$FAT_OFFSET" "$OUT/images/bzImage" ::/EFI/BOOT/BOOTX64.EFI
