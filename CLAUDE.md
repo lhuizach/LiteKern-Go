@@ -46,7 +46,7 @@ Accepted trade-offs: some parts will be buggy, and Android apps (APKs) will not 
 ## Environment
 
 - Main PC: Windows 11, 750 GB free disk, 16 GB DDR4 RAM. The current account has no admin rights yet (the owner can get the code later).
-- Build environment: WSL2 (Ubuntu) for the kernel, `pmbootstrap` and cross-compiling. Flashing runs on the Windows side because USB passthrough into WSL2 is unreliable.
+- Build environment: WSL2 (Ubuntu) for the kernel, `pmbootstrap` and cross-compiling. USB passthrough into WSL2 is unreliable. The Fedora 44 VirtualBox VM has Heimdall and fastboot and `heimdall detect` works there over USB passthrough (detect only: a real flash through it is untested).
 - If building in WSL2, set `memory=12GB` and `swap=16GB` in `.wslconfig` and keep the Linux disk on the drive with free space.
 - VirtualBox is installed. The Android Studio emulator only runs Android images, so it is not useful here.
 
@@ -72,7 +72,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 - Phone: boots Samsung Android 6.0.1, factory reset, no accounts, 100% charged, download mode tested. Nothing flashed yet.
 - Downloaded and scanned: Heimdall 1.4.0 (win32), Android platform-tools, `lk2nd-msm8916.img` (418 KB), Nura v26.06 samsung-a5 Phosh images (boot and rootfs, extracted), Frija 2.0.26142.10.
 - Downloaded but waiting on admin to install: Zadig 2.9 (USB driver), Visual C++ 2012 x86 (Heimdall), .NET 8 Desktop Runtime x86 (Frija).
-- Not done: stock firmware download (needs Frija, which needs .NET), `heimdall detect` check.
+- `heimdall detect` works from the Fedora VM. Our build of the Nura kernel is ready (`phone/`), not flashed.
 
 ## Roadmap
 

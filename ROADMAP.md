@@ -29,7 +29,7 @@ isn't, so most of the OS gets built there first.
 - [ ] Admin code
 - [ ] Install Visual C++ 2012 x86, .NET 8 Desktop Runtime x86, Zadig driver
 - [ ] Download the stock BTU firmware with Frija (the way back)
-- [ ] `heimdall detect` sees the phone in download mode
+- [x] `heimdall detect` sees the phone in download mode (from the Fedora 44 VM, USB passed through: no Zadig needed. Attach it from VirtualBox's Devices > USB)
 
 **Done when:** the stock firmware is saved and Heimdall sees the phone.
 
