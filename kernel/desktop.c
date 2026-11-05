@@ -162,22 +162,78 @@ static void draw_toast(void);
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
+/* --- the frosted backdrop (the motion pass) -----------------------------------------------
+ * Behind the app switcher and the power menu, what was on screen shows
+ * blurred, like One UI's. It's drawn once as they open (backdrop_take:
+ * the picture blurred, gfx_blur), then faded in with them; once they're all
+ * there it stands in for everything under them, which isn't drawn at all. */
+#define BACKDROP_BLUR 5         /* quarter pixels: about 20 px on screen, three passes */
+static uint32_t *bd_px, *bd_tmp;
+static int bd_ok;               /* bd_px holds the picture */
+
+static struct gfx_surface backdrop(void)
+{
+    return (struct gfx_surface){ bd_px, S()->w, S()->h, S()->w };
+}
+
+static void backdrop_take(int with_bar)
+{
+    struct gfx_surface *s = S();
+    bd_ok = 0;
+    if (!bd_px) {
+        uint32_t bytes = (uint32_t)(s->w * s->h * 4), tmp = GFX_BLUR_TMP(s->w, s->h) * 4;
+        bd_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+        bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!bd_px || !bd_tmp)
+            return;                     /* no memory: plain dimming, as before */
+    }
+    uint32_t t0 = uptime_ms();
+    struct gfx_view v = { backdrop(), 0, 0 };
+    struct gfx_view *outer = V;
+    V = &v;
+    wallpaper_draw(VS, 0, 0, 0);
+    if (home_shown())
+        draw_home();
+    else
+        wm_draw(VS, 0, 0);
+    if (with_bar)
+        draw_topbar();
+    V = outer;
+    gfx_blur(&v.s, BACKDROP_BLUR, bd_tmp);
+    bd_ok = 1;
+    kprintf("desktop: backdrop blurred in %u ms\n", (unsigned)(uptime_ms() - t0));
+}
+
+/* The backdrop over the part of the screen being composed, at alpha. */
+static void backdrop_draw(uint32_t alpha)
+{
+    struct gfx_surface b = backdrop();
+    gfx_blend(VS, 0, 0, &b, V->ox, V->oy, VS->w, VS->h, alpha);
+}
+
 /* Everything in r, bottom to top. */
 static void compose(struct gfx_rect r)
 {
     struct gfx_view v = { gfx_sub(S(), r), r.x, r.y };
     struct gfx_view *outer = V;
     V = &v;
-    wallpaper_draw(VS, v.ox, v.oy, 0);
-    if (sw_open && sw_alpha >= 255) {
+    if (sw_alpha >= 255 && sw_open && bd_ok) {
+        backdrop_draw(255);             /* all there: it stands in for what's under it */
+        draw_switcher();
+    } else if (sw_open && sw_alpha >= 255) {
+        wallpaper_draw(VS, v.ox, v.oy, 0);
         draw_switcher();                /* all there: nothing under it shows */
     } else {
+        wallpaper_draw(VS, v.ox, v.oy, 0);
         if (home_shown())
             draw_home();
         else
             wm_draw(VS, v.ox, v.oy);
-        if (sw_alpha > 0)
+        if (sw_alpha > 0) {
+            if (bd_ok)
+                backdrop_draw((uint32_t)sw_alpha);
             draw_switcher();            /* fading in or out over what's under it */
+        }
     }
     if (started && !home_shown() && !sw_open)
         osk_draw(VS, v.ox, v.oy);
@@ -276,12 +332,15 @@ static void spring_snap(struct spring *s)
 static struct spring swv, menuv, volv, toastv;
 static int fx_moving;
 static uint32_t last_fx_tick;
+static uint32_t fx_began, fx_frames, fx_slowest;    /* frame stats, for the log */
 
 static void fx_start(struct spring *s, int on)
 {
     s->t = on ? FX(1) : 0;
-    if (!fx_moving)
-        last_fx_tick = uptime_ms();
+    if (!fx_moving) {
+        last_fx_tick = fx_began = uptime_ms();
+        fx_frames = fx_slowest = 0;
+    }
     fx_moving = 1;
 }
 
@@ -1132,7 +1191,9 @@ static void draw_menu(void)
 {
     struct gfx_rect m = menu_rect();
     int al = menu_alpha, drop = (255 - al) * 48 / 255;     /* fading in, it rises a little */
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(140 * al / 255));     /* what's behind, dimmed */
+    if (bd_ok)
+        backdrop_draw((uint32_t)al);                        /* what's behind, frosted */
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 100 : 140) * al / 255));   /* and dimmed */
     m.y += drop;
     if (!visible(m))
         return;
@@ -1511,6 +1572,8 @@ static void menu_set(int open)
     if (menu_open == open)
         return;
     menu_open = open;
+    if (open && !menu_alpha)
+        backdrop_take(1);               /* the status bar too: the menu covers it */
     fx_start(&menuv, open);
     kprintf("shell: power menu %s\n", open ? "open" : "closed");
     if (open)
@@ -1833,6 +1896,8 @@ static void track_peek(int x, int y)
 
 #define SW_GAP 40
 #define SW_RADIUS 24
+#define SW_RIM 2                /* px, the outline around a card */
+#define SW_RIM_ALPHA 90
 #define SW_LABEL_H 64           /* the app's icon and name above its card */
 
 
@@ -1842,6 +1907,12 @@ static struct gfx_surface sw_snap[WM_MAX];
 static int sw_scroll;                           /* px: 0 has the last card in the middle */
 static int sw_x0, sw_y0, sw_scroll0, sw_card = -1, sw_mode, sw_lift;
 enum { SWM_NONE, SWM_PRESS, SWM_SCROLL, SWM_LIFT };
+/* Let go, the cards glide to the nearest one and settle with it in the
+ * middle, like One UI's; a flick carries on to the next (sw_snap_to). */
+static struct spring sw_glide;          /* FX(sw_scroll) */
+static int sw_gliding, sw_vx;           /* sw_vx: FX(px) per spring tick, the finger's speed */
+static int sw_last_x;
+static uint32_t sw_last_ms;
 
 static int sw_card_w(void) { return S()->w * 3 / 5; }
 static int sw_card_h(void) { return sw_card_w() * (S()->h - T()->topbar_h) / S()->w; }
@@ -1868,6 +1939,9 @@ static void sw_set(int open)
     sw_open = open;
     sw_mode = SWM_NONE;
     sw_card = -1;
+    sw_gliding = 0;
+    if (open && !sw_alpha)
+        backdrop_take(0);
     fx_start(&swv, open);               /* it fades in, or out over what's under it */
     if (open) {
         sw_n = 0;
@@ -1900,6 +1974,9 @@ static void sw_forget(struct wm_window *w)
         }
     if (sw_scroll > 0 && sw_n)
         sw_scroll = 0;
+    sw_gliding = 0;
+    if (sw_open)
+        backdrop_take(0);               /* the app's gone from behind it too */
     damage_all();
 }
 
@@ -1928,7 +2005,7 @@ static void draw_switcher(void)
 {
     const struct theme *t = T();
     int al = sw_alpha, lift = (255 - al) * 160 / 255;      /* fading in, the cards rise into place */
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(120 * al / 255));
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 90 : 120) * al / 255));
     if (!sw_n) {
         const char *none = "No recent apps";
         if (al > 160)
@@ -1946,6 +2023,9 @@ static void draw_switcher(void)
         if (al > 160)
             text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
                           name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
+        /* A thin light rim, so a dark app stands out from the blur behind it. */
+        gfx_blend_round_rect(VS, VX(r.x - SW_RIM), VY(r.y - SW_RIM), r.w + 2 * SW_RIM, r.h + 2 * SW_RIM,
+                             SW_RADIUS + SW_RIM, 0xffffff, (uint32_t)(SW_RIM_ALPHA * al / 255));
         gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
                         (struct gfx_rect){ 0, 0, sw_snap[i].w, sw_snap[i].h }, (uint32_t)al, SW_RADIUS);
     }
@@ -1957,11 +2037,34 @@ static void draw_switcher(void)
                   VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2), "Close all", TEXT_BOLD, t->fg);
 }
 
+/* Let go after a swipe: on to the card nearest where the flick would take
+ * the cards (one card at most past the nearest one), on a spring. */
+static void sw_snap_to(void)
+{
+    int step = sw_card_w() + SW_GAP, max = (sw_n - 1) * step;
+    int near = (sw_scroll + step / 2) / step;
+    int flung = (sw_scroll + sw_vx * 10 / 256 + step / 2) / step;     /* ~10 ticks of the flick */
+    int to = flung > near + 1 ? near + 1 : flung < near - 1 ? near - 1 : flung;
+    to = to < 0 ? 0 : to * step > max ? max / step : to;
+    sw_glide = (struct spring){ FX(sw_scroll), sw_vx, FX(to * step) };
+    sw_gliding = 1;
+    if (!fx_moving) {
+        last_fx_tick = fx_began = uptime_ms();
+        fx_frames = fx_slowest = 0;
+    }
+    fx_moving = 1;
+    kprintf("switcher: settles on %s\n", name_of(sw_win[sw_n - 1 - to]));
+}
+
 static void sw_pointer(int x, int y, uint8_t buttons, int down)
 {
     if (down) {
+        sw_gliding = 0;                 /* a finger stops the glide where it is */
         sw_x0 = x;
         sw_y0 = y;
+        sw_last_x = x;
+        sw_last_ms = uptime_ms();
+        sw_vx = 0;
         sw_scroll0 = sw_scroll;
         sw_mode = SWM_PRESS;
         sw_card = -1;
@@ -1982,7 +2085,18 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
     if (sw_mode == SWM_SCROLL) {
         int max = (sw_n - 1) * (sw_card_w() + SW_GAP);
         sw_scroll = sw_scroll0 + dx;
-        sw_scroll = sw_scroll < 0 ? 0 : sw_scroll > max ? max : sw_scroll;
+        /* Past the ends it gives a little (a third of the way), then springs back. */
+        if (sw_scroll < 0)
+            sw_scroll /= 3;
+        else if (sw_scroll > max)
+            sw_scroll = max + (sw_scroll - max) / 3;
+        uint32_t now = uptime_ms(), dt = now - sw_last_ms;
+        if (x != sw_last_x && dt) {     /* the finger's speed, smoothed */
+            int v = FX(x - sw_last_x) * TICK_MS / (int)dt;
+            sw_vx = (sw_vx + v * 3) / 4;
+            sw_last_x = x;
+            sw_last_ms = now;
+        }
         damage_all();
     } else if (sw_mode == SWM_LIFT) {
         sw_lift = dy < 0 ? dy : 0;
@@ -1998,6 +2112,12 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
     if (mode == SWM_LIFT) {
         if (-dy > sw_card_h() / 4)
             sw_close_app(card);         /* swiped up: the app closes */
+        return;
+    }
+    if (mode == SWM_SCROLL) {
+        if (uptime_ms() - sw_last_ms > 80)
+            sw_vx = 0;                  /* it stopped before letting go: no flick */
+        sw_snap_to();
         return;
     }
     if (mode != SWM_PRESS)
@@ -2809,14 +2929,20 @@ static void fx_tick(void)
     uint32_t now = uptime_ms(), steps = (now - last_fx_tick) / TICK_MS;
     if (!steps)
         return;
-    last_fx_tick = now;
-    int moving = 0, was_sw = sw_alpha, was_menu = menu_alpha;
+    last_fx_tick = steps > 4 ? now : last_fx_tick + steps * TICK_MS;  /* leftover ms count */
+    int moving = 0, was_sw = sw_alpha, was_menu = menu_alpha, was_gliding = sw_gliding;
     for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++) {
         moving = 0;
         moving |= spring_step(&swv, 16, 128);       /* about a quarter of a second, no overshoot */
         moving |= spring_step(&menuv, 16, 128);
         moving |= spring_step(&volv, 16, 128);
         moving |= spring_step(&toastv, 16, 128);
+        if (sw_gliding)                 /* a touch springier: it settles with a little give */
+            moving |= sw_gliding = spring_step(&sw_glide, 20, 104);
+    }
+    if (was_gliding && sw_open && sw_mode == SWM_NONE) {
+        sw_scroll = sw_glide.x / 256;
+        damage_all();
     }
     sw_alpha = fx_alpha(&swv);
     menu_alpha = fx_alpha(&menuv);
@@ -2831,6 +2957,15 @@ static void fx_tick(void)
         toast = 0;                      /* faded out */
     fx_moving = moving;
     shell_flush();
+    uint32_t took = uptime_ms() - now;
+    fx_frames++;
+    if (took > fx_slowest)
+        fx_slowest = took;
+    if (!moving) {
+        uint32_t ms = uptime_ms() - fx_began;
+        kprintf("fx: %u frames in %u ms (%u fps), slowest frame %u ms\n", (unsigned)fx_frames, (unsigned)ms,
+                (unsigned)(ms ? fx_frames * 1000 / ms : 0), (unsigned)fx_slowest);
+    }
 }
 
 static int phone_key(const struct key_event *k)

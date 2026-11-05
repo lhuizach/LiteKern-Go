@@ -442,3 +442,89 @@ void gfx_shadow(struct gfx_surface *s, int x, int y, int w, int h, int r, int si
         }
     }
 }
+
+void gfx_blend(struct gfx_surface *dst, int dx, int dy,
+               const struct gfx_surface *src, int sx, int sy, int w, int h, uint32_t alpha)
+{
+    if (alpha >= 255) {
+        gfx_blit(dst, dx, dy, src, sx, sy, w, h);
+        return;
+    }
+    if (!alpha)
+        return;
+    struct gfx_rect rs = clip(src, sx, sy, w, h);       /* the source, then the destination */
+    dx += rs.x - sx, dy += rs.y - sy;
+    struct gfx_rect rd = clip(dst, dx, dy, rs.w, rs.h);
+    for (int row = 0; row < rd.h; row++) {
+        uint32_t *d = dst->px + (rd.y + row) * dst->stride + rd.x;
+        const uint32_t *p = src->px + (rs.y + rd.y - dy + row) * src->stride + rs.x + (rd.x - dx);
+        for (int col = 0; col < rd.w; col++) {
+            uint32_t s = p[col], o = d[col];
+            d[col] = mix(s >> 16 & 0xff, o >> 16 & 0xff, alpha) << 16 |
+                     mix(s >> 8 & 0xff, o >> 8 & 0xff, alpha) << 8 | mix(s & 0xff, o & 0xff, alpha);
+        }
+    }
+}
+
+/* One box-blur pass along a line of n pixels, step apart, from `in` to `out`
+ * (the edges repeat their end pixels). */
+static void blur_line(const uint32_t *in, uint32_t *out, int n, int step, int r)
+{
+    int div = 2 * r + 1;
+    uint32_t sr = 0, sg = 0, sb = 0;
+    for (int i = -r; i <= r; i++) {
+        uint32_t p = in[(i < 0 ? 0 : i >= n ? n - 1 : i) * step];
+        sr += p >> 16 & 0xff, sg += p >> 8 & 0xff, sb += p & 0xff;
+    }
+    for (int i = 0; i < n; i++) {
+        out[i * step] = (sr / div) << 16 | (sg / div) << 8 | sb / div;
+        int add = i + r + 1, sub = i - r;
+        uint32_t a = in[(add >= n ? n - 1 : add) * step], s = in[(sub < 0 ? 0 : sub) * step];
+        sr += (a >> 16 & 0xff) - (s >> 16 & 0xff);
+        sg += (a >> 8 & 0xff) - (s >> 8 & 0xff);
+        sb += (a & 0xff) - (s & 0xff);
+    }
+}
+
+void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp)
+{
+    int qw = (s->w + 3) / 4, qh = (s->h + 3) / 4;
+    uint32_t *a = tmp, *b = tmp + qw * qh;
+    /* A quarter the size: each pixel the average of its 4x4. */
+    for (int y = 0; y < qh; y++)
+        for (int x = 0; x < qw; x++) {
+            uint32_t r = 0, g = 0, bl = 0, n = 0;
+            for (int yy = y * 4; yy < y * 4 + 4 && yy < s->h; yy++) {
+                const uint32_t *p = s->px + yy * s->stride;
+                for (int xx = x * 4; xx < x * 4 + 4 && xx < s->w; xx++, n++)
+                    r += p[xx] >> 16 & 0xff, g += p[xx] >> 8 & 0xff, bl += p[xx] & 0xff;
+            }
+            a[y * qw + x] = (r / n) << 16 | (g / n) << 8 | bl / n;
+        }
+    /* Three passes each way. */
+    for (int pass = 0; pass < 3; pass++) {
+        for (int y = 0; y < qh; y++)
+            blur_line(a + y * qw, b + y * qw, qw, 1, radius);
+        for (int x = 0; x < qw; x++)
+            blur_line(b + x, a + x, qh, qw, radius);
+    }
+    /* Back up to full size, each pixel between its four nearest (bilinear). */
+    for (int y = 0; y < s->h; y++) {
+        int fy = (y * 2 + 1) * 256 / 8 - 128, y0 = fy < 0 ? 0 : fy >> 8, wy = fy < 0 ? 0 : fy & 255;
+        int y1 = y0 + 1 < qh ? y0 + 1 : qh - 1;
+        const uint32_t *r0 = a + y0 * qw, *r1 = a + y1 * qw;
+        uint32_t *d = s->px + y * s->stride;
+        for (int x = 0; x < s->w; x++) {
+            int fx = (x * 2 + 1) * 256 / 8 - 128, x0 = fx < 0 ? 0 : fx >> 8, wx = fx < 0 ? 0 : fx & 255;
+            int x1 = x0 + 1 < qw ? x0 + 1 : qw - 1;
+            uint32_t p00 = r0[x0], p01 = r0[x1], p10 = r1[x0], p11 = r1[x1], out = 0;
+            for (int sh = 0; sh <= 16; sh += 8) {
+                int c00 = p00 >> sh & 0xff, c01 = p01 >> sh & 0xff, c10 = p10 >> sh & 0xff, c11 = p11 >> sh & 0xff;
+                int top = c00 * 256 + (c01 - c00) * wx, bot = c10 * 256 + (c11 - c10) * wx;
+                int c = (top * 256 + (bot - top) * wy) >> 16;
+                out |= (uint32_t)c << sh;
+            }
+            d[x] = out;
+        }
+    }
+}

@@ -39,7 +39,7 @@ Run modifyvm $Name --cpus 4 --cpuexecutioncap $CpuCap --memory 2048 `
 
 # Screen: 720x1280 portrait, from the EFI firmware on (no resize at the boot logo)
 Run setextradata $Name VBoxInternal2/EfiGraphicsResolution 720x1280
-Run modifyvm $Name --graphicscontroller vboxsvga --vram 32 --accelerate3d off
+Run modifyvm $Name --graphicscontroller vmsvga --vram 32 --accelerate3d off
 Run setextradata $Name "CustomVideoMode1" "720x1280x32"
 Run setextradata $Name "GUI/LastGuestSizeHint" "720,1280"
 

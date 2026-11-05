@@ -169,7 +169,11 @@ No dock, no taskbar.
 ### App switcher (Recent apps key)
 
 - The open apps as large cards (a snapshot of each), newest on the right,
-  scrolling sideways. The current app's card is centred.
+  scrolling sideways. The current app's card is centred. Each card has a thin
+  light outline, so dark apps stand out.
+- Let go of a swipe: the cards settle with the nearest one in the middle (a
+  flick goes on to the next), like One UI.
+- What's behind it is blurred, once as it opens (`gfx_blur`), then faded in.
 - Tap a card: switch to it.
 - **Swipe a card up:** close that app (frees its memory).
 - "Close all" button at the bottom.
@@ -189,7 +193,7 @@ No dock, no taskbar.
 ### Power menu
 
 Long press Power: a sheet with large buttons: **Power off**, **Restart**,
-**Lock**. Dimmed background, Back to cancel.
+**Lock**. Blurred, dimmed background, Back to cancel.
 
 ### Volume pop-up
 

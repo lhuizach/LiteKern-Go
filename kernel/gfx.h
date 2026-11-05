@@ -67,6 +67,17 @@ void gfx_darken(struct gfx_surface *s, int x, int y, int w, int h, uint32_t alph
 void gfx_blit(struct gfx_surface *dst, int dx, int dy,
               const struct gfx_surface *src, int sx, int sy, int w, int h);
 
+/* Copy src's (sx, sy, w, h) onto dst at (dx, dy), blended at alpha (0..255). */
+void gfx_blend(struct gfx_surface *dst, int dx, int dy,
+               const struct gfx_surface *src, int sx, int sy, int w, int h, uint32_t alpha);
+
+/* Frost the whole surface in place, for what's behind a pop-up: shrunk to
+ * a quarter, box-blurred (radius in quarter pixels, three passes: nearly a
+ * Gaussian), then scaled back up smoothly. tmp holds GFX_BLUR_TMP(w, h)
+ * pixels. Done once when a pop-up opens: about 3 ms at 720x1280 on a PC. */
+#define GFX_BLUR_TMP(w, h) ((uint32_t)(((w) + 3) / 4 * (((h) + 3) / 4)) * 2u)
+void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp);
+
 /* Composite a w x h ARGB image onto dst at (dx, dy) using its alpha. */
 void gfx_blit_alpha(struct gfx_surface *dst, int dx, int dy,
                     const uint32_t *argb, int w, int h, int stride);
