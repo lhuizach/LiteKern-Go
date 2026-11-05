@@ -28,7 +28,7 @@ isn't, so most of the OS gets built there first.
       Nura v26.06 samsung-a5 Phosh images, Frija
 - [ ] Admin code
 - [ ] Install Visual C++ 2012 x86, .NET 8 Desktop Runtime x86, Zadig driver
-- [ ] Download the stock BTU firmware with Frija (the way back)
+- [x] Stock BTU firmware `A500FUXXU1CSB1` downloaded (from samfw.com: Frija found nothing) and checked
 - [x] `heimdall detect` sees the phone in download mode (from the Fedora 44 VM, USB passed through: no Zadig needed. Attach it from VirtualBox's Devices > USB)
 
 **Done when:** the stock firmware is saved and Heimdall sees the phone.

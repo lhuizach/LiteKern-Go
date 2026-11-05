@@ -73,7 +73,8 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 - Downloaded and scanned: Heimdall 1.4.0 (win32), Android platform-tools, `lk2nd-msm8916.img` (418 KB), Nura v26.06 samsung-a5 Phosh images (boot and rootfs, extracted), Frija 2.0.26142.10.
 - Downloaded but waiting on admin to install: Zadig 2.9 (USB driver), Visual C++ 2012 x86 (Heimdall), .NET 8 Desktop Runtime x86 (Frija).
 - `heimdall detect` works from the Fedora VM. Our build of the Nura kernel is ready (`phone/`), not flashed.
-- Not done: stock firmware download (needs Frija, which needs .NET). Required before any flash.
+- Stock firmware: `A500FUXXU1CSB1` BTU, the exact build on the phone, in `DownloadsSAMFW.COM_SM-A500FU_BTU_A500FUXXU1CSB1_fac.zip`. From samfw.com, a third party (Frija found nothing: Samsung no longer serves this model), so not proven to be Samsung's. Zip MD5 matches the page, all four parts' checksums pass, contents are firmware images only. A restore should leave out the CP (modem) file: see the safety rules.
+- Way back still unproven: Odin needs Samsung's USB driver (admin?); Heimdall restore from Fedora is untested. Decide before the first flash.
 
 ## Roadmap
 
