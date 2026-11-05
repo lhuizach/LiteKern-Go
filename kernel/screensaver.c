@@ -357,7 +357,7 @@ void screensaver_start(void)
         screen_damage_all();
         screen_present();
         while (uptime_ms() - f0 < 30 * ANIM_SLOW)
-            __asm__ volatile("pause");
+            cpu_relax();
     }
     gfx_fill_rect(s, 0, 0, s->w, s->h, 0);
     screen_damage_all();

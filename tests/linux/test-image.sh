@@ -8,11 +8,17 @@
 # Each check's screenshot is kept in build-linux/test-image/NAME.png.
 #
 # Usage (in WSL, after linux/build.sh): bash tests/linux/test-image.sh
+# The ARM build (phase 4): LKX_ARCH=aarch64 bash tests/linux/test-image.sh,
+# booted in qemu-system-aarch64 (vm/qemu-arm.sh): the phone's CPU, emulated,
+# so it's given longer.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 failures=0
-[ -f build-linux/litekern-go.img ] || { echo "no build-linux/litekern-go.img: run linux/build.sh"; exit 1; }
+ARM=0 BASE=build-linux/litekern-go.img
+[ "${LKX_ARCH:-}" = aarch64 ] && ARM=1 BASE=build-linux/litekern-go-aarch64.img
+[ -f $BASE ] || { echo "no $BASE: run linux/build.sh (LKX_ARCH=aarch64 for ARM)"; exit 1; }
+SLOW=$((ARM ? 3 : 1))                   # time limits: the emulated ARM CPU is slower
 mkdir -p build-linux/test-image
 T=build-linux/test-image
 FAT=8388608                             # the FAT32 partition's offset (the Makefile's FAT_START x 512)
@@ -33,10 +39,15 @@ boot_until() {
     local shot=$T/shot.png
     log=$(mktemp)
     rm -f "$sock" "$shot"
-    bash vm/qemu.sh --headless --image "$img" -- -monitor "unix:$sock,server,nowait" \
-        -global VGA.xres=720 -global VGA.yres=1280 "${accel[@]}" >"$log" 2>&1 &
+    if [ $ARM = 1 ]; then                   # the tests' mouse is a relative one: --mouse
+        EXTRA_APPEND="${APPEND:-}" bash vm/qemu-arm.sh --headless --mouse --image "$img" -- \
+            -monitor "unix:$sock,server,nowait" >"$log" 2>&1 < /dev/null &
+    else
+        bash vm/qemu.sh --headless --image "$img" -- -monitor "unix:$sock,server,nowait" \
+            -global VGA.xres=720 -global VGA.yres=1280 "${accel[@]}" >"$log" 2>&1 &
+    fi
     pid=$!
-    for ((i = 0; i < secs * 10; i++)); do
+    for ((i = 0; i < secs * 10 * SLOW; i++)); do
         grep -Eq "$re" "$log" && break
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
@@ -44,7 +55,7 @@ boot_until() {
     sleep 0.5
     if [ -n "${KEYS:-}" ]; then
         python3 tests/lib/qemu_monitor.py keys "$sock" $KEYS
-        for ((i = 0; i < ${KEYS_WAIT:-10} * 10; i++)); do      # KEYS_WAIT: seconds (10)
+        for ((i = 0; i < ${KEYS_WAIT:-10} * 10 * SLOW; i++)); do      # KEYS_WAIT: seconds (10)
             grep -Eq "$KEYS_DONE" "$log" && break
             sleep 0.1
         done
@@ -101,10 +112,10 @@ tile_y() { echo $(( 348 + ($1 / 4) * 184 )); }
 tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:2; }
 ready_re='^desktop: ready'
 
-cp build-linux/litekern-go.img $T/disk.img
+cp $BASE $T/disk.img
 SCREEN="corner=" SHOT=boot boot_until $T/disk.img "$ready_re" 120
-check "boots: SYSLINUX, Linux, lkx-start finds the stick, the logo, the home screen on QEMU's screen" \
-    '^lkx-start: disk /dev/sda after [0-9]+ ms$' \
+check "boots: Linux (through SYSLINUX on PCs), lkx-start finds the stick, the logo, the home screen" \
+    '^lkx-start: disk /dev/(sda|vda) after [0-9]+ ms$' \
     '^LiteKern X \(on Linux\)$' \
     '^drm: 720x1280 on connector' \
     '^input: .*\(keyboard' \
@@ -151,9 +162,13 @@ check "Ethernet: found, an address from DHCP, the icon in the status bar" \
 # is refused and not kept, a tap asks again, the right one joins, gets an
 # address, and is remembered on the stick.
 img=$T/wifi.img
-cp build-linux/litekern-go.img $img
-mtype -i $img@@$FAT ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' > $T/syslinux.cfg
-mcopy -o -i $img@@$FAT $T/syslinux.cfg ::/syslinux/syslinux.cfg
+cp $BASE $img
+if [ $ARM = 1 ]; then
+    export APPEND=lkx.test=hwsim            # ARM: QEMU gives the kernel its command line
+else
+    mtype -i $img@@$FAT ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' > $T/syslinux.cfg
+    mcopy -o -i $img@@$FAT $T/syslinux.cfg ::/syslinux/syslinux.cfg
+fi
 path; tap_app 2; go 360 216; click; add sleep:10; go 360 316; click; add sleep:1.5     # 10 s: the scan finds it
 add w r o n g w r o n g ret sleep:12; click; add sleep:1.5 a p p l e spc p i e ret
 KEYS="$P" KEYS_DONE='^net: Wi-Fi connected to LiteKern Test' KEYS_WAIT=30 SCREEN="corner=" SHOT=wifi \
@@ -169,6 +184,7 @@ check "Wi-Fi: Settings lists it, a wrong password is refused, the right one join
 
 # ...and after a restart it joins by itself.
 boot_until $img '^net: Wi-Fi connected to LiteKern Test' 120
+unset APPEND
 check "Wi-Fi: a remembered network is joined by itself after a restart" \
     '^net: Ethernet eth0, Wi-Fi wlan0 \(1 remembered\)$' \
     '^net: Wi-Fi connected to LiteKern Test, 192\.168\.77\.[0-9]+$'
@@ -223,7 +239,7 @@ head -c 300000 /dev/urandom > $T/www/t.bin
 python3 -m http.server 8123 --bind 127.0.0.1 --directory $T/www >/dev/null 2>&1 &
 www=$!
 sleep 0.5
-cp build-linux/litekern-go.img $T/download.img
+cp $BASE $T/download.img
 path; tap_app 4; add sleep:10; go 600 162; click; add sleep:0.3; for i in $(seq 45); do add backspace; done
 add h t t p shift-semicolon slash slash 1 0 dot 0 dot 2 dot 2 shift-semicolon 8 1 2 3 slash t dot b i n ret sleep:6
 KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=14 SCREEN="corner=" SHOT=download boot_until $T/download.img "$ready_re" 120

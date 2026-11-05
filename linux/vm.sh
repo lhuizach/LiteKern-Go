@@ -4,6 +4,7 @@
 #
 #   bash linux/vm.sh qemu           a QEMU window, the phone's 720x1280 screen
 #   bash linux/vm.sh qemu --fresh   the same, starting again from the image
+#   bash linux/vm.sh qemu-arm       the ARM build (phase 4) in qemu-system-aarch64
 #   (the VirtualBox VM "LiteKern Go": vm\create-vm.ps1, once, from PowerShell)
 #   bash linux/vm.sh vbox start     boot it in a window
 #   bash linux/vm.sh vbox test      boot it headless until the desktop is up
@@ -47,6 +48,19 @@ qemu)
     # pointer goes where the PC's is, with no grabbing the mouse.
     exec bash vm/qemu.sh --image "$disk" -- -vga none -device virtio-vga,xres=720,yres=1280 \
         -usb -device usb-tablet "${accel[@]}"
+    ;;
+qemu-arm)
+    # The ARM build (phase 4: LKX_ARCH=aarch64 bash linux/build.sh) in a
+    # window: qemu-system-aarch64, the phone's CPU, emulated (slower).
+    disk=build-linux/vm/qemu-arm.img
+    mkdir -p build-linux/vm
+    img=build-linux/litekern-go-aarch64.img
+    [ -f "$img" ] || { echo "$img missing: run LKX_ARCH=aarch64 bash linux/build.sh" >&2; exit 1; }
+    if [ "${2:-}" = --fresh ] || [ ! -f "$disk" ] || [ "$img" -nt "$disk" ]; then
+        cp "$img" "$disk"
+        echo "the VM's disk: a fresh copy of $img"
+    fi
+    exec bash vm/qemu-arm.sh --image "$disk"
     ;;
 vbox)
     shift

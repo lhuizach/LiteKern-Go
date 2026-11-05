@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>
 
 static inline void outb(uint16_t port, uint8_t v) { (void)port, (void)v; }
 static inline uint8_t inb(uint16_t port) { (void)port; return 0xff; }
@@ -17,9 +18,17 @@ static inline uint32_t inl(uint16_t port) { (void)port; return 0xffffffffu; }
 
 static inline uint64_t rdtsc(void)
 {
+#if defined(__i386__) || defined(__x86_64__)
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (uint64_t)hi << 32 | lo;
+#else
+    /* ARM (the phone): the monotonic clock in ns, a "1000 MHz TSC", as
+     * platform/system.c's tsc() and its calibration say. */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 static inline uint32_t read_cr2(void) { return 0; }

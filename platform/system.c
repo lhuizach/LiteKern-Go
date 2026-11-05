@@ -116,9 +116,13 @@ static uint64_t now_ns(void)
 
 static uint64_t tsc(void)
 {
+#if defined(__i386__) || defined(__x86_64__)
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (uint64_t)hi << 32 | lo;
+#else
+    return now_ns();                        /* ARM: the clock itself (a "1000 MHz" TSC) */
+#endif
 }
 
 /* The screen saver times its frames in TSC ticks: measure their rate once. */

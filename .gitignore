@@ -12,3 +12,4 @@ build-x64/
 # LiteKern Go: downloaded tools, phone images and installers (big, not ours)
 Apps for zach/
 admin/
+/build-target-aarch64/

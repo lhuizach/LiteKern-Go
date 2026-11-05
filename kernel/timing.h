@@ -14,6 +14,16 @@ void timing_init(const struct boot_info *bi);
 
 uint32_t tsc_mhz(void);
 
+/* In a busy wait: tell the CPU (x86's pause, ARM's yield). */
+static inline void cpu_relax(void)
+{
+#if defined(__i386__) || defined(__x86_64__)
+    __asm__ volatile("pause");
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ volatile("yield");
+#endif
+}
+
 /* Milliseconds since T0 (stage 1 entry). */
 uint32_t uptime_ms(void);
 uint32_t tsc_to_ms(uint64_t ticks);

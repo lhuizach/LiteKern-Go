@@ -168,7 +168,9 @@ void kdebugf(const char *fmt, ...)
 void panic(const char *fmt, ...)
 {
     va_list ap;
-    __asm__ volatile("cli");
+#if defined(__i386__) || defined(__x86_64__)
+    __asm__ volatile("cli");                /* the kernel version: nothing more interrupts it */
+#endif
     /* A panic while panicking (e.g. a fault while drawing the first panic)
      * stays on serial only and skips the screen. */
     if (++panicking > 1) {

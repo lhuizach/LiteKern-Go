@@ -6,6 +6,11 @@
 #   bash linux/build.sh toolchain  just Buildroot's compiler (the slow part)
 #   bash linux/build.sh image      lkx-shell, the apps and the image again
 #                                  (after a change to them: minutes)
+#   LKX_ARCH=aarch64 bash linux/build.sh ...
+#                                  the same for ARM (phase 4: the phone's
+#                                  Cortex-A53), build-linux/litekern-go-aarch64.img
+#                                  and build-linux/aarch64/Image, booted in
+#                                  qemu-system-aarch64 (linux/vm.sh qemu-arm)
 #
 # Buildroot and its output live in ~/lkx-buildroot (WSL's own disk: faster than
 # the Windows drive, and Buildroot won't build in a path with spaces).
@@ -29,12 +34,24 @@ REPO=$(pwd)
 BR_VERSION=2026.02.3
 SYSLINUX_VERSION=6.03
 # Buildroot itself and its downloads are shared with LiteKern X's build;
-# LiteKern Go's output (x86_64, for the VM) is its own.
+# LiteKern Go's output is its own, one per CPU (x86_64 for the VMs, aarch64
+# for the phone: LKX_ARCH).
+ARCH=${LKX_ARCH:-x86_64}
 WORK=$HOME/lkx-buildroot
 BR=$WORK/buildroot-$BR_VERSION
-OUT=$WORK/output-go-x86_64
+OUT=$WORK/output-go-$ARCH
 SYSLINUX=$WORK/syslinux-$SYSLINUX_VERSION
-IMAGE=build-linux/litekern-go.img
+case $ARCH in
+x86_64)
+    IMAGE=build-linux/litekern-go.img DEFCONFIG=linux/buildroot.defconfig KFRAG=linux/kernel.config
+    LBUILD=build-target ;;
+aarch64)
+    IMAGE=build-linux/litekern-go-aarch64.img DEFCONFIG=linux/buildroot-aarch64.defconfig
+    KFRAG=linux/kernel-aarch64.config LBUILD=build-target-aarch64 ;;
+*)
+    echo "LKX_ARCH: x86_64 or aarch64" >&2
+    exit 2 ;;
+esac
 FAT_OFFSET=$((16384 * 512))
 
 step=${1:-all}
@@ -63,8 +80,8 @@ fetch "https://www.kernel.org/pub/linux/utils/boot/syslinux/syslinux-$SYSLINUX_V
 
 # Buildroot's configuration: linux/buildroot.defconfig, with linux/ as its
 # external tree (kernel.config, overlay/).
-if [ ! -f "$OUT/.config" ] || [ linux/buildroot.defconfig -nt "$OUT/.config" ]; then
-    make -s -C "$BR" O="$OUT" BR2_EXTERNAL="$REPO/linux" BR2_DEFCONFIG="$REPO/linux/buildroot.defconfig" defconfig
+if [ ! -f "$OUT/.config" ] || [ "$DEFCONFIG" -nt "$OUT/.config" ]; then
+    make -s -C "$BR" O="$OUT" BR2_EXTERNAL="$REPO/linux" BR2_DEFCONFIG="$REPO/$DEFCONFIG" defconfig
 fi
 
 echo "== the toolchain"
@@ -77,21 +94,21 @@ echo "== the host build (build/litekernx.img)"
 make -s build/litekernx.img
 
 # lkx-shell and the apps, with Buildroot's compiler, into the overlay.
-echo "== lkx-shell and the apps, for the VM (x86_64)"
-CROSS=$OUT/host/bin/x86_64-buildroot-linux-gnu-gcc
-make -s -f platform/Makefile CC="$CROSS" ARCH_FLAGS= LBUILD=build-target KERNEL_BUILD=0
+echo "== lkx-shell and the apps, for $ARCH"
+CROSS=$OUT/host/bin/$ARCH-buildroot-linux-gnu-gcc
+make -s -f platform/Makefile CC="$CROSS" ARCH_FLAGS= LBUILD=$LBUILD KERNEL_BUILD=0
 rm -rf "$OUT/lkx-overlay"
 mkdir -p "$OUT/lkx-overlay/usr/bin" "$OUT/lkx-overlay/usr/lib/litekern/apps"
-cp build-target/lkx-shell "$OUT/lkx-overlay/usr/bin/"
+cp $LBUILD/lkx-shell "$OUT/lkx-overlay/usr/bin/"
 for app in apps/*/; do
     n=$(basename "$app")
     mkdir -p "$OUT/lkx-overlay/usr/lib/litekern/apps/$n"
-    cp "build-target/apps/$n/$n" "$OUT/lkx-overlay/usr/lib/litekern/apps/$n/"
+    cp "$LBUILD/apps/$n/$n" "$OUT/lkx-overlay/usr/lib/litekern/apps/$n/"
 done
 
 echo "== Linux and the system"
 # Buildroot doesn't notice a changed kernel.config by itself.
-if [ -f "$OUT/.lkx-kernel-config" ] && [ linux/kernel.config -nt "$OUT/.lkx-kernel-config" ]; then
+if [ -f "$OUT/.lkx-kernel-config" ] && [ "$KFRAG" -nt "$OUT/.lkx-kernel-config" ]; then
     make -s -C "$BR" O="$OUT" linux-reconfigure
 fi
 touch "$OUT/.lkx-kernel-config"
@@ -104,6 +121,16 @@ make -s -C "$BR" O="$OUT"
 echo "== the image"
 mkdir -p build-linux
 cp build/litekernx.img "$IMAGE"
+if [ "$ARCH" = aarch64 ]; then
+    # QEMU's virt machine boots the kernel it's given (-kernel; the system
+    # built in, ~80 MB: more than the stick's FAT32 holds), the disk the
+    # same stick as the VM's: its ramdisk and FAT32 (lkx-shell's). The phone
+    # gets its own boot image later (phase 7).
+    mkdir -p build-linux/aarch64
+    cp "$OUT/images/Image" build-linux/aarch64/Image
+    echo "== done: $IMAGE ($(du -h "$IMAGE" | cut -f1)), build-linux/aarch64/Image"
+    exit 0
+fi
 python3 - "$IMAGE" "$SYSLINUX/bios/mbr/mbr.bin" <<'EOF'
 import sys
 img, mbr = sys.argv[1], open(sys.argv[2], "rb").read()

@@ -20,9 +20,11 @@ find_disk() {
 
 # The log goes to the serial port when there is one (QEMU, the tests).
 out=/dev/null
-if stty -F /dev/ttyS0 115200 >/dev/null 2>&1; then
-    out=/dev/ttyS0
-fi
+for tty in /dev/ttyS0 /dev/ttyAMA0; do          # ARM's (QEMU's virt) is ttyAMA0
+    if [ "$out" = /dev/null ] && [ -e "$tty" ] && stty -F "$tty" 115200 >/dev/null 2>&1; then
+        out=$tty
+    fi
+done
 
 disk=
 i=0

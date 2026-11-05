@@ -139,10 +139,15 @@ finger) and the six stand-in keys, and each step has a test in `tests/linux/`.
 
 ## Phase 4 — ARM build (QEMU)
 
-- [ ] Buildroot config for aarch64 (Cortex-A53)
-- [ ] Build the shell and apps for aarch64
-- [ ] Boot in `qemu-system-aarch64` with a virtual touchscreen
-- [ ] Run the test suite there, fix ARM-only bugs
+- [x] Buildroot config for aarch64 (Cortex-A53): linux/buildroot-aarch64.defconfig,
+      linux/kernel-aarch64.config; `LKX_ARCH=aarch64 bash linux/build.sh`
+- [x] Build the shell and apps for aarch64 (x86-only bits made portable: the CPU's
+      pause, the TSC, the panic's cli)
+- [x] Boot in `qemu-system-aarch64` (Buildroot builds it: no sudo) with a virtual
+      touchscreen: `bash linux/vm.sh qemu-arm`; the home screen ~10 s after start
+- [x] Run the test suite there, fix ARM-only bugs: `LKX_ARCH=aarch64 bash
+      tests/linux/test-image.sh`, all 11 pass (none found). The headless suite runs
+      on the PC (x86) only
 
 **Done when:** the aarch64 image boots to the phone shell in QEMU and the
 tests pass.

@@ -518,7 +518,7 @@ static void shake(void)
         ls.shake = offs[i];
         draw_rect(middle_rect());
         while (uptime_ms() - f0 < 30 * ANIM_SLOW)
-            __asm__ volatile("pause");
+            cpu_relax();
     }
     ls.shake = 0;
 }

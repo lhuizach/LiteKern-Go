@@ -1378,7 +1378,7 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
             continue;
         }
         while (uptime_ms() - t0 < (uint32_t)(f * ms / frames))
-            __asm__ volatile("pause");
+            cpu_relax();
     }
     for (int k = 0; k < n && done; k++)
         shell_damage(prev[k]);              /* the final picture is composed by the caller */
@@ -1614,7 +1614,7 @@ static void fade_out(void)
         screen_damage_all();
         screen_present();
         while (uptime_ms() - t0 < (uint32_t)(30 * ANIM_SLOW))
-            __asm__ volatile("pause");
+            cpu_relax();
     }
     gfx_fill_rect(s, 0, 0, s->w, s->h, 0);
     screen_damage_all();
