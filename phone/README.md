@@ -40,5 +40,6 @@ the partitions Nura is expected to use. `full` adds RECOVERY, SYSTEM, CACHE and
 HIDDEN. The firmware's own partition map (`A5ULTE_EUR_OPEN.pit`, 31 entries)
 names them. Bootloaders, modem and EFS aren't in the script at all.
 
-Not run yet: `heimdall download-pit` is the first test, because it does a full
-Heimdall session and writes nothing.
+`heimdall download-pit` ran cleanly through the Fedora VM. The phone's map (8192 bytes
+padded) is byte-identical to the firmware's 4376-byte map, so these partition names
+are right. A flash, and this restore, are still untested.
