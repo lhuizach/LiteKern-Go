@@ -32,3 +32,13 @@ python3 ~/lkx-phone/pmbootstrap/pmbootstrap.py init
 
 The kernel is built with GCC from Buildroot, Nura's with Alpine's. Nura's
 rootfs holds modules from its own build, so ours may refuse to load them.
+
+## Getting back to Android
+
+`restore-stock.sh`, run in the Fedora VM. `quick` writes BOOT and USERDATA only,
+the partitions Nura is expected to use. `full` adds RECOVERY, SYSTEM, CACHE and
+HIDDEN. The firmware's own partition map (`A5ULTE_EUR_OPEN.pit`, 31 entries)
+names them. Bootloaders, modem and EFS aren't in the script at all.
+
+Not run yet: `heimdall download-pit` is the first test, because it does a full
+Heimdall session and writes nothing.
