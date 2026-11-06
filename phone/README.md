@@ -103,3 +103,17 @@ Nura is **Alpine (musl)**: our Buildroot programs are glibc and won't run on it 
 | Power | `pm8941_pwrkey` (event0) | 116 |
 
 Recipe: `/dev/input/event*` is `root:input`, so `sudo addgroup user input` once on the phone.
+
+## Our kernel on the phone (`fastboot boot`, 2026-11-06)
+
+`phone/build-kernel.sh` then `phone/make-boot.sh` gave `boot-our-kernel.img` (Nura's boot image with our kernel),
+sent with `fastboot boot` from lk2nd's menu (reached with `sudo reboot bootloader`? no: that just rebooted
+into Nura; the volume-down-at-boot way worked). RAM only: nothing is written; a plain restart returns to
+Nura's own kernel.
+
+- It boots: `uname -v` shows our build (`#2 ... lhuir@GamingPC ... Buildroot gcc 14.3.0`).
+- `tainted` is 0 and 102 modules load from Nura's rootfs: the same version, config and vermagic.
+- Seen working: Wi-Fi (reached over SSH), all eight input devices, battery, the sound card, `/dev/dri`.
+- Not yet checked under it: the desktop on screen, touch, the GPU.
+- USB tip: VirtualBox sometimes holds the phone's device as "Captured" without giving it to the VM
+  (fastboot says `waiting for any device`): unplug and replug the cable, then attach again.

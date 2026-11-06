@@ -177,7 +177,7 @@ This decides Camera, brightness, vibration and alarms in UI-PLAN.md.
 - [x] Build the Nura v26.06 kernel ourselves, no root (`phone/build-kernel.sh`): same version, device tree byte-identical, config differs only in compiler lines
 - [x] `phone/make-boot.sh`: our kernel in Nura's boot image, `boot-our-kernel.img` (not flashed)
 - [ ] Build the whole Nura image with pmbootstrap
-- [ ] Boot our build of it on the phone (same result as phase 5)
+- [x] Boot our build of the kernel on the phone: `fastboot boot` (nothing written) with Nura's userland: our kernel, tainted 0, 102 modules, all input devices, Wi-Fi, battery, sound card, DRM
 - [x] Real root filesystem: ext4, the third disk partition, in the x86 and ARM VMs (not the phone yet)
 
 **Done when:** we can rebuild the phone's kernel and boot it.
