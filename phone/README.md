@@ -148,3 +148,10 @@ the boot then fails. Next: find the framebuffer's address on a running Nura (the
 framebuffer node, or `journalctl -k | grep -i framebuffer`), then either keep the ramdisk below it (xz instead
 of gzip: 28 to 20 MB; fewer modules, 576 now; drop NetSurf for the test) or put `ramdisk_addr` above it in
 the boot image header (`phone/bootimg.py`), and try again.
+
+Evidence found afterwards, on a running Nura: lk2nd puts Nura's 14.0 MB ramdisk at 0x82448000..0x831ff051
+(`/sys/firmware/devicetree/base/chosen/linux,initrd-start/end`), not at the header's 0x82000000: it ends 4 KB
+below 0x83200000, which is where msm8916's LK scans the screen from (MIPI_FB_ADDR). So the ramdisk has a budget
+of about 18 MB (0x83200000 - 0x82000000); ours was 30 MB. There is no framebuffer node in the device tree.
+Plan: a ramdisk under about 17 MB: xz (28 to 20 MB) plus only the modules this phone loads (not all 576), no
+NetSurf, and check `initrd-end` stays below 0x83200000 before trusting it.
