@@ -293,8 +293,8 @@ button.row:active { background: var(--sep); }
 /* sheets, dialogs, toasts */
 .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.34); z-index: 9; display: flex; opacity: 0; pointer-events: none; transition: opacity .2s; }
 .scrim.on { opacity: 1; pointer-events: auto; }
-.sheet { position: absolute; left: 10px; right: 10px; bottom: 12px; border-radius: 30px; padding: 8px; z-index: 10; transform: translateY(110%); transition: transform .36s var(--spring); }
-.sheet.on { transform: none; }
+.sheet { position: absolute; left: 10px; right: 10px; bottom: 12px; border-radius: 30px; padding: 8px; z-index: 10; transform: translateY(calc(100% + 24px)); visibility: hidden; transition: transform .36s var(--spring), visibility 0s .36s; }
+.sheet.on { transform: none; visibility: visible; transition: transform .4s var(--spring); }
 .sheet .bl { background: none; margin: 0; position: relative; }
 .sheet .st { text-align: center; font-size: 13px; font-weight: 600; color: var(--dim); padding: 8px 0 4px; position: relative; }
 .dlg { margin: auto 34px; flex: 1; border-radius: 30px; padding: 22px 18px 14px; text-align: center; transform: scale(.92); transition: transform .3s var(--spring); }
@@ -305,6 +305,50 @@ button.row:active { background: var(--sep); }
 .dlg .btn { flex: 1; padding: 0; }
 .toast { position: absolute; left: 50%; bottom: 84px; transform: translate(-50%, 16px); max-width: 300px; padding: 10px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .2s, transform .3s var(--spring); z-index: 20; white-space: nowrap; pointer-events: none; }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* the apps screen, up from home as quick settings comes down */
+.drawer { color: var(--on); padding: 40px 14px 0; box-sizing: border-box; overflow-y: auto; scrollbar-width: none; }
+.drawer::-webkit-scrollbar { display: none; }
+.dsearch { height: 46px; border-radius: 23px; display: flex; align-items: center; gap: 8px; padding: 0 14px; margin-bottom: 16px; color: var(--dim); }
+.dsearch svg { font-size: 18px; position: relative; }
+.dsearch input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font: inherit; color: var(--on); position: relative; }
+.dsearch input::placeholder { color: var(--dim); }
+.dgrid { display: grid; grid-template-columns: repeat(4, 1fr); row-gap: 18px; }
+.drawer .ic { color: var(--on); }
+.drawer .ic .lab { text-shadow: none; }
+.dnone { grid-column: 1 / -1; text-align: center; color: var(--dim); padding: 40px 0; }
+.grab { position: absolute; left: 50%; margin-left: -18px; width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.55); }
+
+/* motion: where things rest when they're away, so every arrival has a direction */
+.qs:not(.on) { transform: translateY(-46px); }
+.drawer:not(.on) { transform: translateY(70px); }
+.power:not(.on) { transform: translateX(26px); }
+.home:not(.on) { transform: scale(.94); }
+.appv { overflow: hidden; }
+.view.under { opacity: 1; pointer-events: none; transform: scale(.965); filter: blur(9px) brightness(.72); transition: opacity .2s, transform .32s var(--spring), filter .26s; }
+.view.peek { opacity: var(--p, 1); transform: translateY(var(--y, 0)); pointer-events: none; transition: none; }
+.view.closing { opacity: 1; pointer-events: none; transform: none; transition: none; z-index: 8; }
+@keyframes rise { from { opacity: 0; transform: translateY(16px) scale(.97); } }
+@keyframes popi { from { opacity: 0; transform: scale(.72); } }
+@keyframes fromr { from { opacity: 0; transform: translateX(34px) scale(.9); } }
+@keyframes fromt { from { opacity: 0; transform: translateY(-20px) scale(.97); } }
+@keyframes push { from { opacity: 0; transform: translateX(46px); } }
+@keyframes pull { from { opacity: 0; transform: translateX(-46px); } }
+@keyframes tabin { from { opacity: 0; transform: translateY(10px); } }
+.scroll.push { animation: push .36s var(--spring); }
+.scroll.pop { animation: pull .36s var(--spring); }
+.scroll.tab { animation: tabin .28s ease-out; }
+.ck, .btn, .gbtn, .hbtn, .rb, .pk, .tile i, .fav i, .gi, .sw::after, .row { transition: transform .22s var(--spring), background .16s, filter .16s; }
+.ck:active, .btn:active, .gi:active, .fav:active i, .tile:active i { transform: scale(.92); }
+.hbtn:active, .rb:active { transform: scale(.88); }
+.pk:active { transform: scale(.9); }
+.bl, .appcv, .row, .tile i, .sw, .ck { transition-property: transform, background, filter, color; transition-duration: .22s; }
+.cdisp b { transition: font-size .18s; display: block; }
+.cdisp b.bump { animation: tabin .18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .scroll.push, .scroll.pop, .scroll.tab { animation: none; }
+  .view.under { filter: none; }
+}
 
 .before { position: absolute; inset: 0; z-index: 50; background-size: cover; display: none; }
 .before.on { display: block; }
@@ -394,6 +438,7 @@ button.row:active { background: var(--sep); }
       <div class="view pin" id="v-pin"></div>
       <div class="view home" id="v-home"></div>
       <div class="view recents" id="v-recents"></div>
+      <div class="view drawer" id="v-drawer"></div>
       <div class="view qs" id="v-qs"></div>
       <div class="view power" id="v-power"></div>
       <div class="view appv" id="v-app"></div>
@@ -416,12 +461,16 @@ const $ = id => document.getElementById(id);
 const ic = n => `<svg class="i" aria-hidden="true"><use href="#${n}"/></svg>`;
 const APPS = [["files","Files"],["calculator","Calculator"],["settings","Settings"],["clock","Clock"],["browser","Web"],["blocksmith","Blocksmith"],["gallery","Gallery"],["taskmgr","Task Manager"],["log","Log"]];
 const name = id => APPS.find(a => a[0] === id)[1];
-const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"]];
+const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["drawer","All apps"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"]];
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const OVER = ["qs", "power"];                       // these float over what was on screen
+const STAG = { lock: [".date,.clock,.lnote,.hint", "rise", 40], pin: [".t,.dots,.pk", "rise", 20], home: [".clock,.date,.ic,.pdots,.dockb", "popi", 18], drawer: [".dsearch,.ic", "rise", 22], recents: [".rtitle,.pillb", "rise", 40], qs: [".qhead,.panel,.clear", "fromt", 40], power: [".pbtn", "fromr", 55] };
 const BEFORE = { lock: "b-lock", pin: "b-lock", home: "b-home", recents: "b-recents", qs: "b-qs", power: "b-power", files: "a-files", calculator: "a-calc", settings: "a-settings", clock: "a-clock" };
 const NOTES = {
   lock: ["Big bold clock, with glass notifications under it.", "Swipe up on the screen to unlock. Easy in the C shell."],
   pin: ["Glass keys over the frosted wallpaper. Try 1234, then a wrong code.", "Easy in the C shell: the frost is drawn once, then keys go on top."],
-  home: ["A glass dock holds four apps within thumb reach.", "Easy in the C shell. The dock's frost can be drawn once per wallpaper."],
+  home: ["Swipe up for all apps. Swipe down from the top for quick settings. Both follow your finger.", "Easy in C: the shell already drags home pages and quick settings."],
+  drawer: ["Every app, A to Z, with a working search. Swipe down or press Home to leave.", "Easy in C. It replaces the All apps page you swipe sideways to today."],
   recents: ["Cards snap, and each one is the app's live state. Swipe one up to close it.", "Snap, blur and outlines exist in C already. Live cards become snapshots."],
   qs: ["Glass panels with real sliders. The Dark mode tile works.", "Medium in C: blur on something that's moving is costly, so on the phone this may fade in."],
   power: ["Buttons sit beside the Power key, where your thumb already is.", "Easy in the C shell."],
@@ -478,8 +527,17 @@ function renderHome() {
   $("v-home").className = "view home" + (S.view === "home" ? " on" : "") + (S.plates ? " plates" : "");
   $("v-home").innerHTML = `<div class="clock">${HH}:${MM}</div><div class="date">${DATE}</div>
     <div class="grid" style="top:176px">${list}</div>
-    <div class="pdots" style="bottom:${S.dock ? 110 : 22}px"><i></i><i></i></div>
+    <div class="grab" style="bottom:${S.dock ? 108 : 20}px"></div>
     ${S.dock ? `<div class="dockb lg">${dock.map(btn).join("")}</div>` : ""}`;
+}
+function renderDrawer() {
+  const all = [...APPS].sort((a, b) => a[1].localeCompare(b[1]));
+  $("v-drawer").className = "view drawer" + (S.view === "drawer" ? " on" : "") + (S.plates ? " plates" : "");
+  $("v-drawer").innerHTML = `<label class="dsearch lg">${ic("search")}<input id="dq" aria-label="Search apps" placeholder="Search apps" autocomplete="off"></label><div class="dgrid" id="dgrid">${all.map(a => btn(a[0])).join("")}</div>`;
+  $("dq").oninput = e => {
+    const q = e.target.value.trim().toLowerCase(), hits = all.filter(a => a[1].toLowerCase().includes(q));
+    $("dgrid").innerHTML = hits.length ? hits.map(a => btn(a[0])).join("") : `<div class="dnone">No apps match</div>`;
+  };
 }
 function renderRecents() {
   const cards = opened.map(id => `<div class="card" data-id="${id}"><div class="h"><img src="${A["i-" + id]}" alt="">${name(id)}</div><div class="s"><div class="mini"><div class="appcv"></div>${appHtml(id)}</div></div></div>`).join("");
@@ -611,10 +669,59 @@ function logHtml() {
 function appHtml(id) {
   return { files: filesHtml, calculator: calcHtml, settings: settingsHtml, clock: clockHtml, browser: webHtml, blocksmith: blocksHtml, gallery: galleryHtml, taskmgr: taskHtml, log: logHtml }[id]();
 }
-function drawApp() { if (S.view === "app") $("v-app").innerHTML = `<div class="appcv"></div>${appHtml(S.app)}`; }
-function openApp(id) {
+function drawApp(nav) {
+  if (S.view !== "app") return;
+  $("v-app").innerHTML = `<div class="appcv"></div>${appHtml(S.app)}`;
+  if (nav && !REDUCED) { const s = $("v-app").querySelector(".scroll"); if (s) s.classList.add(nav); }
+}
+// Where something sits on the phone's 360x640 screen
+function rectOf(el) {
+  const r = el.getBoundingClientRect(), s = $("screen").getBoundingClientRect(), k = s.width / 360;
+  return { x: (r.left - s.left) / k, y: (r.top - s.top) / k, w: r.width / k, h: r.height / k };
+}
+const at = r => `translate(${r.x}px, ${r.y}px) scale(${r.w / 360}, ${r.h / 640})`;
+// An app grows out of its icon, and shrinks back into it
+function zoomOpen(r) {
+  if (REDUCED) return;
+  $("v-app").animate([
+    { transformOrigin: "0 0", transform: at(r), borderRadius: "120px", opacity: .25 },
+    { transformOrigin: "0 0", transform: "none", borderRadius: "0", opacity: 1 },
+  ], { duration: 460, easing: "cubic-bezier(.2,.9,.25,1.03)" });
+}
+function zoomClose(r) {
+  const v = $("v-app");
+  if (REDUCED || !r) return;
+  v.classList.add("closing");
+  const an = v.animate([
+    { transformOrigin: "0 0", transform: "none", borderRadius: "0", opacity: 1 },
+    { transformOrigin: "0 0", transform: at(r), borderRadius: "120px", opacity: .2 },
+  ], { duration: 340, easing: "cubic-bezier(.32,.72,.2,1)" });
+  an.onfinish = endClose; closeT = setTimeout(endClose, 420);   // whatever happens, nothing lingers
+}
+let closeT;
+function endClose() {
+  clearTimeout(closeT);
+  const v = $("v-app");
+  v.getAnimations().forEach(a => { if (a.effect && a.effect.getTiming().duration === 340) a.cancel(); });
+  v.classList.remove("closing");
+}
+function openApp(id, from) {
+  const r = from ? rectOf(from) : null;
   opened = opened.filter(x => x !== id).concat(id);
-  S.app = id; closeOver(); go("app"); drawApp();
+  S.app = id; closeOver(); go("app", true);
+  if (r) zoomOpen(r); else if (!REDUCED) $("v-app").animate([{ opacity: 0, transform: "scale(.94)" }, { opacity: 1, transform: "none" }], { duration: 300, easing: "ease-out" });
+}
+function iconOf(id) { return document.querySelector(`#v-home [data-open="${id}"] .gl`); }
+function goHome() {
+  if (S.view !== "app") return go("home");
+  const icon = iconOf(S.app);
+  const r = icon ? rectOf(icon) : { x: 150, y: 560, w: 60, h: 60 };
+  go("home", true); zoomClose(r);
+}
+function goRecents() {
+  const wasApp = S.view === "app";
+  go("recents");
+  if (wasApp) { const c = [...document.querySelectorAll("#v-recents .card .s")].pop(); if (c) zoomClose(rectOf(c)); }
 }
 
 // Overlays
@@ -630,12 +737,29 @@ function fileSheet(n) {
   $("scrim").innerHTML = ""; $("scrim").classList.add("on"); $("sheet").classList.add("on");
 }
 
-function go(v) {
+let base = "home";                                  // what's under an overlay
+function stagger(v) {
+  const st = STAG[v], root = $("v-" + v);
+  if (REDUCED || !st || !root) return;
+  root.querySelectorAll(st[0]).forEach((e, i) => {
+    e.style.animation = "none"; void e.offsetWidth;
+    e.style.animation = `${st[1]} .44s var(--spring) ${i * st[2]}ms both`;
+    e.addEventListener("animationend", () => { e.style.animation = ""; }, { once: true });
+  });
+}
+function go(v, quiet) {
+  endClose();
+  if (S.view !== v && !OVER.includes(S.view)) base = S.view;
+  const over = OVER.includes(v);
   S.view = v; save();
-  document.querySelectorAll(".view").forEach(e => e.classList.toggle("on", e.id === "v-" + v));
-  $("screen").dataset.frost = ["pin","recents","qs","power","app"].includes(v) ? 1 : 0;
+  document.querySelectorAll(".view").forEach(e => {
+    e.classList.toggle("on", e.id === "v-" + v);
+    e.classList.toggle("under", over && e.id === "v-" + base);
+  });
+  $("screen").dataset.frost = ["pin","recents","qs","power","app","drawer"].includes(v) ? 1 : 0;
+  if (!quiet) stagger(v);
   $("barT").textContent = v === "lock" || v === "pin" ? "" : `${HH}:${MM}`;
-  const onGlass = (v === "app" && !(S.app === "gallery" && T.gal.open != null)) || v === "qs";
+  const onGlass = (v === "app" && !(S.app === "gallery" && T.gal.open != null)) || v === "qs" || v === "drawer";
   $("bar").style.color = onGlass ? "var(--on)" : "#fff";
   if (v === "pin") { code = ""; dots(); }
   if (v === "recents") renderRecents();
@@ -683,9 +807,9 @@ function apply() {
   chips("o-plates", [["As they are",0],["On plates",1]], "plates");
   chips("o-dock", [["On",1],["Off",0]], "dock");
   chips("o-clock", [["Stacked","stacked"],["One line","inline"]], "clock");
-  renderLock(); renderPin(); renderHome(); renderQs(); renderPower();
+  renderLock(); renderPin(); renderHome(); renderDrawer(); renderQs(); renderPower();
   $("picks").textContent = picks();
-  go(S.view);
+  go(S.view, true);
 }
 
 // Stopwatch and timer tick
@@ -698,32 +822,52 @@ setInterval(() => {
 }, 50);
 
 // Everything tappable in an app
-function act(a) {
+function act(a, el) {
   const i = a.indexOf(":"), cmd = i < 0 ? a : a.slice(0, i), arg = i < 0 ? "" : a.slice(i + 1);
   const c = T.clk;
+  const flip = () => { if (el) el.setAttribute("aria-checked", el.getAttribute("aria-checked") === "true" ? "false" : "true"); };
   switch (cmd) {
     case "toast": return toast(arg);
     case "over": return closeOver();
-    case "dir": T.files.dir = T.files.dir && arg === "Screenshots" ? "Pictures/Screenshots" : arg; T.files.items["Pictures/Screenshots"] = T.files.items["Pictures/Screenshots"] || [["Screenshot_1.png",0,"412 KB"],["Screenshot_2.png",0,"388 KB"],["Screenshot_3.png",0,"401 KB"]]; T.files.items.Camera = T.files.items.Camera || []; break;
-    case "updir": T.files.dir = T.files.dir && T.files.dir.includes("/") ? "Pictures" : ["Screenshots","Camera"].includes(T.files.dir) ? "Pictures" : null; break;
+    case "dir": T.files.dir = T.files.dir && arg === "Screenshots" ? "Pictures/Screenshots" : arg; T.files.items["Pictures/Screenshots"] = T.files.items["Pictures/Screenshots"] || [["Screenshot_1.png",0,"412 KB"],["Screenshot_2.png",0,"388 KB"],["Screenshot_3.png",0,"401 KB"]]; T.files.items.Camera = T.files.items.Camera || []; return drawApp("push");
+    case "updir": T.files.dir = T.files.dir && T.files.dir.includes("/") ? "Pictures" : ["Screenshots","Camera"].includes(T.files.dir) ? "Pictures" : null; return drawApp("pop");
     case "fsheet": return fileSheet(arg);
     case "ftoast": closeOver(); return toast(arg);
     case "fdel": { closeOver(); const n = arg; return dialog("Delete this file?", n, "Delete", "fdel2:" + n); }
     case "fdel2": { const d = T.files.dir || ""; T.files.items[d] = T.files.items[d].filter(x => x[0] !== arg); closeOver(); break; }
-    case "c": calcKey(arg); break;
-    case "spage": T.set.page = arg || null; break;
-    case "stog": T.set[arg] = !T.set[arg]; break;
+    case "c": {                                     // only the display changes, so keys keep their press
+      calcKey(arg);
+      const d = $("v-app").querySelector(".cdisp"), b = d.querySelector("b"), cc = T.calc;
+      d.querySelector("small").innerHTML = cc.hist || "&nbsp;";
+      b.textContent = cc.cur; b.style.fontSize = (cc.cur.length > 12 ? 26 : cc.cur.length > 8 ? 40 : 60) + "px";
+      if (/^(eq|op|clr)/.test(arg) && !REDUCED) { b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
+      return;
+    }
+    case "spage": T.set.page = arg || null; return drawApp(arg ? "push" : "pop");
+    case "stog": T.set[arg] = !T.set[arg]; return flip();
     case "theme": S.theme = arg; return apply();
     case "accent": S.accent = arg; return apply();
-    case "ctab": c.tab = arg; break;
-    case "calarm": c.alarms[+arg][2] = !c.alarms[+arg][2]; break;
+    case "ctab": {                                  // the pill slides from the old tab to the new one
+      const old = ["alarm", "timer", "stop"].indexOf(c.tab);
+      c.tab = arg; drawApp("tab");
+      const th = $("v-app").querySelector(".vs .th");
+      if (th && !REDUCED) { const end = th.style.transform; th.style.transition = "none"; th.style.transform = `translateX(${old * 100}%)`; void th.offsetWidth; th.style.transition = ""; th.style.transform = end; }
+      return;
+    }
+    case "calarm": c.alarms[+arg][2] = !c.alarms[+arg][2]; return flip();
     case "cset": c.tm = +arg; c.tmLeft = 0; c.tmOn = false; break;
     case "ctm": if (c.tmOn) { c.tmOn = false; } else { c.tmEnd = Date.now() + (c.tmLeft || c.tm) * 1000; c.tmOn = true; } break;
     case "css": if (c.swOn) { c.sw += Date.now() - c.swT; c.swOn = false; } else { c.swT = Date.now(); c.swOn = true; } break;
     case "csr": c.sw = 0; c.swOn = false; break;
     case "brun": T.blk.said = true; drawApp(); clearTimeout(T.blk.t); T.blk.t = setTimeout(() => { T.blk.said = false; if (S.app === "blocksmith") drawApp(); }, 2400); return;
-    case "gopen": T.gal.open = +arg; go("app"); return;
-    case "gclose": T.gal.open = null; go("app"); return;
+    case "gopen": {                                 // the picture grows out of its thumbnail
+      const r = el ? rectOf(el) : null;
+      T.gal.open = +arg; go("app", true);
+      const g = $("v-app").querySelector(".gv");
+      if (g && r && !REDUCED) g.animate([{ transformOrigin: "0 0", transform: at(r), borderRadius: "24px" }, { transformOrigin: "0 0", transform: "none", borderRadius: "0" }], { duration: 400, easing: "cubic-bezier(.2,.9,.25,1.02)" });
+      return;
+    }
+    case "gclose": T.gal.open = null; go("app", true); { const s = $("v-app").querySelector(".scroll"); if (s && !REDUCED) s.classList.add("tab"); } return;
     case "gwall": { const w = arg.startsWith("w-") ? arg.slice(2) : null; if (w) { S.wall = w; apply(); toast("Wallpaper set"); } else toast("Screenshots can't be wallpaper here"); return; }
     case "gdel": return dialog("Delete this picture?", "It can't be brought back.", "Delete", "gdel2");
     case "gdel2": T.gal.list.splice(T.gal.open, 1); T.gal.open = null; closeOver(); go("app"); return;
@@ -735,25 +879,26 @@ function act(a) {
 }
 
 // Keys
-$("k-home").onclick = () => go("home");
-$("k-rec").onclick = () => go(S.view === "recents" ? "home" : "recents");
+$("k-home").onclick = goHome;
+$("k-rec").onclick = () => (S.view === "recents" ? go("home") : goRecents());
 $("k-back").onclick = () => {
   if ($("scrim").classList.contains("on")) return closeOver();
   if (S.view === "app") {
     if (S.app === "files" && T.files.dir) return act("updir");
     if (S.app === "settings" && T.set.page) return act("spage:");
     if (S.app === "gallery" && T.gal.open != null) return act("gclose");
-    return go("home");
+    return goHome();
   }
+  if (OVER.includes(S.view)) return go(base);
   go(S.view === "pin" ? "lock" : S.view === "lock" ? "lock" : "home");
 };
-$("pw").onclick = () => go(S.view === "power" ? "home" : "power");
-$("bar").onclick = () => go(S.view === "qs" ? "home" : "qs");
+$("pw").onclick = () => go(S.view === "power" ? base : "power");
+$("bar").onclick = () => go(S.view === "qs" ? base : "qs");
 $("scrim").addEventListener("click", e => { if (e.target.id === "scrim") closeOver(); });
 $("screen").addEventListener("submit", e => { e.preventDefault(); toast("Pages can't load in the mockup"); });
 $("screen").addEventListener("click", e => {
-  const a = e.target.closest("[data-act]"); if (a) { e.preventDefault(); return act(a.dataset.act); }
-  const o = e.target.closest("[data-open]"); if (o) return openApp(o.dataset.open);
+  const a = e.target.closest("[data-act]"); if (a) { e.preventDefault(); return act(a.dataset.act, a); }
+  const o = e.target.closest("[data-open]"); if (o) return openApp(o.dataset.open, o.querySelector(".gl"));
   const k = e.target.closest("[data-k]");
   if (k) {
     const v = k.dataset.k;
@@ -773,9 +918,56 @@ $("screen").addEventListener("click", e => {
   }
   if (e.target.closest("#qgear")) return openApp("settings");
   if (e.target.closest("#plock")) return go("lock");
-  if (e.target.closest("#closeall")) { opened = []; return renderRecents(); }
-  if (e.target.id === "v-power" || e.target.id === "v-qs") return go("home");
+  if (e.target.closest("#closeall")) {
+    const cards = [...document.querySelectorAll("#v-recents .card")];
+    cards.reverse().forEach((c, i) => setTimeout(() => c.classList.add("go"), i * 50));
+    return setTimeout(() => { opened = []; go("home"); }, REDUCED ? 0 : 200 + cards.length * 50);
+  }
+  if (e.target.id === "v-power" || e.target.id === "v-qs") return go(base);
 });
+
+// Pulls: quick settings comes down from the top, all apps comes up from home,
+// and either follows the finger the whole way
+(function () {
+  const SC = $("screen"), OPEN = 200;
+  let p = null, swallow = false;
+  const y = e => { const s = SC.getBoundingClientRect(); return (e.clientY - s.top) * 360 / s.width; };
+  SC.addEventListener("pointerdown", e => {
+    swallow = false; const Y = y(e), v = S.view;
+    if ((v === "home" || v === "app") && Y < 44) p = { name: "qs", sign: 1, y0: Y, opening: true, id: e.pointerId };
+    else if (v === "home" && !e.target.closest(".lock")) p = { name: "drawer", sign: -1, y0: Y, opening: true, id: e.pointerId };
+    else if (v === "qs") p = { name: "qs", sign: -1, y0: Y, opening: false, id: e.pointerId };
+    else if (v === "drawer" && $("v-drawer").scrollTop <= 0 && !e.target.closest("input")) p = { name: "drawer", sign: 1, y0: Y, opening: false, id: e.pointerId };
+    else p = null;
+  }, true);
+  SC.addEventListener("pointermove", e => {
+    if (!p) return;
+    const d = (y(e) - p.y0) * p.sign, el = $("v-" + p.name), dist = p.name === "qs" ? -80 : 120;
+    if (!p.live) {
+      if (d < 10) return;
+      p.live = true; swallow = true; SC.setPointerCapture(p.id); el.classList.add("peek");
+      p.t0 = performance.now(); p.d0 = d;
+      if (p.name === "qs" && p.opening) { base = S.view; $("v-" + base).classList.add("under"); }
+      $("frost").style.transition = "none";
+    }
+    const f = Math.min(1, d / OPEN), q = p.opening ? f : 1 - f;
+    p.f = f; p.dd = d;
+    el.style.setProperty("--p", q); el.style.setProperty("--y", (1 - q) * dist + "px");
+    $("frost").style.opacity = p.name === "qs" && base === "app" ? "" : q;
+  });
+  const end = () => {
+    if (!p || !p.live) { p = null; return; }
+    const { name, opening, f, dd, t0 } = p, el = $("v-" + name), fast = dd / Math.max(1, performance.now() - t0) > .45;
+    p = null;
+    const done = f > .4 || fast;
+    const stay = opening ? done : !done;              // finish where the finger was heading
+    el.classList.remove("peek"); $("frost").style.transition = ""; $("frost").style.opacity = "";
+    if (stay) { if (S.view !== name) go(name, true); else go(name, true); }
+    else { $("v-" + base).classList.remove("under"); go(name === "qs" ? base : "home", true); }
+  };
+  SC.addEventListener("pointerup", end); SC.addEventListener("pointercancel", end);
+  SC.addEventListener("click", e => { if (swallow) { swallow = false; e.stopPropagation(); e.preventDefault(); } }, true);
+})();
 
 // Lock: swipe up
 (function () {
