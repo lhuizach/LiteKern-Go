@@ -333,7 +333,11 @@ static void add_device(const char *path)
     ioctl(fd, EVIOCGBIT(EV_REL, sizeof(rel)), rel);
     char name[64] = "";
     ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
-    int keyboard = BIT(ev, EV_KEY) && BIT(keys, KEY_A) && BIT(keys, KEY_ENTER);
+    /* A keyboard, or a phone's own keys: Power, Volume, Back, Home, Menu (Recent apps),
+     * each on a device of its own with no letters (the A5's pwrkey, resin, GPIO buttons, touchkey). */
+    int keyboard = BIT(ev, EV_KEY) && ((BIT(keys, KEY_A) && BIT(keys, KEY_ENTER)) || BIT(keys, KEY_POWER) ||
+                                       BIT(keys, KEY_VOLUMEUP) || BIT(keys, KEY_VOLUMEDOWN) ||
+                                       BIT(keys, KEY_BACK) || BIT(keys, KEY_HOMEPAGE) || BIT(keys, KEY_MENU));
     int mouse = BIT(ev, EV_REL) && BIT(rel, REL_X) && BIT(keys, BTN_LEFT);
     int tablet = BIT(ev, EV_ABS) && BIT(abs, ABS_X) && BIT(abs, ABS_Y) &&
                  (BIT(keys, BTN_LEFT) || BIT(keys, BTN_TOUCH));
@@ -518,8 +522,11 @@ static void read_device(struct dev *d)
                 plat_wheel(-e->value);          /* evdev: away from you is +1 */
             } else if (e->type == EV_KEY && e->code < BTN_MISC) {
                 plat_key(plat_evdev_key(e->code), e->value != 0);
-            } else if (e->type == EV_KEY && (e->code == BTN_LEFT || e->code == BTN_RIGHT || e->code == BTN_MIDDLE)) {
-                uint8_t b = e->code == BTN_LEFT ? MOUSE_LEFT : e->code == BTN_RIGHT ? MOUSE_RIGHT : MOUSE_MIDDLE;
+            } else if (e->type == EV_KEY && (e->code == BTN_LEFT || e->code == BTN_RIGHT || e->code == BTN_MIDDLE ||
+                                             (d->abs && e->code == BTN_TOUCH))) {
+                /* A touchscreen's finger on the glass is the left button. */
+                uint8_t b = e->code == BTN_LEFT || e->code == BTN_TOUCH ? MOUSE_LEFT
+                          : e->code == BTN_RIGHT ? MOUSE_RIGHT : MOUSE_MIDDLE;
                 buttons = e->value ? (uint8_t)(buttons | b) : (uint8_t)(buttons & ~b);
                 moved = 1;
             } else if (e->type == EV_REL && e->code == REL_X) {

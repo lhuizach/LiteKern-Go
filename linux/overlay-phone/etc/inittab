@@ -1,0 +1,15 @@
+# LiteKern Go on the phone: busybox's init (linux/buildroot-phone.defconfig).
+# The system is in RAM, in the kernel's initramfs. eudev (rcS runs its script)
+# loads the drivers for what the kernel finds: the screen, touch, the keys.
+# Then the desktop starts, and starts again if it ever stops (lkx-start).
+::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
+::sysinit:/bin/mkdir -p /dev/pts /dev/shm
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mount -t tmpfs tmpfs /tmp
+::sysinit:/bin/mount -t tmpfs tmpfs /run
+::sysinit:/bin/hostname -F /etc/hostname
+::sysinit:/etc/init.d/rcS
+::respawn:/usr/bin/lkx-start
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/sync

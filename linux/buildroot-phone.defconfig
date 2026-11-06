@@ -1,0 +1,51 @@
+# LiteKern Go for the phone (Samsung Galaxy A5, SM-A500FU): the system, built
+# by `LKX_ARCH=aarch64 LKX_PHONE=1 bash linux/build.sh` (phone/README.md).
+# No kernel here: phone/build-kernel.sh builds the phone's (Nura's source,
+# patch and config), and phone/make-ramboot.sh puts both in one boot image.
+BR2_aarch64=y
+BR2_cortex_a53=y
+
+# glibc. Its kernel-headers must not be newer than the phone's kernel (6.12),
+# or glibc refuses to run on it.
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_KERNEL_HEADERS_6_12=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_12=y
+
+# busybox's init; eudev loads the drivers by their hardware names (the screen,
+# touch, the keys: kmod reads the kernel's zstd-compressed modules).
+BR2_INIT_BUSYBOX=y
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+BR2_PACKAGE_KMOD=y
+BR2_PACKAGE_KMOD_TOOLS=y
+BR2_PACKAGE_ZSTD=y
+BR2_PACKAGE_XZ=y
+BR2_TARGET_GENERIC_HOSTNAME="litekern-go"
+BR2_TARGET_GENERIC_ISSUE="LiteKern Go"
+BR2_SYSTEM_DHCP=""
+# linux/overlay (shared), linux/overlay-phone (its init), lkx-overlay (the shell
+# and apps, build.sh), phone-overlay (the drivers and firmware: phone/make-rootfs-overlay.sh).
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_LITEKERNX_PATH)/overlay $(BR2_EXTERNAL_LITEKERNX_PATH)/overlay-phone $(BASE_DIR)/lkx-overlay $(BASE_DIR)/phone-overlay"
+
+# A compressed cpio, which lk2nd gives the kernel as its RAM disk (fastboot
+# boot); an ext4 image for when it goes to the phone's storage.
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_GZIP=y
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+
+BR2_PACKAGE_OPENSSL=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_WPA3=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WIRELESS_REGDB=y
+BR2_PACKAGE_IW=y
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_LITEKERNX_PATH)/busybox.fragment"
+BR2_PACKAGE_NETSURF_LKX=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_OPENSSL=y
+BR2_PACKAGE_DEJAVU=y
+# A way in while there's no serial cable: ssh as root with a key (phone/authorized_keys).
+BR2_PACKAGE_DROPBEAR=y

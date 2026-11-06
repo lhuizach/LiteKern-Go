@@ -3,9 +3,10 @@
 
   bootimg.py info BOOT.img                  print its header
   bootimg.py unpack BOOT.img DIR            write DIR/kernel, DIR/ramdisk
-  bootimg.py pack LIKE.img OUT.img KERNEL RAMDISK
-                                            the same layout and cmdline as
-                                            LIKE.img, with this kernel and ramdisk
+  bootimg.py pack LIKE.img OUT.img KERNEL RAMDISK [CMDLINE]
+                                            the same layout as LIKE.img (and its
+                                            cmdline unless one is given), with this
+                                            kernel and ramdisk
 
 Only reads and writes files here. Flashing is never done by a tool in this
 folder: see CLAUDE.md's safety rules.
@@ -76,8 +77,12 @@ def pad(b, page):
     return b + bytes(pages(len(b), page) - len(b))
 
 
-def pack(like, out, kernel_path, ramdisk_path):
+def pack(like, out, kernel_path, ramdisk_path, cmdline=None):
     h = read_header(open(like, "rb").read())
+    if cmdline is not None:
+        if len(cmdline) >= 512:
+            sys.exit("cmdline too long (512 bytes)")
+        h["cmdline"] = cmdline.encode("ascii").ljust(512, bytes(1))
     kernel, ramdisk = open(kernel_path, "rb").read(), open(ramdisk_path, "rb").read()
     h["kernel_size"], h["ramdisk_size"], h["second_size"] = len(kernel), len(ramdisk), 0
     sha = hashlib.sha1()
@@ -97,7 +102,7 @@ def main():
         info(a[1])
     elif len(a) == 3 and a[0] == "unpack":
         unpack(a[1], a[2])
-    elif len(a) == 5 and a[0] == "pack":
+    elif len(a) in (5, 6) and a[0] == "pack":
         pack(*a[1:])
     else:
         sys.exit(__doc__)

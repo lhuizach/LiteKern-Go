@@ -18,15 +18,18 @@ find_disk() {
     return 1
 }
 
-# The log goes to the serial port when there is one (QEMU, the tests).
-out=/dev/null
+# The log goes to the serial port when there is one (QEMU, the tests), else to
+# a file in RAM (the phone: read it over ssh).
+out=/tmp/lkx.log
 for tty in /dev/ttyS0 /dev/ttyAMA0; do          # ARM's (QEMU's virt) is ttyAMA0
-    if [ "$out" = /dev/null ] && [ -e "$tty" ] && stty -F "$tty" 115200 >/dev/null 2>&1; then
+    if [ "$out" = /tmp/lkx.log ] && [ -e "$tty" ] && stty -F "$tty" 115200 >/dev/null 2>&1; then
         out=$tty
     fi
 done
 
+# The phone has no stick: its disk is a file in the system (linux/buildroot-phone.defconfig).
 disk=
+[ -f /usr/share/litekern/disk.img ] && disk=/usr/share/litekern/disk.img
 i=0
 while [ -z "$disk" ] && [ $i -lt 100 ]; do
     disk=$(find_disk) || disk=
@@ -70,6 +73,13 @@ EOF
     echo "lkx-start: test Wi-Fi: an access point on wlan1" > "$out"
     export LKX_NET_SKIP=wlan1
 fi
+# The screen's driver may still be loading (the phone's, by eudev): wait for it.
+w=0
+while [ ! -e /dev/dri/card0 ] && [ $w -lt 150 ]; do
+    usleep 200000 2>/dev/null || sleep 1
+    w=$((w + 1))
+done
+echo "lkx-start: screen ready after $((w * 200)) ms" > "$out"
 if [ -n "$disk" ]; then
     exec /usr/bin/lkx-shell --backend drm --disk "$disk" > "$out" 2>&1
 fi

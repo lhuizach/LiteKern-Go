@@ -61,6 +61,15 @@ if [ "${LKX_WEB:-0}" = 1 ]; then
         cp "build-linux/buildroot-web-$ARCH.defconfig.new" "build-linux/buildroot-web-$ARCH.defconfig"
     DEFCONFIG=build-linux/buildroot-web-$ARCH.defconfig
 fi
+# LKX_PHONE=1 (with LKX_ARCH=aarch64): the phone's system, as a RAM disk for
+# `fastboot boot` (phone/README.md): no kernel, no disk image.
+PHONE=${LKX_PHONE:-0}
+if [ "$PHONE" = 1 ]; then
+    [ "$ARCH" = aarch64 ] || { echo "LKX_PHONE needs LKX_ARCH=aarch64" >&2; exit 2; }
+    OUT=$WORK/output-go-phone
+    DEFCONFIG=linux/buildroot-phone.defconfig
+    LBUILD=build-target-phone
+fi
 FAT_OFFSET=$((16384 * 512))
 ROOT_LBA=$((16384 + 64 * 2048))     # after the 64 MiB FAT32 partition: 72 MiB
 
@@ -116,9 +125,11 @@ for app in apps/*/; do
     cp "$LBUILD/apps/$n/$n" "$OUT/lkx-overlay/usr/lib/litekern/apps/$n/"
 done
 
+[ "$PHONE" = 1 ] && bash phone/make-rootfs-overlay.sh "$OUT"
+
 echo "== Linux and the system"
 # Buildroot doesn't notice a changed kernel.config by itself.
-if [ -f "$OUT/.lkx-kernel-config" ] && [ "$KFRAG" -nt "$OUT/.lkx-kernel-config" ]; then
+if [ "$PHONE" != 1 ] && [ -f "$OUT/.lkx-kernel-config" ] && [ "$KFRAG" -nt "$OUT/.lkx-kernel-config" ]; then
     make -s -C "$BR" O="$OUT" linux-reconfigure
 fi
 touch "$OUT/.lkx-kernel-config"
@@ -127,6 +138,10 @@ if [ -f "$OUT/.lkx-busybox-config" ] && [ linux/busybox.fragment -nt "$OUT/.lkx-
 fi
 touch "$OUT/.lkx-busybox-config"
 make -s -C "$BR" O="$OUT"
+if [ "$PHONE" = 1 ]; then
+    echo "== done: $OUT/images/rootfs.cpio.gz ($(du -h "$OUT/images/rootfs.cpio.gz" | cut -f1)); next: phone/make-ramboot.sh"
+    exit 0
+fi
 
 echo "== the image"
 mkdir -p build-linux
