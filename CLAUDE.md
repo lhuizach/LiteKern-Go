@@ -70,7 +70,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## Status
 
-- Phone: boots Samsung Android 6.0.1, factory reset, no accounts, 100% charged, download mode tested. Nothing flashed yet.
+- Phone: lk2nd flashed to BOOT (one flash, via Heimdall in the Fedora VM) and boots to its fastboot menu. Android does not boot until Samsung's boot.img (`~/phone/stock/boot.img` in Fedora) is flashed back. KNOX probably tripped. Nothing else flashed. Reactivation lock was off; no accounts.
 - Downloaded and scanned: Heimdall 1.4.0 (win32), Android platform-tools, `lk2nd-msm8916.img` (418 KB), Nura v26.06 samsung-a5 Phosh images (boot and rootfs, extracted), Frija 2.0.26142.10.
 - Downloaded but waiting on admin to install: Zadig 2.9 (USB driver), Visual C++ 2012 x86 (Heimdall), .NET 8 Desktop Runtime x86 (Frija).
 - `heimdall detect` works from the Fedora VM. Our build of the Nura kernel is ready (`phone/`), not flashed.
