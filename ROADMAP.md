@@ -161,7 +161,7 @@ Needs phase 0. Every flash needs the owner's OK in chat, one change per flash.
 - [ ] SSH in over USB (172.16.42.1)
 - [ ] Test and write down: screen, touch, Wi-Fi, USB, storage, SD card, camera,
       brightness, vibration, battery reading, sleep/wake
-- [ ] `evtest`: the real key codes for Back, Home, Recent apps, Power, volume,
+- [x] The real key codes for Back, Home, Recent apps, Power, volume (read over SSH: all match our key map),
       and whether the touch-key backlights work
 - [ ] Check whether modem/EFS data is still intact
 - [ ] Keep these images as the first known-good set

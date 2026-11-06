@@ -68,8 +68,8 @@ Tried by the owner on the phone itself, 2026-11-06:
 | SIM / mobile data | no SIM in the phone, so untested (the status bar's `?` is that) |
 | Bluetooth | an icon shows; untested |
 
-Not yet checked: touch details, speed, brightness slider, battery percentage, sound, the key codes
-(Back, Home, Recent apps, Power, volume), USB networking (172.16.42.1), SD card, storage.
+Not yet checked: touch details, speed, brightness slider (no backlight device), sound (by ear)
+USB networking (172.16.42.1), SD card.
 
 ## What the A5 shows under Nura (read over SSH, 2026-11-06)
 
@@ -90,3 +90,16 @@ Nura is **Alpine (musl)**: our Buildroot programs are glibc and won't run on it 
 | Other i2c | NFC `s3fwrn5`, USB-cable detector `sm5502-muic`, accelerometer+compass `bmc150`. |
 | USB | a gadget controller (`ci_hdrc.0`) exists; no network device has shown up on the PC yet. |
 | Memory / disk | 1.8 GB RAM (about 590 MB used at the desktop), 4 cores; root grew to 11 GB by itself. |
+
+### The keys (read over SSH, all six pressed)
+
+| Key | Device | Code |
+|---|---|---|
+| Recents (left touch key) | `tm2-touchkey` (event5) | 139 `KEY_MENU` |
+| Back (right touch key) | `tm2-touchkey` (event5) | 158 `KEY_BACK` |
+| Home (physical) | `GPIO Buttons` (event2) | 172 `KEY_HOMEPAGE` |
+| Volume Up | `GPIO Buttons` (event2) | 115 |
+| Volume Down | `pm8941_resin` (event1) | 114 |
+| Power | `pm8941_pwrkey` (event0) | 116 |
+
+Recipe: `/dev/input/event*` is `root:input`, so `sudo addgroup user input` once on the phone.

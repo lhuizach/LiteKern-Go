@@ -225,9 +225,10 @@ static const driver_t mouse_driver = {
  *
  * LiteKern Go: the phone's keys, and the PC keys that stand in for them in
  * the VM (UI-PLAN.md): Home -> Home, F1 -> Recent apps, F12 -> Power,
- * Page Up/Down -> volume, Esc -> Back. Unverified: the codes the A5
- * really sends (expected KEY_BACK, KEY_HOMEPAGE, KEY_APPSELECT or KEY_MENU);
- * check with evtest on the phone (ROADMAP.md, phase 5). */
+ * Page Up/Down -> volume, Esc -> Back. The A5's real codes, read on the
+ * phone under Nura (2026-11-06): Back 158 and Recents 139 (KEY_MENU) from
+ * tm2-touchkey; Home 172 and Volume Up 115 from GPIO Buttons; Volume Down 114
+ * from pm8941_resin; Power 116 from pm8941_pwrkey. All are mapped below. */
 uint16_t plat_evdev_key(unsigned code)
 {
     switch (code) {
