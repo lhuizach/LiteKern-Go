@@ -117,3 +117,21 @@ Nura's own kernel.
 - Not yet checked under it: the desktop on screen, touch, the GPU.
 - USB tip: VirtualBox sometimes holds the phone's device as "Captured" without giving it to the VM
   (fastboot says `waiting for any device`): unplug and replug the cable, then attach again.
+
+## Our own system on the phone, RAM-booted (stage 2, nothing flashed)
+
+```
+bash phone/build-kernel.sh                        # the kernel and its modules (Nura's source, patch, config)
+LKX_ARCH=aarch64 LKX_PHONE=1 bash linux/build.sh  # the system: output-go-phone/images/rootfs.cpio.gz (29 MB)
+bash phone/make-ramboot.sh                        # ~/lkx-phone/out/boot-litekern-go.img
+```
+
+Then `fastboot boot boot-litekern-go.img` from lk2nd's menu (each `fastboot boot` needs the owner's yes).
+
+- The system is busybox init + eudev (loads the drivers by modalias: `80-drivers.rules`, kmod with zstd for the
+  `.ko.zst` modules) + our shell and apps + dropbear (root, key from `phone/authorized_keys`, not in git) + the
+  firmware copied from a running Nura (`~/lkx-phone/firmware`). glibc with kernel headers 6.12.
+- The shell's disk is the file `/usr/share/litekern/disk.img` (the phone has no stick); its log is `/tmp/lkx.log`.
+- The kernel's text console is the screen first (`console=tty0`), so a fault shows on the panel.
+- Not in this system yet: Wi-Fi (needs the firmware loader Nura has: the wcnss files come from the modem
+  partition), so no ssh until that, and nothing runs the GPU.
