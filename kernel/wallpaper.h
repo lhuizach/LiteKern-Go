@@ -20,6 +20,9 @@ int wallpaper_init(const char *name);
 /* Show another one (0, -ENOENT, -EINVAL if damaged); the old one stays on
  * failure. wallpaper_refresh() reloads the current one, e.g. after the
  * style changed (for its -light variant). */
+/* Counts changes of picture: what's made from it (the frost) checks this. */
+extern uint32_t wallpaper_gen;
+
 int wallpaper_set(const char *name);
 int wallpaper_refresh(void);
 

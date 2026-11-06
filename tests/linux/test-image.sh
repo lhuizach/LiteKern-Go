@@ -107,8 +107,10 @@ path() { PX=360 PY=640 P=""; }
 go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
-tile_x() { echo $(( (720 - 4 * 168) / 2 + 84 + ($1 % 4) * 168 )); }
-tile_y() { echo $(( 348 + ($1 / 4) * 184 )); }
+# Dock (y 1168): Files 0 x 105, Web 4 x 275, Gallery 6 x 445, Settings 2 x 615.
+# The others: 4 columns from y 424, in order.
+tile_x() { case $1 in 0) echo 105 ;; 4) echo 275 ;; 6) echo 445 ;; 2) echo 615 ;; 1) echo 108 ;; 3) echo 276 ;; 5) echo 444 ;; 7) echo 612 ;; *) echo 108 ;; esac; }
+tile_y() { case $1 in 0|2|4|6) echo 1168 ;; 1|3|5|7) echo 424 ;; *) echo 608 ;; esac; }
 tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:2; }
 ready_re='^desktop: ready'
 
@@ -255,7 +257,7 @@ check "the Web app downloads a file into Downloads on the stick" \
 
 # Power held (F12 here) brings up the power menu; Power off (its first
 # button, 360,512): Linux switches the VM off.
-path; add hold:f12:900 sleep:0.5; go 360 512; click
+path; add hold:f12:900 sleep:0.5; go 620 368; click
 KEYS="$P" KEYS_DONE='^power: off' WAIT_OFF=1 boot_until $T/disk.img "$ready_re" 120
 check "Power held, then Power off: the machine switches off (Linux's power-off)" \
     '^shell: power menu \(Power held\)$' \

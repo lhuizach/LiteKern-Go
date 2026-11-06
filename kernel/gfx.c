@@ -528,3 +528,74 @@ void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp)
         }
     }
 }
+
+static uint32_t isqrt32(uint32_t n)
+{
+    uint32_t r = 0, bit = 1u << 30;
+    while (bit > n)
+        bit >>= 2;
+    while (bit) {
+        if (n >= r + bit) {
+            n -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return r;
+}
+
+void gfx_glass(struct gfx_surface *dst, int x, int y, int w, int h, int r, const struct gfx_surface *frost,
+               int fx, int fy, uint32_t tint, uint32_t tint_a, uint32_t alpha)
+{
+    if (w <= 0 || h <= 0 || !alpha)
+        return;
+    if (r > h / 2)
+        r = h / 2;
+    if (r > w / 2)
+        r = w / 2;
+    for (int row = 0; row < h; row++) {
+        int sy = y + row;
+        if (sy < 0 || sy >= dst->h)
+            continue;
+        /* How far this row's edge is in from the side, in 1/256 px. */
+        int in = 0, dy = row < r ? r - row - 1 : row >= h - r ? row - (h - r) : -1;
+        if (dy >= 0) {
+            uint32_t d = (uint32_t)((2 * dy + 1) * (2 * dy + 1)), big = (uint32_t)(4 * r * r);
+            in = r * 256 - (int)(isqrt32((big - d) << 12) * 2);
+        }
+        int ipx = in >> 8, edge = 256 - (in & 255);
+        uint32_t *d = dst->px + sy * dst->stride;
+        const uint32_t *sp = frost->px + (fy + row < 0 ? 0 : fy + row >= frost->h ? frost->h - 1 : fy + row) * frost->stride;
+        for (int col = ipx; col < w - ipx; col++) {
+            int sx = x + col;
+            if (sx < 0 || sx >= dst->w)
+                continue;
+            int fcol = fx + col;
+            uint32_t p = sp[fcol < 0 ? 0 : fcol >= frost->w ? frost->w - 1 : fcol];
+            p = mix(tint >> 16 & 0xff, p >> 16 & 0xff, tint_a) << 16 |
+                mix(tint >> 8 & 0xff, p >> 8 & 0xff, tint_a) << 8 | mix(tint & 0xff, p & 0xff, tint_a);
+            /* The rim: light from above, a little down the sides. */
+            uint32_t lit = 0;
+            if (row == 0 || (dy >= 0 && row < r && col <= ipx))
+                lit = 120;
+            else if (row == 1)
+                lit = 64;
+            if (col - ipx <= 1 || w - ipx - 1 - col <= 1) {
+                uint32_t side = (uint32_t)(76 * (h - row) / h) + 16;
+                lit = lit > side ? lit : side;
+            }
+            if (lit)
+                p = mix(255, p >> 16 & 0xff, lit) << 16 | mix(255, p >> 8 & 0xff, lit) << 8 | mix(255, p & 0xff, lit);
+            if (row == h - 1)
+                p = mix(0, p >> 16 & 0xff, 44) << 16 | mix(0, p >> 8 & 0xff, 44) << 8 | mix(0, p & 0xff, 44);
+            uint32_t a = alpha;
+            if (col == ipx || col == w - ipx - 1)
+                a = a * (uint32_t)edge / 256;
+            uint32_t o = d[sx];
+            d[sx] = a >= 255 ? p : mix(p >> 16 & 0xff, o >> 16 & 0xff, a) << 16 |
+                                   mix(p >> 8 & 0xff, o >> 8 & 0xff, a) << 8 | mix(p & 0xff, o & 0xff, a);
+        }
+    }
+}

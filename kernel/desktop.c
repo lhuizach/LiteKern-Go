@@ -148,6 +148,8 @@ static void damage_all(void)
 }
 
 static void draw_home(void);
+static void draw_drawer(void);
+static int drw_shown(void);
 static void draw_qs(void);
 static void draw_switcher(void);
 static void sw_forget(struct wm_window *w);
@@ -183,7 +185,8 @@ static void backdrop_take(int with_bar)
     if (!bd_px) {
         uint32_t bytes = (uint32_t)(s->w * s->h * 4), tmp = GFX_BLUR_TMP(s->w, s->h) * 4;
         bd_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
-        bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!bd_tmp)
+            bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
         if (!bd_px || !bd_tmp)
             return;                     /* no memory: plain dimming, as before */
     }
@@ -202,6 +205,33 @@ static void backdrop_take(int with_bar)
     gfx_blur(&v.s, BACKDROP_BLUR, bd_tmp);
     bd_ok = 1;
     kprintf("desktop: backdrop blurred in %u ms\n", (unsigned)(uptime_ms() - t0));
+}
+
+/* The wallpaper, frosted: what glass on the home and lock screens shows. Made
+ * once for each picture. */
+static uint32_t *frost_px;
+static uint32_t frost_made;
+static struct gfx_surface frost_surf;
+
+const struct gfx_surface *desktop_frost(void)
+{
+    struct gfx_surface *s = S();
+    if (!frost_px) {
+        uint32_t bytes = (uint32_t)(s->w * s->h * 4), tmp = GFX_BLUR_TMP(s->w, s->h) * 4;
+        frost_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!bd_tmp)
+            bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!frost_px || !bd_tmp)
+            return 0;
+        frost_made = wallpaper_gen - 1;
+    }
+    frost_surf = (struct gfx_surface){ frost_px, s->w, s->h, s->w };
+    if (frost_made != wallpaper_gen) {
+        frost_made = wallpaper_gen;
+        wallpaper_draw(&frost_surf, 0, 0, 0);
+        gfx_blur(&frost_surf, BACKDROP_BLUR, bd_tmp);
+    }
+    return &frost_surf;
 }
 
 /* The backdrop over the part of the screen being composed, at alpha. */
@@ -225,10 +255,13 @@ static void compose(struct gfx_rect r)
         draw_switcher();                /* all there: nothing under it shows */
     } else {
         wallpaper_draw(VS, v.ox, v.oy, 0);
-        if (home_shown())
+        if (home_shown()) {
             draw_home();
-        else
+            if (drw_shown())
+                draw_drawer();
+        } else {
             wm_draw(VS, v.ox, v.oy);
+        }
         if (sw_alpha > 0) {
             if (bd_ok)
                 backdrop_draw((uint32_t)sw_alpha);
@@ -729,33 +762,41 @@ static void wbar_layout(struct wm_window *w, struct gfx_rect btn[WM_MAX_BUTTONS]
     }
 }
 
+/* Round glass buttons down the right edge, beside the Power key, so a thumb
+ * is already there; each one's name is on its left. */
+#define PW_D 136
+#define PW_GAP 28
+#define PW_RIGHT 28
+#define PW_TOP 300
+#define PW_W 440
+
 static struct gfx_rect menu_rect(void)
 {
-    int h = menu_items() * MENU_ITEM_H + 2 * MENU_PAD;
-    return (struct gfx_rect){ (S()->w - MENU_W) / 2, (S()->h - h) / 2, MENU_W, h };
+    int n = menu_items();
+    return (struct gfx_rect){ S()->w - PW_RIGHT - PW_W, PW_TOP, PW_W, n * PW_D + (n - 1) * PW_GAP };
 }
 
 static struct gfx_rect menu_item_rect(int k)
 {
-    struct gfx_rect m = menu_rect();
-    return (struct gfx_rect){ m.x + MENU_PAD, m.y + MENU_PAD + k * MENU_ITEM_H + 8, MENU_W - 2 * MENU_PAD,
-                              MENU_ITEM_H - 16 };
+    return (struct gfx_rect){ S()->w - PW_RIGHT - PW_W, PW_TOP + k * (PW_D + PW_GAP), PW_W, PW_D };
 }
 
 /* --- the home screen (LiteKern Go, UI-PLAN.md) ----------------------------------------
  *
- * Shown whenever no app is: a clock, then the apps in pages of 4 x 5 icons,
- * then the last page, All apps, every app A to Z. Swiping sideways turns the
- * pages; dots at the bottom show which one. No dock: Home, Back and Recent
- * apps are the phone's keys. */
+ * Shown whenever no app is: a big clock on the left, the apps in pages of
+ * 4 x 4 icons, and a glass dock with four of them at the bottom, in reach of
+ * a thumb. Swiping sideways turns the pages. Swiping up brings all the apps,
+ * A to Z (the drawer, below). Home, Back and Recent apps are the phone's keys. */
 
 #define HOME_COLS 4
-#define HOME_ROWS 5
+#define HOME_ROWS 4
 #define HOME_PER_PAGE (HOME_COLS * HOME_ROWS)
 #define HOME_ICON 112
-#define HOME_CLOCK_H 220        /* the clock and date, above the icons */
-#define HOME_DOTS_H 48          /* the page dots, at the bottom */
-#define LIST_ICON 64            /* All apps' rows */
+#define HOME_TOP 352            /* the first row of icons, under the clock and date */
+#define DOCK_W_INSET 20
+#define DOCK_BAND_H 176
+#define DOCK_BOTTOM 24
+#define DOCK_R 64
 #define SWIPE_SLOP 24           /* px a finger moves before it's a swipe, not a tap */
 
 static struct spring pager;     /* how far the pages are turned: FX(page * screen width) */
@@ -768,9 +809,47 @@ static int home_shown(void)
     return started && !wm_top_visible() && !covered;
 }
 
-static int home_pages(void)     /* pages of icons; All apps comes after them */
+/* The dock's apps, in order: only the ones this build has. */
+static const char *const dock_names[] = { "Files", "Web", "Gallery", "Settings" };
+
+static int dock_slot(int i)     /* app i's place in the dock, or -1 */
 {
-    return builtin_app_count ? (builtin_app_count + HOME_PER_PAGE - 1) / HOME_PER_PAGE : 1;
+    int slot = 0;
+    for (unsigned k = 0; k < sizeof(dock_names) / sizeof(dock_names[0]); k++)
+        for (int a = 0; a < builtin_app_count; a++)
+            if (!strcmp(builtin_apps[a].name, dock_names[k])) {
+                if (a == i)
+                    return slot;
+                slot++;
+            }
+    return -1;
+}
+
+static int dock_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < builtin_app_count; i++)
+        n += dock_slot(i) >= 0;
+    return n;
+}
+
+static int grid_index(int i)    /* app i's place among the icons that aren't in the dock */
+{
+    int k = 0;
+    for (int a = 0; a < i; a++)
+        k += dock_slot(a) < 0;
+    return k;
+}
+
+static int home_pages(void)
+{
+    int n = builtin_app_count - dock_count();
+    return n > 0 ? (n + HOME_PER_PAGE - 1) / HOME_PER_PAGE : 1;
+}
+
+static struct gfx_rect home_dock(void)
+{
+    return (struct gfx_rect){ DOCK_W_INSET, S()->h - DOCK_BOTTOM - DOCK_BAND_H, S()->w - 2 * DOCK_W_INSET, DOCK_BAND_H };
 }
 
 static int page_x(int p)        /* page p's left edge on screen, as turned now */
@@ -781,16 +860,23 @@ static int page_x(int p)        /* page p's left edge on screen, as turned now *
 static struct gfx_rect tile_rect(int i)
 {
     const struct theme *t = T();
-    int p = i / HOME_PER_PAGE, k = i % HOME_PER_PAGE;
+    int slot = dock_slot(i);
+    if (slot >= 0) {
+        struct gfx_rect d = home_dock();
+        int w = d.w / dock_count();
+        return (struct gfx_rect){ d.x + slot * w, d.y, w, d.h };
+    }
+    int g = grid_index(i), p = g / HOME_PER_PAGE, k = g % HOME_PER_PAGE;
     int x0 = page_x(p) + (S()->w - HOME_COLS * t->tile_w) / 2;
-    int y0 = t->topbar_h + HOME_CLOCK_H;
-    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, y0 + (k / HOME_COLS) * t->tile_h,
+    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, HOME_TOP + (k / HOME_COLS) * t->tile_h,
                               t->tile_w, t->tile_h };
 }
 
 static struct gfx_rect tile_icon_rect(int i)
 {
     struct gfx_rect r = tile_rect(i);
+    if (dock_slot(i) >= 0)
+        return (struct gfx_rect){ r.x + (r.w - HOME_ICON) / 2, r.y + (r.h - HOME_ICON) / 2, HOME_ICON, HOME_ICON };
     return (struct gfx_rect){ r.x + (r.w - HOME_ICON) / 2, r.y + 16, HOME_ICON, HOME_ICON };
 }
 
@@ -809,26 +895,35 @@ static int list_app(int k)
     return order[k];
 }
 
-static int list_top(void)
+/* The drawer's tiles, row by row, sliding with it. */
+#define DRAWER_TOP 120
+static struct spring drw;       /* FX(the screen's height): all the way open */
+static int drw_moving, drw_y0 = -1, drw_from, drw_live;
+static uint32_t last_drw_tick;
+
+static int drw_shown(void) { return drw.x > 0 || drw.t > 0; }
+static int drw_alpha(void)
 {
-    return T()->topbar_h + T()->margin + text_height(TEXT_HEADING) + T()->margin;
+    int a = drw.x * 255 / FX(S()->h);
+    return a < 0 ? 0 : a > 255 ? 255 : a;
 }
 
 static struct gfx_rect list_rect(int k)
 {
     const struct theme *t = T();
-    return (struct gfx_rect){ page_x(home_pages()) + t->margin, list_top() + k * t->row_h,
-                              S()->w - 2 * t->margin, t->row_h };
+    int x0 = (S()->w - HOME_COLS * t->tile_w) / 2, lift = (255 - drw_alpha()) * 140 / 255;
+    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, DRAWER_TOP + lift + (k / HOME_COLS) * t->tile_h,
+                              t->tile_w, t->tile_h };
 }
 
 static void turn_to(int p, int instant)
 {
     if (p < 0)
         p = 0;
-    if (p > home_pages())
-        p = home_pages();
+    if (p > home_pages() - 1)
+        p = home_pages() - 1;
     if (p != page)
-        kprintf("home: page %d of %d%s\n", p + 1, home_pages() + 1, p == home_pages() ? " (All apps)" : "");
+        kprintf("home: page %d of %d\n", p + 1, home_pages());
     page = p;
     pager.t = FX(p * S()->w);
     if (instant)
@@ -887,12 +982,15 @@ static struct hit hit_at(int x, int y)
         return (struct hit){ H_BAR, 0 };
     }
     if (home_shown() && !swipe_on) {
+        if (drw_shown()) {
+            for (int k = 0; k < builtin_app_count; k++)
+                if (inside(list_rect(k), x, y))
+                    return (struct hit){ H_LIST, k };
+            return (struct hit){ H_NONE, 0 };
+        }
         for (int i = 0; i < builtin_app_count; i++)
             if (inside(tile_rect(i), x, y))
                 return (struct hit){ H_TILE, i };
-        for (int k = 0; k < builtin_app_count; k++)
-            if (inside(list_rect(k), x, y))
-                return (struct hit){ H_LIST, k };
     }
     return (struct hit){ H_NONE, 0 };
 }
@@ -1014,7 +1112,7 @@ static void draw_battery(struct gfx_rect r, const struct k86_machine *m, uint32_
     text_draw(VS, VX(x + B(27)), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), text, TEXT_BOLD, bar_fg);
 }
 
-static uint32_t hit_bg(struct hit h, uint32_t base)
+static __attribute__((unused)) uint32_t hit_bg(struct hit h, uint32_t base)
 {
     if (same(h, pressed) && same(h, hover))
         return gfx_mix(WHITE, base, A_PRESSED);
@@ -1101,13 +1199,11 @@ static void draw_topbar(void)
     if (!visible(bar))
         return;
     uint32_t bg;
-    if (qs_shown()) {                       /* quick settings: the bar is the panel's top */
-        bg = t->dialog_bg;
-        gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
+    if (qs_shown()) {                       /* quick settings: clear, over its frost */
+        bg = t->light ? 0xe0e0e0 : 0x202020;
         bar_fg = t->fg;
-    } else if (home_shown()) {
-        gfx_darken(VS, VX(0), VY(0), bar.w, bar.h, 60);
-        bg = 0x202020;                      /* about what's under it, for the icons' dim parts */
+    } else if (home_shown() || sw_alpha > 0) {
+        bg = 0x202020;                      /* clear: about what's under it, for the icons' dim parts */
         bar_fg = SHELL_FG;
     } else {
         bg = t->headerbar_bg;
@@ -1189,28 +1285,34 @@ static void menu_icon(enum hit_kind k, int cx, int cy, uint32_t c)
 
 static void draw_menu(void)
 {
-    struct gfx_rect m = menu_rect();
-    int al = menu_alpha, drop = (255 - al) * 48 / 255;     /* fading in, it rises a little */
+    int al = menu_alpha;
     if (bd_ok)
         backdrop_draw((uint32_t)al);                        /* what's behind, frosted */
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 100 : 140) * al / 255));   /* and dimmed */
-    m.y += drop;
-    if (!visible(m))
-        return;
-    gfx_blend_round_rect(VS, VX(m.x), VY(m.y), m.w, m.h, 56, SHELL_POPOVER, (uint32_t)al);     /* round: 56 */
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 90 : 140) * al / 255));   /* and dimmed */
+    struct gfx_surface b = backdrop();
     static const char *const labels[MENU_ITEMS] = { "Power off", "Restart", "Lock", "Log Out" };
-    uint32_t face = gfx_mix(SHELL_FG, SHELL_POPOVER, 30);
     for (int k = 0; k < menu_items(); k++) {
         struct gfx_rect r = menu_item_rect(k);
-        r.y += drop;
+        /* In from the Power key, one after another. */
+        int dx = (255 - al) * (56 + k * 28) / 255;
+        int cx = S()->w - PW_RIGHT - PW_D / 2 + dx, cy = r.y + PW_D / 2;
+        if (!visible((struct gfx_rect){ r.x, r.y, r.w + 80, r.h }))
+            continue;
         int disabled = menu_kinds[k] == H_SHUTDOWN && !power_can_off();     /* no ACPI found */
-        uint32_t bg = disabled ? face : hit_bg((struct hit){ menu_kinds[k], 0 }, face);
-        gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg, (uint32_t)al);
-        if (al > 160) {                     /* its icon, then its name, the two centred */
-            uint32_t fg = disabled ? gfx_mix(SHELL_FG, SHELL_POPOVER, 110) : SHELL_FG;
-            int tw = text_width(labels[k], TEXT_BOLD), w = 40 + 20 + tw, x = r.x + (r.w - w) / 2;
-            menu_icon(menu_kinds[k], x + 20, r.y + r.h / 2, fg);
-            text_draw(VS, VX(x + 60), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), labels[k], TEXT_BOLD, fg);
+        int red = menu_kinds[k] == H_SHUTDOWN && !disabled;
+        struct hit h = { menu_kinds[k], 0 };
+        int held = same(h, pressed) && same(h, hover);
+        if (bd_ok)
+            gfx_glass(VS, VX(cx - PW_D / 2), VY(cy - PW_D / 2), PW_D, PW_D, PW_D / 2, &b, cx - PW_D / 2, cy - PW_D / 2,
+                      red ? 0xe0312a : WHITE, red ? 200 : held ? 80 : 34, (uint32_t)al);
+        else
+            gfx_blend_round_rect(VS, VX(cx - PW_D / 2), VY(cy - PW_D / 2), PW_D, PW_D, PW_D / 2,
+                                 red ? 0xe0312a : SHELL_POPOVER, (uint32_t)al);
+        if (al > 140) {
+            uint32_t fg = disabled ? 0x9a9a9c : SHELL_FG;
+            menu_icon(menu_kinds[k], cx, cy, fg);
+            int tw = text_width(labels[k], TEXT_BOLD);
+            text_draw(VS, VX(cx - PW_D / 2 - 26 - tw), VY(cy - text_height(TEXT_BOLD) / 2), labels[k], TEXT_BOLD, fg);
         }
     }
 }
@@ -1238,10 +1340,20 @@ static void draw_home(void)
         for (const char *q = months[(clock_shown.month - 1) % 12]; *q; q++)
             date[n++] = *q;
         date[n] = 0;
-        int x0 = page_x(0), y = t->topbar_h + 40;
-        text_draw(VS, VX(x0 + (S()->w - text_width(hm, TEXT_LARGE)) / 2), VY(y), hm, TEXT_LARGE, SHELL_FG);
-        y += text_height(TEXT_LARGE) + 4;
-        text_draw(VS, VX(x0 + (S()->w - text_width(date, TEXT_BODY)) / 2), VY(y), date, TEXT_BODY, SHELL_FG);
+        const struct text_face *big = lockscreen_clock_face();
+        int x0 = page_x(0) + 40, y = t->topbar_h + 36;
+        text_draw_face(VS, VX(x0), VY(y), hm, big, SHELL_FG);
+        y += big->ascent + big->descent + 2;
+        text_draw(VS, VX(x0 + 4), VY(y), date, TEXT_BOLD, SHELL_FG);
+    }
+    /* The dock: glass over the wallpaper, in reach of a thumb. */
+    const struct gfx_surface *frost = desktop_frost();
+    struct gfx_rect d = home_dock();
+    if (dock_count() && visible(d)) {
+        if (frost)
+            gfx_glass(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, frost, d.x, d.y, WHITE, 34, 255);
+        else
+            gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, WHITE, A_DOCK);
     }
     for (int i = 0; i < builtin_app_count; i++) {
         struct gfx_rect r = tile_rect(i);
@@ -1253,33 +1365,74 @@ static void draw_home(void)
         const struct app *a = &builtin_apps[i];
         struct gfx_rect ir = tile_icon_rect(i);
         draw_icon(a, ir, 255);
+        if (dock_slot(i) >= 0)
+            continue;                       /* the dock's apps have no labels: their icons are enough */
         int ty = ir.y + ir.h + 12, max_w = r.w - 8;
         int tw = text_width(a->name, TEXT_SMALL);
         text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
                       TEXT_SMALL, SHELL_FG);
     }
-    /* All apps, A to Z. */
-    int x0 = page_x(home_pages());
-    if (x0 < S()->w && x0 + S()->w > 0) {
-        text_draw(VS, VX(x0 + t->margin), VY(t->topbar_h + t->margin), "All apps", TEXT_HEADING, SHELL_FG);
-        for (int k = 0; k < builtin_app_count; k++) {
-            struct gfx_rect r = list_rect(k);
-            if (!visible(r))
-                continue;
-            struct hit h = { H_LIST, k };
-            if (same(h, pressed) && same(h, hover))
-                gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius, WHITE, A_PRESSED);
-            const struct app *a = &builtin_apps[list_app(k)];
-            draw_icon(a, (struct gfx_rect){ r.x + 8, r.y + (r.h - LIST_ICON) / 2, LIST_ICON, LIST_ICON }, 255);
-            text_draw(VS, VX(r.x + 8 + LIST_ICON + t->margin), VY(r.y + (r.h - text_height(TEXT_BODY)) / 2),
-                      a->name, TEXT_BODY, SHELL_FG);
+    /* A handle above the dock: all apps are up there. Dots when there's more than a page. */
+    int n = home_pages(), gap = 24, cy = d.y - 24;
+    if (n > 1) {
+        int cx0 = S()->w / 2 - (n - 1) * gap / 2;
+        for (int p = 0; p < n; p++)
+            gfx_fill_circle(VS, VX(cx0 + p * gap), VY(cy), 6, p == page ? SHELL_FG : DOT_GREY);
+    } else {
+        gfx_blend_round_rect(VS, VX(S()->w / 2 - 36), VY(cy - 4), 72, 8, 4, WHITE, 140);
+    }
+}
+
+/* All apps, A to Z, over the frosted home screen. */
+static void draw_drawer(void)
+{
+    int al = drw_alpha();
+    backdrop_draw((uint32_t)al);
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(70 * al / 255));
+    for (int k = 0; k < builtin_app_count; k++) {
+        struct gfx_rect r = list_rect(k);
+        if (!visible(r))
+            continue;
+        struct hit h = { H_LIST, k };
+        if (same(h, pressed) && same(h, hover))
+            gfx_blend_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
+        const struct app *a = &builtin_apps[list_app(k)];
+        struct gfx_rect ir = { r.x + (r.w - HOME_ICON) / 2, r.y + 16, HOME_ICON, HOME_ICON };
+        draw_icon(a, ir, (uint32_t)al);
+        if (al > 140) {
+            int ty = ir.y + ir.h + 12, max_w = r.w - 8, tw = text_width(a->name, TEXT_SMALL);
+            text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
+                          TEXT_SMALL, SHELL_FG);
         }
     }
-    /* The page dots. */
-    int n = home_pages() + 1, gap = 24, cy = S()->h - HOME_DOTS_H / 2;
-    int cx0 = S()->w / 2 - (n - 1) * gap / 2;
-    for (int p = 0; p < n; p++)
-        gfx_fill_circle(VS, VX(cx0 + p * gap), VY(cy), 6, p == page ? SHELL_FG : DOT_GREY);
+}
+
+static void drw_set(int open)
+{
+    static int was;
+    if (open && !drw_shown())
+        backdrop_take(0);
+    drw.t = open ? FX(S()->h) : 0;
+    if (was != open)
+        kprintf("drawer: %s\n", open ? "open" : "closed");
+    was = open;
+    drw_moving = 1;
+    last_drw_tick = uptime_ms();
+    damage_all();
+}
+
+static void drw_tick(void)
+{
+    if (!drw_moving)
+        return;
+    uint32_t now = uptime_ms(), steps = (now - last_drw_tick) / TICK_MS;
+    if (!steps)
+        return;
+    last_drw_tick = now;
+    for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++)
+        drw_moving = spring_step(&drw, 28, 150);
+    damage_all();
+    shell_flush();
 }
 
 static __attribute__((unused)) void draw_dock(void)
@@ -1745,7 +1898,10 @@ static void activate(struct hit h)
         break;
     case H_LIST: {
         struct gfx_rect r = list_rect(h.app);
-        launch(list_app(h.app), (struct gfx_rect){ r.x + 8, r.y + (r.h - LIST_ICON) / 2, LIST_ICON, LIST_ICON });
+        drw.x = drw.t = 0;                  /* the drawer goes as the app opens */
+        drw.v = 0;
+        drw_moving = 0;
+        launch(list_app(h.app), (struct gfx_rect){ r.x + (r.w - HOME_ICON) / 2, r.y + 16, HOME_ICON, HOME_ICON });
         break;
     }
     case H_DOCK:
@@ -2029,12 +2185,18 @@ static void draw_switcher(void)
         gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
                         (struct gfx_rect){ 0, 0, sw_snap[i].w, sw_snap[i].h }, (uint32_t)al, SW_RADIUS);
     }
+    if (al > 160)
+        text_draw(VS, VX(48), VY(t->topbar_h + 24 + lift / 4), "Recent apps", TEXT_HEADING, SHELL_FG);
     struct gfx_rect c = sw_clear_rect();
     c.y += lift;
-    gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
+    struct gfx_surface bk = backdrop();
+    if (bd_ok)
+        gfx_glass(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, &bk, c.x, c.y, WHITE, 40, (uint32_t)al);
+    else
+        gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
     if (al > 160)
         text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2),
-                  VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2), "Close all", TEXT_BOLD, t->fg);
+                  VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2), "Close all", TEXT_BOLD, SHELL_FG);
 }
 
 /* Let go after a swipe: on to the card nearest where the flick would take
@@ -2401,15 +2563,34 @@ static void date_long(char date[40])
     date[n] = '\0';
 }
 
+static int qs_frosted;                  /* what's behind it has been frosted, for this opening */
+
 static void draw_qs(void)
 {
-    if (!qs_shown())
+    if (!qs_shown()) {
+        qs_frosted = 0;
         return;
+    }
     const struct theme *t = T();
     struct gfx_rect p = qs_rect();
     int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0;
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
-    gfx_fill_round_rect(VS, VX(p.x), VY(p.y - 40), p.w, p.h + 40, 32, t->dialog_bg);     /* round below */
+    open = open > 255 ? 255 : open;
+    if (!qs_frosted) {
+        qs_frosted = 1;
+        backdrop_take(0);
+    }
+    if (bd_ok)
+        backdrop_draw((uint32_t)open);
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * (t->light ? 0 : A_QS_DIM) / 255));
+    struct gfx_surface bk = backdrop();
+    uint32_t tint_a = t->light ? 150 : 26;
+    int side = t->margin - 8, panel_w = S()->w - 2 * side;
+    int ty = p.y + QS_HEAD - 16, ph = QS_TILES_H + 12;
+    if (bd_ok) {
+        gfx_glass(VS, VX(side), VY(ty), panel_w, ph, 56, &bk, side, ty < 0 ? 0 : ty, WHITE, tint_a, (uint32_t)open);
+        gfx_glass(VS, VX(side), VY(ty + ph + 12), panel_w, QS_SLIDER_H - 8, 56, &bk, side, ty + ph + 12 < 0 ? 0 : ty + ph + 12,
+                  WHITE, tint_a, (uint32_t)open);
+    }
     /* The date, and Settings. */
     if (rtc && clock_shown.month) {
         char date[40];
@@ -2418,12 +2599,13 @@ static void draw_qs(void)
     }
     struct gfx_rect g = qs_gear_rect();
     int gx = g.x + g.w / 2, gy = g.y + g.h / 2;
-    gfx_fill_circle(VS, VX(gx), VY(gy), g.w / 2, t->button_bg);
+    uint32_t gear_bg = t->light ? 0xe6e8ee : 0x3b3f4a;
+    gfx_fill_circle(VS, VX(gx), VY(gy), g.w / 2, gear_bg);
     gfx_fill_circle(VS, VX(gx), VY(gy), 20, t->fg);                 /* a cog */
     static const int cog_dx[8] = { 0, 18, 26, 18, 0, -18, -26, -18 }, cog_dy[8] = { -26, -18, 0, 18, 26, 18, 0, -18 };
     for (int k = 0; k < 8; k++)
         gfx_fill_circle(VS, VX(gx + cog_dx[k]), VY(gy + cog_dy[k]), 7, t->fg);
-    gfx_fill_circle(VS, VX(gx), VY(gy), 9, t->button_bg);
+    gfx_fill_circle(VS, VX(gx), VY(gy), 9, gear_bg);
     /* The tiles. */
     static const char *const names[QS_NTILES] = { "Wi-Fi", "Dark mode", "Do not disturb", "Lock" };
     int cell = (S()->w - 2 * t->margin) / QS_NTILES;
@@ -2462,7 +2644,10 @@ static void draw_qs(void)
         struct gfx_rect r = note_rect(k);
         if (k == qs_note)
             r.x += qs_note_dx;
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
+        if (bd_ok)
+            gfx_glass(VS, VX(r.x), VY(r.y), r.w, r.h, 48, &bk, r.x, r.y < 0 ? 0 : r.y, WHITE, tint_a, (uint32_t)open);
+        else
+            gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
         if (notes[k].app)
             draw_icon(notes[k].app, (struct gfx_rect){ r.x + 20, r.y + (r.h - 56) / 2, 56, 56 }, 255);
         int tx = r.x + 20 + 56 + 20, tw = r.w - (tx - r.x) - 20;
@@ -2635,15 +2820,56 @@ void desktop_input_scroll(int x, int y, int notches)
 /* Swiping the home screen's pages: they follow the finger, then settle on
  * the nearest page, or the next one if it went a fifth of the way. 1 while
  * it's a swipe (the press on an icon under it is cancelled). */
-static int home_swipe(int x, uint8_t buttons, int down, int up)
+/* Up on home brings the drawer with the finger; down on the drawer sends it
+ * back. Let go past a fifth of the way and it finishes, else it springs back. */
+static int drawer_swipe(int y, uint8_t buttons, int down, int up)
 {
     if (down && home_shown() && !menu_open) {
+        drw_y0 = y;
+        drw_from = drw.x;
+        drw_live = 0;
+        return 0;
+    }
+    if (drw_y0 < 0)
+        return 0;
+    int dy = y - drw_y0, h = S()->h, open = drw_from > 0;
+    if (up || !(buttons & MOUSE_LEFT)) {
+        int was = drw_live;
+        drw_y0 = -1;
+        drw_live = 0;
+        if (!was)
+            return 0;
+        drw_set(open ? dy < h / 5 : -dy > h / 5);
+        return 1;
+    }
+    if (!drw_live && (open ? dy > SWIPE_SLOP : -dy > SWIPE_SLOP) && !swipe_on) {
+        drw_live = 1;
+        if (!open)
+            backdrop_take(0);
+        damage_hit(pressed);
+        pressed = (struct hit){ H_NONE, 0 };
+        damage_hit(hover);
+        hover = (struct hit){ H_NONE, 0 };
+    }
+    if (drw_live) {
+        int to = drw_from - FX(dy);
+        drw.x = drw.t = to < 0 ? 0 : to > FX(h) ? FX(h) : to;
+        drw.v = 0;
+        drw_moving = 0;
+        damage_all();
+    }
+    return drw_live;
+}
+
+static int home_swipe(int x, uint8_t buttons, int down, int up)
+{
+    if (down && home_shown() && !menu_open && !drw_shown()) {
         swipe_x0 = x;
         swipe_from = pager.x;
         swipe_on = 0;
         return 0;
     }
-    if (swipe_x0 < 0)
+    if (swipe_x0 < 0 || drw_live)
         return 0;
     int dx = x - swipe_x0;
     if (up || !(buttons & MOUSE_LEFT)) {
@@ -2668,7 +2894,7 @@ static int home_swipe(int x, uint8_t buttons, int down, int up)
         hover = (struct hit){ H_NONE, 0 };
     }
     if (swipe_on) {
-        int max = FX(home_pages() * S()->w), to = swipe_from - FX(dx);
+        int max = FX((home_pages() - 1) * S()->w), to = swipe_from - FX(dx);
         pager.x = pager.t = to < 0 ? to / 3 : to > max ? max + (to - max) / 3 : to;    /* past the ends: a stretch */
         pager.v = 0;
         pager_moving = 0;
@@ -2696,6 +2922,8 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         sw_pointer(x, y, buttons, down);
         return;
     }
+    if (drawer_swipe(y, buttons, down, up))
+        return;
     if (home_swipe(x, buttons, down, up))
         return;
     if (wm_grabbed() && !pressed.kind) {    /* a drag or a press in a window */
@@ -2763,6 +2991,8 @@ static void home_key(void)
         return;
     }
     sw_set(0);
+    if (drw_shown())
+        drw_set(0);
     show_desktop();
     turn_to(0, 0);                      /* on the home screen already: back to its first page */
 }
@@ -3035,6 +3265,8 @@ static int phone_key(const struct key_event *k)
         } else if (qs_shown()) {
             qs_set(0, 0);
         } else if (!w) {
+            if (drw_shown())
+                drw_set(0);
             turn_to(0, 0);
         } else if (wm_back_wanted(w)) {
             kprintf("shell: Back (to %s)\n", name_of(w));
@@ -3140,6 +3372,7 @@ void desktop_tick(void)
     power_tick();
     volume_tick();
     fx_tick();
+    drw_tick();
     osk_tick();
     keyboard_follow();
     uint32_t ticks;
@@ -3176,7 +3409,7 @@ void desktop_tick(void)
 int desktop_busy(void)
 {
     /* A key held: its long press (or repeat) is timed, so no sleeping. */
-    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms ||
+    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
            fx_moving || osk_moving();
 }
 

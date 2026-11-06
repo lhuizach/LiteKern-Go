@@ -71,6 +71,13 @@ void gfx_blit(struct gfx_surface *dst, int dx, int dy,
 void gfx_blend(struct gfx_surface *dst, int dx, int dy,
                const struct gfx_surface *src, int sx, int sy, int w, int h, uint32_t alpha);
 
+/* Liquid glass: a rounded pane of `frost` (a frosted copy of what's behind,
+ * sampled at fx+col, fy+row), mixed with tint at tint_a (0..255), with a
+ * bright rim along its top and sides and a dark line along its bottom. alpha
+ * fades the whole pane. Its corners are anti-aliased. */
+void gfx_glass(struct gfx_surface *dst, int x, int y, int w, int h, int r, const struct gfx_surface *frost,
+               int fx, int fy, uint32_t tint, uint32_t tint_a, uint32_t alpha);
+
 /* Frost the whole surface in place, for what's behind a pop-up: shrunk to
  * a quarter, box-blurred (radius in quarter pixels, three passes: nearly a
  * Gaussian), then scaled back up smoothly. tmp holds GFX_BLUR_TMP(w, h)

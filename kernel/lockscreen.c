@@ -128,6 +128,12 @@ static const struct text_face *clock_font(void)
     return clock_face.glyphs ? &clock_face : &text_faces[TEXT_HEADING];
 }
 
+const struct text_face *lockscreen_clock_face(void)
+{
+    load_clock_face();
+    return clock_font();
+}
+
 static int inside(struct gfx_rect r, int x, int y)
 {
     return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
@@ -230,15 +236,17 @@ static struct gfx_rect item_rect(int k)
 
 /* The big clock is always there: a little higher when the users or the
  * password prompt are under it. */
+#define CLOCK_LINE(f) ((f)->ascent + (f)->descent - 6)     /* the stacked clock's lines */
+
 static int clock_y(void)
 {
-    return S()->h * (ls.view == V_CLOCK ? 22 : 12) / 100;
+    return S()->h * (ls.view == V_CLOCK ? 11 : 12) / 100;
 }
 
 static struct gfx_rect clock_rect(void)
 {
     const struct text_face *f = clock_font();
-    int h = f->ascent + f->descent + 16 + text_height(TEXT_HEADING);
+    int h = text_height(TEXT_BOLD) + 12 + 2 * CLOCK_LINE(f);
     return (struct gfx_rect){ 0, clock_y(), S()->w, h };
 }
 
@@ -329,13 +337,21 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
         return;
     time_text(&ls.shown, hm, ampm);
     date_text(&ls.shown, date);
+    /* The date, then the hours over the minutes, big and bold on the left. */
     const struct text_face *f = clock_font();
-    int tw = text_width_face(hm, f), aw = ampm[0] ? text_width(ampm, TEXT_HEADING) + 10 : 0;
-    int x = (S()->w - tw - aw) / 2, y = clock_y();
-    text_draw_face(s, x - ox, y - oy, hm, f, WHITE);
+    int x = 52, y = clock_y();
+    text_draw(s, x - ox, y - oy, date, TEXT_BOLD, WHITE);
+    y += text_height(TEXT_BOLD) + 12;
+    char hours[4], *c = hm;
+    int n = 0;
+    while (*c && *c != ':' && n < 3)
+        hours[n++] = *c++;
+    hours[n] = 0;
+    text_draw_face(s, x - ox, y - oy, hours, f, WHITE);
+    y += CLOCK_LINE(f);
+    int mw = text_draw_face(s, x - ox, y - oy, *c ? c + 1 : "", f, WHITE);
     if (ampm[0])
-        text_draw(s, x + tw + 10 - ox, y + f->ascent - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
-    centred(s, ox, oy, y + f->ascent + f->descent + 16, date, TEXT_HEADING, WHITE);
+        text_draw(s, x + mw + 12 - ox, y + f->ascent - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
 }
 
 /* The PIN pad: the time small at the top, "Enter PIN", a dot for each digit
@@ -361,7 +377,11 @@ static void draw_prompt(struct gfx_surface *s, int ox, int oy)
         int cx, cy;
         pad_centre(k, &cx, &cy);
         int digit = k != 9 && k != 11;
-        if (digit || k == ls.pad_held)
+        const struct gfx_surface *fr = desktop_frost();
+        if ((digit || k == ls.pad_held) && fr)
+            gfx_glass(s, cx - PAD_R - ox, cy - PAD_R - oy, 2 * PAD_R, 2 * PAD_R, PAD_R, fr, cx - PAD_R, cy - PAD_R,
+                      WHITE, k == ls.pad_held ? 96 : 30, 255);
+        else if (digit || k == ls.pad_held)
             gfx_blend_round_rect(s, cx - PAD_R - ox, cy - PAD_R - oy, 2 * PAD_R, 2 * PAD_R, PAD_R, WHITE,
                                  k == ls.pad_held ? 110 : 36);
         enum text_style st = digit ? TEXT_LARGE : TEXT_BOLD;
@@ -374,9 +394,13 @@ static void draw_prompt(struct gfx_surface *s, int ox, int oy)
 static void draw_notes(struct gfx_surface *s, int ox, int oy)
 {
     struct gfx_rect c = clock_rect();
-    int n = desktop_note_count(), y = c.y + c.h + 48, x = 48, w = S()->w - 96;
+    int n = desktop_note_count(), y = c.y + c.h + 36, x = 48, w = S()->w - 96;
+    const struct gfx_surface *fr = desktop_frost();
     for (int i = 0; i < n && i < NOTES_SHOWN; i++, y += NOTE_H + 12) {
-        gfx_blend_round_rect(s, x - ox, y - oy, w, NOTE_H, 24, WHITE, 40);
+        if (fr)
+            gfx_glass(s, x - ox, y - oy, w, NOTE_H, 36, fr, x, y, WHITE, 26, 255);
+        else
+            gfx_blend_round_rect(s, x - ox, y - oy, w, NOTE_H, 24, WHITE, 40);
         text_draw_fit(s, x + 28 - ox, y + (NOTE_H - text_height(TEXT_BOLD)) / 2 - oy, desktop_note_title(i), w - 56,
                       TEXT_BOLD, WHITE);
     }
@@ -406,6 +430,11 @@ static void draw_into(struct gfx_surface *s, int ox, int oy)
 {
     gfx_blit(s, 0, 0, &ls.bg, ox, oy, s->w, s->h);
     if (ls.view == V_PROMPT) {
+        const struct gfx_surface *fr = desktop_frost();     /* the keys float on frosted glass */
+        if (fr) {
+            gfx_blit(s, 0, 0, fr, ox, oy, s->w, s->h);
+            gfx_darken(s, 0, 0, s->w, s->h, 70);
+        }
         draw_prompt(s, ox, oy);
     } else {
         /* The clock, the notifications and the hint follow a swipe up. */

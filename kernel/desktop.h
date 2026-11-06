@@ -40,6 +40,9 @@ int desktop_started(void);
  * stops drawing, keeping track of what changed. 0 hands the screen back:
  * everything is redrawn, the pointer included. */
 void desktop_cover(int on);
+/* The wallpaper, frosted: what glass over it shows (0 if there's no memory). */
+struct gfx_surface;
+const struct gfx_surface *desktop_frost(void);
 /* Uncover, and compose the whole desktop into the screen's back buffer
  * without showing it (the lock screen's unlock animation reveals it). */
 void desktop_render_quiet(void);

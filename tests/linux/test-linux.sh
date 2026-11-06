@@ -82,11 +82,14 @@ path() { PX=$((W / 2)) PY=$((H / 2)) P=""; }
 go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
-# The home screen (kernel/desktop.c): apps in 4 columns of 168 x 184 px tiles
-# from y 276. tap_app N taps the N-th (0: Files, 1 Calculator, 2 Settings,
-# 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager, then Log; the tests' apps come before Log).
-tile_x() { echo $(( (W - 4 * 168) / 2 + 84 + ($1 % 4) * 168 )); }
-tile_y() { echo $(( 56 + 220 + 72 + ($1 / 4) * 184 )); }
+# The home screen (kernel/desktop.c): tap_app N taps the N-th app (0: Files,
+# 1 Calculator, 2 Settings, 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager,
+# then Log; the tests' apps come before Log). Files, Gallery and Settings are
+# in the dock (y 1168; Web isn't in this build); the others in 4 columns of
+# 168 x 184 px tiles from y 352.
+tile_x() { case $1 in 0) echo 133 ;; 5) echo 359 ;; 2) echo 585 ;; *) local g=$(grid_of "$1"); echo $(( (W - 4 * 168) / 2 + 84 + (g % 4) * 168 )) ;; esac; }
+tile_y() { case $1 in 0|2|5) echo 1168 ;; *) local g=$(grid_of "$1"); echo $(( 352 + 72 + (g / 4) * 184 )) ;; esac; }
+grid_of() { local g=$1; [ "$1" -gt 0 ] && g=$((g - 1)); [ "$1" -gt 2 ] && g=$((g - 1)); [ "$1" -gt 5 ] && g=$((g - 1)); echo $g; }
 tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:1.5; }
 PLAIN=202634
 
@@ -106,12 +109,19 @@ check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the
     '!^screen: corner '$PLAIN \
     '!PANIC|Segmentation'
 
-# The home screen: swiped left, the All apps page; Home turns back to the first.
-path; go 600 800; add press:1; go 500 800; go 300 800; go 150 800; add release sleep:1 phone_home sleep:1
+# The home screen: swiped up, all the apps; a short swipe springs back. Down
+# sends them away; from them, a tap on Calculator (the second, 276,216) opens it.
+path; go 360 900; add press:1; go 360 860; add release sleep:0.8
+go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
+go 360 700; add press:1; go 360 800; go 360 1000; go 360 1200; add release sleep:1
+go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
+go 276 216; click; add sleep:1.5 phone_home sleep:1
 SCREEN="has=ffffff@0,56,720,276" run $SHELL_BIN build-linux/test/disk.img "$P"
-check "the home screen: its clock, a swipe to All apps, Home back to the first page" \
-    '^home: page 2 of 2 \(All apps\)$' \
-    '^home: page 1 of 2$' \
+check "the home screen: its clock, a swipe up to all the apps and back, one opened from there" \
+    '^drawer: open$' \
+    '^drawer: closed$' \
+    '^desktop: open Calculator$' \
+    '^user: calculator: open$' \
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.

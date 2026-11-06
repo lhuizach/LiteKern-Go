@@ -64,4 +64,8 @@ int lockscreen_has_picture(void);
 /* The picture packed for saving, as wallpaper_pack(). -ENOENT if none. */
 int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len);
 
+/* The big bold clock's face (the home screen uses it too). */
+struct text_face;
+const struct text_face *lockscreen_clock_face(void);
+
 #endif
