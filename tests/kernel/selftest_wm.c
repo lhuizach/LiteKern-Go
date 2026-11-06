@@ -103,16 +103,17 @@ void selftest_wm_run(void)
     struct gfx_surface *c = wm_content(w);
     check(c->w == r.w && c->h == r.h - hh, "content: the whole width, under the header bar");
     int ct = r.y + hh;                                  /* first content row on screen */
-    check(px(r.x + 200, r.y + 6) == t->headerbar_bg, "the header bar uses the theme");
+    check(px(r.x + 2, r.y + 2) == t->headerbar_bg, "the header bar uses the theme");     /* beside its glass */
     check(px(r.x + 20, ct + 20) == t->window_bg, "content starts as the window background");
     int bright = 0;
     for (int x = r.x + r.w / 2 - 60; x < r.x + r.w / 2 + 60; x++)
         for (int y = r.y + 10; y < r.y + hh - 10; y++)
             bright += px(x, y) == t->fg;
     check(bright > 20, "the title is drawn in the middle of the header bar");
-    int cy = r.y + hh / 2;
-    check(px(r.x + r.w - 30, cy) == t->headerbar_bg && px(r.x + r.w - 100, cy) == t->headerbar_bg,
-          "no minimise, maximise or close: the phone's keys do that");
+    int cy = r.y + hh / 2, marks = 0;
+    for (int x = r.x + r.w - 110; x < r.x + r.w - 30; x++)     /* the capsule's plain glass */
+        marks += px(x, cy) == t->fg;
+    check(!marks, "no minimise, maximise or close: the phone's keys do that");
     wm_set_maximised(w, 0);
     wm_present();
     check(wm_is_maximised(w) && wm_rect(w).w == a.w && wm_rect(w).h == a.h, "it can't be made smaller");

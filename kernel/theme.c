@@ -4,22 +4,22 @@
 /* libadwaita 1.x. Translucent tokens (white or black at N%) are pre-blended
  * over the colour they're drawn on, noted per line. */
 static const struct theme adwaita_dark = {
-    .window_bg        = 0x222226,   /* @window_bg_color */
-    .view_bg          = 0x1d1d20,   /* @view_bg_color */
-    .headerbar_bg     = 0x2e2e32,   /* @headerbar_bg_color */
-    .headerbar_border = 0x19191c,   /* @headerbar_shade_color over the header bar */
+    .window_bg        = 0x15171e,   /* LiteKern Go: a calm canvas, a little blue */
+    .view_bg          = 0x1d2029,
+    .headerbar_bg     = 0x15171e,   /* the same: the header floats as glass on it */
+    .headerbar_border = 0x15171e,
     .fg               = 0xffffff,   /* @window_fg_color */
     .fg_dim           = 0x9a9a9c,   /* fg at 55% over window_bg (.dim-label) */
     .accent_fg        = 0xffffff,
     .border           = 0x3a3a3e,   /* white 12% over window_bg */
-    .button_bg        = 0x444448,   /* white 10% over headerbar_bg */
-    .button_hover     = 0x4e4e52,   /* white 15% */
-    .button_active    = 0x5d5d61,   /* white 23% */
+    .button_bg        = 0x2e323d,
+    .button_hover     = 0x383d49,
+    .button_active    = 0x474c59,
     .row_hover        = 0x2b2b2e,   /* white 5% over view_bg */
     .warning          = 0xcd9309,   /* @warning_color, dark */
     .destructive_bg   = 0xc01c28,   /* @destructive_bg_color */
     .destructive      = 0xff7b63,   /* @destructive_color, dark */
-    .dialog_bg        = 0x36363a,   /* @dialog_bg_color */
+    .dialog_bg        = 0x2a2e39,
     .desktop_bg       = 0x202634,   /* without a wallpaper: a dark slate */
     .topbar_bg        = 0x000000,   /* GNOME Shell's top bar */
     .tile_hover       = 0x363c48,   /* white 10% over desktop_bg */
@@ -29,10 +29,10 @@ static const struct theme adwaita_dark = {
 };
 
 static const struct theme adwaita_light = {
-    .window_bg        = 0xfafafb,   /* @window_bg_color */
+    .window_bg        = 0xf1f2f7,   /* LiteKern Go: a calm canvas */
     .view_bg          = 0xffffff,   /* @view_bg_color */
-    .headerbar_bg     = 0xebebed,   /* @headerbar_bg_color */
-    .headerbar_border = 0xd6d6d9,   /* @headerbar_shade_color over the header bar */
+    .headerbar_bg     = 0xf1f2f7,   /* the same: the header floats as glass on it */
+    .headerbar_border = 0xf1f2f7,
     .fg               = 0x2e2e33,   /* @window_fg_color: black 80% over window_bg */
     .fg_dim           = 0x87878b,   /* fg at 55% */
     .accent_fg        = 0xffffff,

@@ -352,7 +352,8 @@ static void draw_status(void)
 {
     const struct theme *t = theme_get();
     gfx_fill_rect(&canvas, 0, 12, canvas.w, wg_label_height(WG_TEXT_BODY) + 16, t->window_bg);
-    wg_label_centred(&canvas, canvas.w / 2, 20, status, status_error ? WG_TEXT_ERROR : WG_TEXT_DIM);
+    if (status_error)           /* the folder's name is in the header: only errors show here */
+        wg_label_centred(&canvas, canvas.w / 2, 20, status, WG_TEXT_ERROR);
     show((struct gfx_rect){ 0, 12, canvas.w, wg_label_height(WG_TEXT_BODY) + 16 });
 }
 
@@ -360,7 +361,8 @@ static void draw_all(void)
 {
     const struct theme *t = theme_get();
     gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, t->window_bg);
-    wg_label_centred(&canvas, canvas.w / 2, 20, status, status_error ? WG_TEXT_ERROR : WG_TEXT_DIM);
+    if (status_error)
+        wg_label_centred(&canvas, canvas.w / 2, 20, status, WG_TEXT_ERROR);
     update_buttons();
     wg_list_draw(&canvas, &list);
     if (!nitems)

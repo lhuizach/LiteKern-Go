@@ -104,7 +104,19 @@ check() {
 # screen's apps in 4 columns of 168 x 184 px tiles from y 348. The image has
 # the Web app too: Files, Calculator, Settings, Clock, Web, Blocksmith, Log.
 path() { PX=360 PY=640 P=""; }
-go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
+# Short hops: QEMU's PS/2 mouse splits a long move into packets and holds the
+# rest back until the next event, so a press would land partway along it.
+go() {
+    local dx=$(($1 - PX)) dy=$(($2 - PY)) sx sy
+    while [ $dx -ne 0 ] || [ $dy -ne 0 ]; do
+        sx=$dx sy=$dy
+        [ $sx -gt 120 ] && sx=120; [ $sx -lt -120 ] && sx=-120
+        [ $sy -gt 120 ] && sy=120; [ $sy -lt -120 ] && sy=-120
+        P+=" move:$sx,$sy"
+        dx=$((dx - sx)) dy=$((dy - sy))
+    done
+    PX=$1 PY=$2
+}
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 # Dock (y 1168): Files 0 x 105, Web 4 x 275, Gallery 6 x 445, Settings 2 x 615.
@@ -172,7 +184,7 @@ else
     mtype -i $img@@$FAT ::/syslinux/syslinux.cfg | sed 's/^\(    APPEND .*\)$/\1 lkx.test=hwsim/' > $T/syslinux.cfg
     mcopy -o -i $img@@$FAT $T/syslinux.cfg ::/syslinux/syslinux.cfg
 fi
-path; tap_app 2; go 360 216; click; add sleep:10; go 360 316; click; add sleep:1.5     # 10 s: the scan finds it
+path; tap_app 2; add sleep:4; go 360 216; click; add sleep:10; go 360 316; click; add sleep:1.5     # 4 s: Settings is up; 10 s: the scan finds it
 add w r o n g w r o n g ret sleep:12; click; add sleep:1.5 a p p l e spc p i e ret
 KEYS="$P" KEYS_DONE='^net: Wi-Fi connected to LiteKern Test' KEYS_WAIT=30 SCREEN="corner=" SHOT=wifi \
     boot_until $img "$ready_re" 120
@@ -223,7 +235,7 @@ check "the Web app: listed, opens NetSurf full-screen on the start page" \
 # into the start page's box (230,318). Needs the internet: skipped without it.
 if curl -s -m 5 -o /dev/null https://html.duckduckgo.com/html/; then
     path; tap_app 4; add sleep:7; go 230 318; click; add sleep:0.5 e e e p c ret sleep:25
-    KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=34 SCREEN="has=ffffff@100,300,620,900" SHOT=web-search \
+    KEYS="$P" KEYS_DONE='^never' KEYS_WAIT=46 SCREEN="has=ffffff@100,300,620,900" SHOT=web-search \
         boot_until $T/disk.img "$ready_re" 120
     check "the Web app: an HTTPS search, typed on the keyboard, shows its results" \
         '^user: browser: open$' \

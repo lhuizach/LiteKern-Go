@@ -1,4 +1,5 @@
 #include "kernel/wm.h"
+#include "kernel/desktop.h"
 #include "kernel/text.h"
 #include "kernel/errno.h"
 #include "kernel/pmm.h"
@@ -710,7 +711,15 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
     struct gfx_surface *s = &v->s;
     int ox = v->ox, oy = v->oy;
     gfx_fill_round_rect(s, h.x - ox, h.y - oy, h.w, h.h + rad, rad, t->headerbar_bg);
-    gfx_fill_rect(s, h.x - ox, h.y + h.h - 1 - oy, h.w, 1, t->headerbar_border);
+    /* The header floats as a glass capsule, lit by the wallpaper's colours. */
+    {
+        const struct gfx_surface *fr = desktop_frost();
+        int cx0 = h.x + 8, cy0 = h.y + 4, cw = h.w - 16, ch = h.h - 12;
+        if (fr)
+            gfx_glass(s, cx0 - ox, cy0 - oy, cw, ch, ch / 2, fr, cx0, cy0, t->window_bg, t->light ? 120 : 120, 255);
+        else
+            gfx_fill_round_rect(s, cx0 - ox, cy0 - oy, cw, ch, ch / 2, t->dialog_bg);
+    }
 
     struct gfx_rect rs[NB];
     layout(w, r, rs);

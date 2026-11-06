@@ -271,14 +271,17 @@ static void draw_tabs(void)
 {
     const struct theme *t = theme_get();
     int y = canvas.h - TAB_H, w = canvas.w / NTABS;
-    gfx_fill_rect(&canvas, 0, y, canvas.w, TAB_H, t->headerbar_bg);
+    gfx_fill_rect(&canvas, 0, y, canvas.w, TAB_H, t->window_bg);
+    /* A floating glass capsule, with a pill on the current tab. */
+    int bx = 24, by = y + 8, bw = canvas.w - 2 * bx, bh = TAB_H - 28;
+    gfx_glass(&canvas, bx, by, bw, bh, bh / 2, &canvas, bx, by, t->dialog_bg, 190, 255);
     for (int i = 0; i < NTABS; i++) {
         struct gfx_rect r = { i * w, y, w, TAB_H };
-        int sel = (int)tab == i;
+        int sel = (int)tab == i, cw = bw / NTABS;
         if (sel)
-            gfx_fill_round_rect(&canvas, r.x + 24, r.y + 20, r.w - 48, 8, 4, t->accent_bg);
-        text_draw(&canvas, r.x + (w - text_width(tab_names[i], TEXT_BOLD)) / 2,
-                  r.y + (TAB_H - text_height(TEXT_BOLD)) / 2 + 8, tab_names[i], TEXT_BOLD, sel ? t->fg : t->fg_dim);
+            gfx_fill_round_rect(&canvas, bx + i * cw + 8, by + 8, cw - 16, bh - 16, (bh - 16) / 2, t->accent_bg);
+        text_draw(&canvas, bx + i * cw + (cw - text_width(tab_names[i], TEXT_BOLD)) / 2,
+                  by + (bh - text_height(TEXT_BOLD)) / 2, tab_names[i], TEXT_BOLD, sel ? 0xffffff : t->fg_dim);
         add(B_TAB + i, r);
     }
 }

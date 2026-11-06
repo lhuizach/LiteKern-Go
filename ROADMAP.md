@@ -228,3 +228,16 @@ From CLAUDE.md and UI-PLAN.md:
 - [ ] `lkx-web`: runs it in a LiteKern window, replacing NetSurf
 - [ ] Runs r3lay (the owner's Supabase app) and modern sites in the VM
 - [ ] `freedreno` for the phone's GPU, tested on the phone
+
+## The new look (in progress)
+
+From `docs/mockups/shell-redesign.src.html`: liquid glass on Adwaita's structure.
+
+- [x] `gfx_glass`, a frosted wallpaper, and the home screen, dock and all-apps drawer
+- [x] Lock screen, PIN pad, quick settings, power menu, Recent apps
+- [x] Shared parts: theme colours, pill buttons, boxed lists, dialogs, the header capsule
+- [x] Clock's floating tabs; Files without its repeated title
+- [ ] Settings: icons on rows, its pages; large titles
+- [ ] Calculator, Gallery, Task Manager, Log, Blocksmith, Web: their own screens
+- [ ] App zoom out of the icon; staggered arrivals
+- [ ] Glass on the lock screen's own power menu

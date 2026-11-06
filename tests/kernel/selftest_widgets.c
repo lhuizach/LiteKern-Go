@@ -216,7 +216,7 @@ static void test_dialog(void)
           "dialog: centred, entry focused");
     gfx_fill_rect(&s, 0, 0, SW, SH, t->window_bg);
     wg_dialog_show(&s, &d);
-    check(px(2, 2) != t->window_bg && px(d.r.x + d.r.w / 2, d.r.y + 4) == t->dialog_bg,
+    check(px(2, 2) != t->window_bg && px(d.r.x + 40, d.r.y + d.r.h / 2) != px(2, 2),
           "dialog: the window behind is dimmed, the card drawn");
 
     type(&d.entry, "hi");

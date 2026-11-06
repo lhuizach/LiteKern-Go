@@ -96,6 +96,8 @@ int wg_button_width(const char *label)
     return text_width(label, TEXT_BOLD) + 2 * 17;
 }
 
+#define WG_LIST_RADIUS 40
+
 void wg_button_draw(struct gfx_surface *s, struct wg_button *b)
 {
     const struct theme *t = T();
@@ -123,7 +125,7 @@ void wg_button_draw(struct gfx_surface *s, struct wg_button *b)
         fg = gfx_mix(fg, under, 128);
     }
     gfx_fill_rect(s, b->r.x, b->r.y, b->r.w, b->r.h, under);
-    gfx_fill_round_rect(s, b->r.x, b->r.y, b->r.w, b->r.h, t->radius, bg);
+    gfx_fill_round_rect(s, b->r.x, b->r.y, b->r.w, b->r.h, b->r.h / 2, bg);     /* a pill */
     int x = b->r.x + (b->r.w - text_width(b->label, TEXT_BOLD)) / 2;
     int y = b->r.y + (b->r.h - text_height(TEXT_BOLD)) / 2;
     text_draw(s, x, y, b->label, TEXT_BOLD, fg);              /* buttons are bold */
@@ -295,10 +297,10 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
     /* Adwaita's card: white 8% over the window in the dark style; the view
      * colour (white) in the light one. */
     uint32_t card = t->light ? t->view_bg : gfx_mix(WHITE, under, A_CARD);
-    int shown = wg_list_rows_shown(l), card_h = shown * t->row_h;
+    int shown = wg_list_rows_shown(l), card_h = (l->count && l->count < shown ? l->count : shown) * t->row_h;
     struct gfx_surface c = gfx_sub(s, (struct gfx_rect){ l->r.x, l->r.y, l->r.w, card_h });
     int scrollbar = l->count > shown;
-    int text_right = c.w - 14 - (scrollbar ? 10 : 0);
+    int text_right = c.w - 28 - (scrollbar ? 10 : 0);
 
     sync_pos(l);
     int off = l->pos % t->row_h;            /* the top row's part scrolled out of sight */
@@ -314,7 +316,7 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
             gfx_fill_rect(&c, 0, y, c.w, t->row_h, gfx_mix(t->ink, card, A_ROW_HOVER));
         if (k)
             gfx_fill_rect(&c, 0, y, c.w, 1, gfx_mix(0, card, t->light ? 24 : A_SEPARATOR));
-        int x = 14;
+        int x = 28;
         if (row.icon != WG_ICON_NONE) {
             draw_row_icon(&c, row.icon, x, cy);
             x += 64;
@@ -332,7 +334,7 @@ void wg_list_draw(struct gfx_surface *s, struct wg_list *l)
         int y = 4 + (track - thumb) * l->pos / (max_top(l) * t->row_h);
         gfx_fill_round_rect(&c, c.w - 8, y, 4, thumb, 2, gfx_mix(t->ink, card, 110));
     }
-    gfx_round_corners(s, l->r.x, l->r.y, l->r.w, card_h, 12, under);
+    gfx_round_corners(s, l->r.x, l->r.y, l->r.w, card_h, WG_LIST_RADIUS, under);
     l->dirty = 0;
 }
 
@@ -673,7 +675,8 @@ void wg_dialog_draw(struct gfx_surface *s, struct wg_dialog *d)
 {
     const struct theme *t = T();
     int cx = d->r.x + d->r.w / 2, y = d->r.y + DLG_PAD;
-    gfx_fill_round_rect(s, d->r.x, d->r.y, d->r.w, d->r.h, 12, t->dialog_bg);
+    /* Glass over the dimmed app: nearly solid, so its text stays easy to read. */
+    gfx_glass(s, d->r.x, d->r.y, d->r.w, d->r.h, 48, s, d->r.x, d->r.y, t->dialog_bg, 226, 255);
     wg_label_centred(s, cx, y, d->title, WG_TEXT_HEADING);
     y += text_height(TEXT_HEADING) + 10;
     struct body_ctx b = { s, cx, y, d->body_error ? t->destructive : t->fg_dim };
