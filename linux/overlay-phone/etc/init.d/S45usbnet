@@ -1,0 +1,33 @@
+#!/bin/sh
+# LiteKern Go on the phone: a network over the USB cable, so there's a way in
+# (ssh root@172.16.42.1, key only) before Wi-Fi works. The phone is a USB
+# "gadget" that looks like a network card (NCM, the same Nura uses); it gives the
+# PC the address 172.16.42.2 itself. Needs the cable in to do anything.
+case "$1" in
+start)
+    mount -t configfs none /sys/kernel/config 2>/dev/null
+    modprobe libcomposite 2>/dev/null
+    modprobe usb_f_ncm 2>/dev/null
+    G=/sys/kernel/config/usb_gadget/litekern
+    mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0 || exit 0
+    echo 0x1d6b > $G/idVendor
+    echo 0x0104 > $G/idProduct
+    echo "LiteKern Go" > $G/strings/0x409/product
+    echo "LiteKern" > $G/strings/0x409/manufacturer
+    echo "USB network" > $G/configs/c.1/strings/0x409/configuration
+    ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
+    i=0
+    while [ -z "$(ls /sys/class/udc 2>/dev/null)" ] && [ $i -lt 50 ]; do
+        usleep 200000 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
+    ls /sys/class/udc 2>/dev/null | head -n 1 > $G/UDC
+    ip addr add 172.16.42.1/24 dev usb0 2>/dev/null
+    ip link set usb0 up 2>/dev/null
+    udhcpd /etc/udhcpd-usb.conf 2>/dev/null
+    ;;
+stop)
+    killall udhcpd 2>/dev/null
+    ;;
+esac
+exit 0
