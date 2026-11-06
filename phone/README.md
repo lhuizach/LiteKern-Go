@@ -70,3 +70,23 @@ Tried by the owner on the phone itself, 2026-11-06:
 
 Not yet checked: touch details, speed, brightness slider, battery percentage, sound, the key codes
 (Back, Home, Recent apps, Power, volume), USB networking (172.16.42.1), SD card, storage.
+
+## What the A5 shows under Nura (read over SSH, 2026-11-06)
+
+Login: `ssh user@<the phone's Wi-Fi address>` with a key (Claude's, in `authorized_keys` as
+`litekern-go-claude`; delete that line to revoke). sshd is a systemd service here (`systemctl`).
+Nura is **Alpine (musl)**: our Buildroot programs are glibc and won't run on it as they are.
+
+| Part | What the kernel shows |
+|---|---|
+| Camera | **no camera device**: only `qcom-venus` encoder/decoder in `/dev/video*`, no `/dev/media*`, nothing in the log. `CONFIG_VIDEO_QCOM_CAMSS=m` is built, not loaded; no sensor driver is on. Needs device-tree nodes and a driver for the A5's sensors: kernel work, sensor model not found yet. |
+| Brightness | **no `/sys/class/backlight`**: confirmed gap. |
+| Battery | works: `rt5033-battery` and `rt5033-charger` (capacity 59% when read). |
+| Sound | a card exists (`samsung-a2015`); the codec drivers are loaded; `tfa9895` amp on i2c. Untested by ear. |
+| Vibrator | `pwm-vibrator` input device (event6): **haptic feedback is possible**. |
+| Keys | `pm8941_pwrkey` (event0, Power), `pm8941_resin` (event1), `GPIO Buttons` (event2), `tm2-touchkey` (event5, the touch keys), headset jack (event7). Codes not read yet. |
+| Touch | `MELFAS MMS345` (event4); a Hall sensor (cover) on event3. |
+| GPU | `/dev/dri/card0` + `renderD128`, module `msm`; whether the Adreno is drawing (or the CPU) is not known: dmesg needs root. |
+| Other i2c | NFC `s3fwrn5`, USB-cable detector `sm5502-muic`, accelerometer+compass `bmc150`. |
+| USB | a gadget controller (`ci_hdrc.0`) exists; no network device has shown up on the PC yet. |
+| Memory / disk | 1.8 GB RAM (about 590 MB used at the desktop), 4 cores; root grew to 11 GB by itself. |
