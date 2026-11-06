@@ -139,7 +139,7 @@ fi
 touch "$OUT/.lkx-busybox-config"
 make -s -C "$BR" O="$OUT"
 if [ "$PHONE" = 1 ]; then
-    echo "== done: $OUT/images/rootfs.cpio.gz ($(du -h "$OUT/images/rootfs.cpio.gz" | cut -f1)); next: phone/make-ramboot.sh"
+    echo "== done: $OUT/images/rootfs.cpio.xz ($(du -h "$OUT/images/rootfs.cpio.xz" | cut -f1)); next: phone/make-ramboot.sh"
     exit 0
 fi
 

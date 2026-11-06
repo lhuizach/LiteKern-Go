@@ -21,6 +21,13 @@ M=$(ls -d "$W"/out/modules/lib/modules/*/ | head -1)
 [ -d "$M" ] || { echo "no modules in $W/out/modules: run phone/build-kernel.sh" >&2; exit 1; }
 cp -a "$M" "$O/lib/modules/"
 rm -f "$O"/lib/modules/*/build "$O"/lib/modules/*/source
+# Drivers a phone never uses (the RAM disk has to stay small, phone/README.md):
+# filesystems (btrfs, xfs, smb, ...), the firewall, USB HID, cameras, sensors.
+VER=$(basename "$M")
+for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid drivers/media drivers/iio; do
+    rm -rf "$O/lib/modules/$VER/kernel/$d"
+done
+depmod -b "$O" "$VER"
 [ -d "$W/firmware" ] && cp -a "$W/firmware/." "$O/lib/firmware/"
 cp build/litekernx.img "$O/usr/share/litekern/disk.img"
 if [ -f phone/authorized_keys ]; then

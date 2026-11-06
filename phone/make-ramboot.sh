@@ -2,7 +2,7 @@
 # LiteKern Go, phone: a boot image of our own kernel and our own system, for
 # `fastboot boot` (lk2nd starts it from RAM: nothing is written to the phone).
 #
-#   LKX_ARCH=aarch64 LKX_PHONE=1 bash linux/build.sh     (the system: rootfs.cpio.gz)
+#   LKX_ARCH=aarch64 LKX_PHONE=1 bash linux/build.sh     (the system: rootfs.cpio.xz)
 #   bash phone/build-kernel.sh                           (the kernel and its modules)
 #   bash phone/make-ramboot.sh
 #
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 W=$HOME/lkx-phone
 O=$W/out
-CPIO=${1:-$HOME/lkx-buildroot/output-go-phone/images/rootfs.cpio.gz}
+CPIO=${1:-$HOME/lkx-buildroot/output-go-phone/images/rootfs.cpio.xz}
 for f in "$O/Image.gz" "$O/msm8916-samsung-a5u-eur.dtb" "$W/nura/boot.img" "$CPIO"; do
     [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
