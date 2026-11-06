@@ -43,3 +43,14 @@ names them. Bootloaders, modem and EFS aren't in the script at all.
 `heimdall download-pit` ran cleanly through the Fedora VM. The phone's map (8192 bytes
 padded) is byte-identical to the firmware's 4376-byte map, so these partition names
 are right. A flash, and this restore, are still untested.
+
+## How Nura boots on the A5 (found with `fastboot getvar all` and the image itself)
+
+- lk2nd's fastboot: `unlocked: yes`; `boot` is only 0xc80000 (12.5 MiB), `userdata` about 12 GiB.
+- Nura's `*-samsung-a5.img` is an Android **sparse** image holding a whole disk: an MBR, a boot partition
+  (487 MiB: `extlinux/extlinux.conf`, `vmlinuz`, `initramfs`, the device tree, and a 22 MB `boot.img`)
+  and the root (2.4 GiB). It goes to `userdata`: `fastboot flash userdata`. lk2nd then boots it by extlinux.
+- So Nura's `*-boot.img` (22 MB) does NOT go to the `boot` partition: it can't fit, and `boot` holds lk2nd.
+- Our own kernel is therefore tried by putting it on that boot partition (or `fastboot boot`, which writes
+  nothing). `make-boot.sh`'s boot image is only useful for the second.
+- `fastboot getvar all` prints `wifimacaddr`, `btmacaddr` and `serialno`: filter `serial|imei|mac`.
