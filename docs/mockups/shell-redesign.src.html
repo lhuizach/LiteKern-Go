@@ -1,16 +1,19 @@
 <title>LiteKern Go Shell</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:wght@200..700&family=Ubuntu+Sans+Mono:wght@400..600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:wght@200..800&family=Ubuntu+Sans+Mono:wght@400..600&display=swap">
 <style>
 /* Layout: a control column beside one real-size A5, keys and all.
+   Material: Adwaita's structure (boxed lists, centred titles, symbolic icons,
+   pill buttons) on a calm canvas, with liquid glass only on the floating layer.
    The review page is a single dark look; the phone inside has its own theme. */
 :root {
   color-scheme: dark;
   --page: #0d0f15; --panel: #161922; --line: #2a2f3c; --text: #e8ebf3; --muted: #98a0b3;
-  --accent: #3584e4;
+  --accent: #3584e4; --danger: #e0312a;
   --ui: "Ubuntu Sans", system-ui, sans-serif;
   --mono: "Ubuntu Sans Mono", ui-monospace, monospace;
+  --spring: cubic-bezier(.2,.9,.25,1.08);
 }
 html, body { height: 100%; }
 body { background: var(--page); color: var(--text); font-family: var(--ui); font-size: 14px; }
@@ -20,8 +23,8 @@ body { background: var(--page); color: var(--text); font-family: var(--ui); font
   padding-right: max(16px, env(safe-area-inset-right, 0px)); box-sizing: border-box;
   max-width: 1040px; margin: 0 auto;
 }
-.side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-h1 { font-size: 22px; font-weight: 500; margin: 0; letter-spacing: -.01em; }
+.side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .lead { color: var(--muted); margin: 4px 0 0; line-height: 1.45; }
 .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -36,6 +39,7 @@ h1 { font-size: 22px; font-weight: 500; margin: 0; letter-spacing: -.01em; }
 .note p + p { margin-top: 8px; color: var(--muted); }
 .picks { display: flex; gap: 8px; align-items: flex-start; }
 .picks code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.twoc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 
 .stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
 .fit { position: relative; flex: none; }
@@ -46,33 +50,53 @@ h1 { font-size: 22px; font-weight: 500; margin: 0; letter-spacing: -.01em; }
 }
 .earpiece { position: absolute; top: 25px; left: 50%; width: 58px; height: 6px; margin-left: -29px; background: #000; border-radius: 4px; box-shadow: inset 0 0 0 1px #2c2f38; }
 .pw { position: absolute; right: -4px; top: 218px; width: 5px; height: 62px; padding: 0; border: 0; background: #464a55; border-radius: 0 3px 3px 0; cursor: pointer; }
-.screen {
-  position: absolute; left: 18px; top: 50px; width: 360px; height: 640px; overflow: hidden; background: #000;
-  border-radius: 4px; user-select: none; -webkit-user-select: none; touch-action: pan-y;
-  /* the phone's own tokens */
-  --bg: #15171e; --card: #20232c; --card2: #2b2f3a; --on: #f4f6fb; --dim: #a5adbf; --glass: rgba(26,29,38,.56); --rim: rgba(255,255,255,.14); --accent2: var(--accent);
-  color: var(--on);
-}
-.screen[data-theme="light"] {
-  --bg: #eef0f5; --card: #fff; --card2: #e6e9f0; --on: #171a22; --dim: #5e6678; --glass: rgba(255,255,255,.62); --rim: rgba(0,0,0,.08);
-}
 .keys { position: absolute; left: 18px; right: 18px; top: 696px; height: 62px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; box-sizing: border-box; }
 .key { background: none; border: 0; color: #7d8494; width: 62px; height: 42px; display: grid; place-items: center; cursor: pointer; border-radius: 12px; padding: 0; }
 .key svg { width: 19px; height: 19px; }
 .key.hk { width: 84px; height: 30px; border-radius: 15px; box-shadow: inset 0 0 0 1.5px #3c414d; }
 
+.screen {
+  position: absolute; left: 18px; top: 50px; width: 360px; height: 640px; overflow: hidden; background: #000;
+  border-radius: 4px; user-select: none; -webkit-user-select: none;
+  --canvas: rgba(17,19,26,.56); --card: rgba(255,255,255,.085); --card-solid: #23262f; --sep: rgba(255,255,255,.08);
+  --on: #f5f7fc; --dim: rgba(245,247,252,.62);
+  --glass: rgba(255,255,255,.10); --glass-strong: rgba(38,41,51,.62);
+  --spec: rgba(255,255,255,.38); --shade: rgba(0,0,0,.28); --lift: rgba(0,0,0,.34);
+  color: var(--on); font-size: 14px;
+}
+.screen[data-theme="light"] {
+  --canvas: rgba(242,243,248,.8); --card: rgba(255,255,255,.82); --card-solid: #fff; --sep: rgba(0,0,0,.07);
+  --on: #16181f; --dim: rgba(22,24,31,.6);
+  --glass: rgba(255,255,255,.46); --glass-strong: rgba(255,255,255,.68);
+  --spec: rgba(255,255,255,.9); --shade: rgba(0,0,0,.09); --lift: rgba(30,34,50,.16);
+}
 svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+
+/* the material: a lens over what's behind it */
+.lg {
+  position: relative; background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(175%); backdrop-filter: blur(14px) saturate(175%);
+  box-shadow: inset 0 1px .5px var(--spec), inset 0 -1px .5px var(--shade), inset 0 0 0 .5px rgba(255,255,255,.14), 0 8px 22px var(--lift);
+  transition: transform .22s var(--spring), background .16s;
+}
+.lg::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(120% 70% at 22% -10%, rgba(255,255,255,.22), transparent 58%), radial-gradient(90% 60% at 88% 118%, rgba(255,255,255,.1), transparent 60%);
+}
+.lg.strong { background: var(--glass-strong); }
+button.lg:active, .lg.press:active { transform: scale(.95); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .lg { background: var(--card-solid); } }
 
 /* wallpaper layers */
 .wall, .frost { position: absolute; inset: 0; background-size: cover; background-position: 50% 50%; }
-.frost { inset: -30px; filter: blur(22px) saturate(1.25) brightness(.68); opacity: 0; transition: opacity .3s ease; }
+.frost { inset: -30px; filter: blur(24px) saturate(1.3) brightness(.72); opacity: 0; transition: opacity .3s ease; }
 .screen[data-frost="1"] .frost { opacity: 1; }
-.screen[data-theme="light"] .frost { filter: blur(22px) saturate(1.2) brightness(1.08); }
+.screen[data-theme="light"] .frost { filter: blur(24px) saturate(1.2) brightness(1.1); }
 
-.view { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(.975); transition: opacity .22s ease, transform .32s cubic-bezier(.2,.9,.25,1.05); }
+.view { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(.975); transition: opacity .2s ease, transform .3s var(--spring); }
 .view.on { opacity: 1; pointer-events: auto; transform: none; }
 
-.bar { position: absolute; left: 0; right: 0; top: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 500; z-index: 30; font-variant-numeric: tabular-nums; cursor: pointer; }
+.bar { position: absolute; left: 0; right: 0; top: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 600; z-index: 30; font-variant-numeric: tabular-nums; cursor: pointer; }
 .bar .r { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .bar .r svg { width: 15px; height: 15px; }
 .batt { width: 22px; height: 11px; border: 1.3px solid currentColor; border-radius: 3.5px; position: relative; box-sizing: border-box; padding: 1.2px; }
@@ -81,43 +105,43 @@ svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width:
 
 /* lock */
 .lock { padding: 74px 26px 0; box-sizing: border-box; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0,.3); touch-action: none; cursor: grab; }
-.lock .date { font-size: 15px; font-weight: 500; opacity: .95; }
-.clock { font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.lock .date { font-size: 15px; font-weight: 600; }
+.clock { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
 .lock .clock { font-size: 112px; line-height: .92; margin: 8px 0 26px -4px; }
 .lock[data-clock="inline"] .clock { font-size: 80px; line-height: 1; margin-left: -3px; }
 .lnotes { display: flex; flex-direction: column; gap: 8px; }
-.lnote { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 18px; background: rgba(18,20,28,.42); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); font-size: 13px; text-shadow: none; }
+.lnote { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 20px; font-size: 13px; font-weight: 500; text-shadow: none; color: #fff; }
 .lnote img { width: 24px; height: 24px; }
-.hint { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; font-size: 13px; opacity: .85; }
+.hint { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; font-size: 13px; }
 .hint svg { width: 18px; height: 18px; margin: 0 auto 2px; animation: nudge 2.2s ease-in-out infinite; }
 @keyframes nudge { 50% { transform: translateY(-5px); } }
 
 /* pin */
 .pin { color: #fff; display: flex; flex-direction: column; align-items: center; padding-top: 112px; box-sizing: border-box; }
-.pin .t { font-size: 17px; margin-bottom: 18px; }
+.pin .t { font-size: 17px; font-weight: 600; margin-bottom: 18px; }
 .dots { display: flex; gap: 16px; height: 14px; margin-bottom: 40px; }
 .dots i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.75); transition: background .1s; }
 .dots i.f { background: #fff; }
 .dots.bad { animation: shake .34s; }
 @keyframes shake { 20% { transform: translateX(-9px); } 45% { transform: translateX(8px); } 70% { transform: translateX(-5px); } }
 .pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px 22px; }
-.pk { width: 72px; height: 72px; border: 0; border-radius: 50%; font: inherit; font-size: 28px; font-weight: 300; color: #fff; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); cursor: pointer; }
-.pk:active { background: rgba(255,255,255,.26); }
-.pk.t2 { font-size: 14px; font-weight: 500; background: none; box-shadow: none; }
+.pk { width: 72px; height: 72px; border: 0; border-radius: 50%; font: inherit; font-size: 28px; font-weight: 500; color: #fff; cursor: pointer; }
+.pk.t2 { font-size: 14px; font-weight: 600; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.pk.t2::before { display: none; }
 
 /* home */
 .home { padding: 56px 22px 0; box-sizing: border-box; color: #fff; }
 .home .clock { font-size: 60px; line-height: 1; text-shadow: 0 1px 12px rgba(0,0,0,.28); margin-left: -2px; }
-.home .date { font-size: 14px; margin-top: 3px; opacity: .92; }
+.home .date { font-size: 14px; font-weight: 500; margin-top: 3px; text-shadow: 0 1px 6px rgba(0,0,0,.4); }
 .grid { position: absolute; left: 12px; right: 12px; display: grid; grid-template-columns: repeat(4, 1fr); row-gap: 16px; }
 .ic { background: none; border: 0; padding: 0; font: inherit; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
 .ic:active .gl { transform: scale(.9); }
-.gl { width: 58px; height: 58px; display: grid; place-items: center; transition: transform .16s cubic-bezier(.2,.9,.3,1.4); }
-.gl img { width: 58px; height: 58px; }
-.plates .gl { border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--rim), 0 4px 12px rgba(0,0,0,.2); }
+.gl { width: 58px; height: 58px; display: grid; place-items: center; transition: transform .16s var(--spring); border-radius: 18px; }
+.gl img { width: 58px; height: 58px; position: relative; }
+.plates .gl { box-shadow: inset 0 1px .5px var(--spec), inset 0 -1px .5px var(--shade), 0 5px 14px var(--lift); background: rgba(255,255,255,.14); -webkit-backdrop-filter: blur(12px) saturate(170%); backdrop-filter: blur(12px) saturate(170%); }
 .plates .gl img { width: 44px; height: 44px; }
-.ic .lab { font-size: 11.5px; max-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
-.dockb { position: absolute; left: 10px; right: 10px; bottom: 12px; height: 88px; border-radius: 28px; background: var(--glass); backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3); box-shadow: inset 0 0 0 1px var(--rim); display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; }
+.ic .lab { font-size: 11.5px; font-weight: 500; max-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
+.dockb { position: absolute; left: 10px; right: 10px; bottom: 12px; height: 88px; border-radius: 32px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; }
 .dockb .ic .lab { display: none; }
 .pdots { position: absolute; left: 0; right: 0; display: flex; gap: 7px; justify-content: center; }
 .pdots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.4); }
@@ -125,59 +149,162 @@ svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width:
 
 /* recents */
 .recents { color: #fff; }
-.rtitle { position: absolute; top: 46px; left: 24px; font-size: 21px; font-weight: 400; }
-.rail { position: absolute; left: 0; right: 0; top: 96px; height: 440px; display: flex; gap: 16px; overflow-x: auto; overflow-y: visible; scroll-snap-type: x mandatory; padding: 0 72px; box-sizing: border-box; scrollbar-width: none; touch-action: pan-x; }
+.rtitle { position: absolute; top: 46px; left: 24px; font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+.rail { position: absolute; left: 0; right: 0; top: 92px; height: 450px; display: flex; gap: 16px; overflow-x: auto; overflow-y: visible; scroll-snap-type: x mandatory; padding: 4px 72px; box-sizing: border-box; scrollbar-width: none; touch-action: pan-x; }
 .rail::-webkit-scrollbar { display: none; }
-.card { flex: none; width: 216px; scroll-snap-align: center; display: flex; flex-direction: column; gap: 10px; transition: transform .28s cubic-bezier(.2,.9,.25,1), opacity .22s; cursor: pointer; }
+.card { flex: none; width: 216px; scroll-snap-align: center; display: flex; flex-direction: column; gap: 10px; transition: transform .28s var(--spring), opacity .22s; cursor: pointer; }
 .card.go { transform: translateY(-120%); opacity: 0; }
-.card .h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; height: 26px; }
+.card .h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; height: 26px; }
 .card .h img { width: 24px; height: 24px; }
-.card .s { width: 216px; height: 384px; border-radius: 24px; overflow: hidden; background: #000; box-shadow: 0 0 0 1.5px rgba(255,255,255,.3), 0 18px 40px rgba(0,0,0,.45); }
-.card .s img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: top; pointer-events: none; }
+.card .s { position: relative; width: 216px; height: 384px; border-radius: 26px; overflow: hidden; background: #14161d; box-shadow: 0 0 0 1px rgba(255,255,255,.3), inset 0 1px 0 rgba(255,255,255,.3), 0 18px 40px rgba(0,0,0,.45); }
+.mini { position: absolute; left: 0; top: 0; width: 360px; height: 640px; transform: scale(.6); transform-origin: 0 0; pointer-events: none; }
 .empty { position: absolute; left: 0; right: 0; top: 280px; text-align: center; color: rgba(255,255,255,.8); }
-.pillb { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); border: 0; font: inherit; font-weight: 500; font-size: 14px; color: #fff; padding: 11px 26px; border-radius: 999px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); cursor: pointer; }
+.pillb { position: absolute; left: 50%; bottom: 34px; margin-left: -62px; width: 124px; height: 46px; border: 0; font: inherit; font-weight: 600; font-size: 14px; color: #fff; border-radius: 999px; cursor: pointer; }
 
 /* quick settings */
 .qs { padding: 42px 12px 0; box-sizing: border-box; color: var(--on); display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
 .qhead { display: flex; align-items: flex-end; justify-content: space-between; padding: 0 10px 2px; }
-.qhead .t { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
-.qhead .d { font-size: 13px; color: var(--dim); margin-top: 3px; }
-.gear { background: var(--glass); color: var(--on); border: 0; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; font-size: 19px; box-shadow: inset 0 0 0 1px var(--rim); }
-.panel { background: var(--glass); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); box-shadow: inset 0 0 0 1px var(--rim); border-radius: 26px; padding: 14px 12px; }
-.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 4px; }
-.tile { background: none; border: 0; color: var(--on); font: inherit; font-size: 10.5px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; padding: 0; min-width: 0; }
-.tile i { width: 50px; height: 50px; border-radius: 50%; background: var(--card2); color: var(--on); display: grid; place-items: center; font-size: 22px; transition: background .16s, color .16s; }
+.qhead .t { font-size: 36px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1; }
+.qhead .d { font-size: 13px; font-weight: 500; color: var(--dim); margin-top: 3px; }
+.rb { border: 0; color: var(--on); width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; font-size: 19px; padding: 0; flex: none; }
+.panel { border-radius: 28px; padding: 14px 12px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 4px; position: relative; }
+.tile { background: none; border: 0; color: var(--on); font: inherit; font-size: 10.5px; font-weight: 500; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; padding: 0; min-width: 0; }
+.tile i { width: 50px; height: 50px; border-radius: 50%; background: var(--card); color: var(--on); display: grid; place-items: center; font-size: 22px; transition: background .16s, color .16s; }
 .tile[aria-pressed="true"] i { background: var(--accent); color: #fff; }
 .tile span { max-width: 74px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.sl { display: flex; align-items: center; gap: 10px; font-size: 19px; color: var(--dim); padding: 3px 4px; }
-input[type=range] { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 26px; border-radius: 13px; background: linear-gradient(90deg, var(--accent) var(--v, 60%), var(--card2) var(--v, 60%)); cursor: pointer; margin: 0; }
+.sl { display: flex; align-items: center; gap: 10px; font-size: 19px; color: var(--dim); padding: 3px 4px; position: relative; }
+input[type=range] { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 26px; border-radius: 13px; background: linear-gradient(90deg, var(--accent) var(--v, 60%), var(--card) var(--v, 60%)); cursor: pointer; margin: 0; }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
 input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: #fff; }
-.qn { display: flex; gap: 10px; align-items: center; padding: 10px 12px; }
+.qn { display: flex; gap: 10px; align-items: center; padding: 10px 12px; position: relative; }
 .qn img { width: 34px; height: 34px; }
-.qn b { font-weight: 500; font-size: 13.5px; display: block; }
+.qn b { font-weight: 600; font-size: 13.5px; display: block; }
 .qn small { color: var(--dim); font-size: 12px; }
-.clear { align-self: center; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 500; color: var(--on); cursor: pointer; padding: 6px 14px; }
+.clear { align-self: center; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--on); cursor: pointer; padding: 8px 14px; }
 
 /* power */
 .power { color: #fff; }
 .pstack { position: absolute; right: 14px; top: 150px; display: flex; flex-direction: column; gap: 14px; }
-.pbtn { background: none; border: 0; color: #fff; font: inherit; font-size: 15px; display: flex; align-items: center; justify-content: flex-end; gap: 14px; cursor: pointer; padding: 0; }
-.pbtn i { width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
-.pbtn.off i { background: #d9352f; box-shadow: none; }
+.pbtn { background: none; border: 0; color: #fff; font: inherit; font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: flex-end; gap: 14px; cursor: pointer; padding: 0; }
+.pbtn i { width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; }
+.pbtn.off i { background: rgba(224,49,42,.82); }
 .pbtn:active i { transform: scale(.92); }
 
-/* settings, a redesigned app */
-.setv { background: var(--bg); color: var(--on); overflow-y: auto; scrollbar-width: none; }
-.setv::-webkit-scrollbar { display: none; }
-.stitle { padding: 96px 24px 22px; font-size: 34px; font-weight: 300; }
-.sgroup { margin: 0 12px 12px; background: var(--card); border-radius: 24px; overflow: hidden; }
-.srow { display: flex; align-items: center; gap: 14px; padding: 13px 16px; }
-.srow + .srow { box-shadow: 0 -1px 0 var(--card2); }
-.srow i { width: 36px; height: 36px; border-radius: 50%; background: var(--c, var(--accent)); color: #fff; display: grid; place-items: center; font-size: 19px; flex: none; }
-.srow b { font-weight: 500; font-size: 15.5px; display: block; }
-.srow small { font-size: 12.5px; color: var(--dim); }
-.appv img { width: 100%; height: 100%; display: block; }
+/* apps: a calm canvas, Adwaita's lists, glass only on what floats */
+.appv { color: var(--on); }
+.appcv { position: absolute; inset: 0; background: var(--canvas); }
+.scroll { position: absolute; inset: 0; overflow-y: auto; padding: 90px 12px 104px; box-sizing: border-box; scrollbar-width: none; touch-action: pan-y; }
+.scroll::-webkit-scrollbar { display: none; }
+.hb { position: absolute; left: 10px; right: 10px; top: 32px; height: 50px; border-radius: 25px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px; z-index: 5; }
+.hb .tt { position: absolute; left: 56px; right: 56px; text-align: center; font-size: 15.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.hbtn { background: none; border: 0; color: var(--on); width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-size: 19px; cursor: pointer; padding: 0; position: relative; }
+.hbtn:active { background: var(--card); }
+.h1 { font-size: 30px; font-weight: 800; letter-spacing: -.025em; padding: 2px 8px 12px; }
+.sec { font-size: 12.5px; font-weight: 700; color: var(--dim); padding: 12px 8px 7px; }
+.bl { background: var(--card); border-radius: 20px; overflow: hidden; margin-bottom: 10px; }
+.row { display: flex; align-items: center; gap: 13px; padding: 0 14px; min-height: 56px; width: 100%; box-sizing: border-box; background: none; border: 0; font: inherit; color: var(--on); text-align: left; cursor: pointer; }
+button.row:active { background: var(--sep); }
+.row + .row { box-shadow: 0 -1px 0 var(--sep); }
+.row .ti { flex: 1; min-width: 0; padding: 8px 0; }
+.row b { font-weight: 600; font-size: 15px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row small { display: block; font-size: 12.5px; color: var(--dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row > svg { font-size: 21px; flex: none; }
+.row .fold { color: var(--accent); }
+.row .chev { color: var(--dim); font-size: 16px; }
+.dot { width: 34px; height: 34px; border-radius: 50%; background: var(--c, var(--accent)); color: #fff; display: grid; place-items: center; font-size: 18px; flex: none; }
+.sw { width: 46px; height: 28px; border-radius: 14px; background: var(--sep); box-shadow: inset 0 0 0 1px var(--sep); position: relative; border: 0; padding: 0; cursor: pointer; flex: none; transition: background .16s; }
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform .24s var(--spring); }
+.sw[aria-checked="true"] { background: var(--accent); }
+.sw[aria-checked="true"]::after { transform: translateX(18px); }
+.btn { font: inherit; font-weight: 600; font-size: 14.5px; color: var(--on); background: var(--card); border: 0; height: 44px; padding: 0 20px; border-radius: 22px; cursor: pointer; }
+.btn.sug { background: var(--accent); color: #fff; }
+.btn.des { background: rgba(224,49,42,.9); color: #fff; }
+.btn:active { filter: brightness(1.15); }
+.bot { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; gap: 8px; z-index: 5; }
+.bot .btn { flex: 1; }
+.gbtn { font: inherit; font-weight: 600; font-size: 14px; color: var(--on); border: 0; height: 50px; flex: 1; border-radius: 25px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.gbtn svg { font-size: 18px; position: relative; }
+.gbtn.sug { background: color-mix(in srgb, var(--accent) 78%, transparent); color: #fff; }
+.vs { position: absolute; left: 34px; right: 34px; bottom: 14px; height: 54px; border-radius: 27px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 4px; box-sizing: border-box; z-index: 5; }
+.vs .th { position: absolute; top: 4px; bottom: 4px; left: 4px; border-radius: 23px; background: var(--card); box-shadow: inset 0 1px .5px var(--spec); transition: transform .32s var(--spring); }
+.vs button { position: relative; background: none; border: 0; color: var(--dim); font: inherit; font-size: 11px; font-weight: 600; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; padding: 0; }
+.vs button svg { font-size: 19px; }
+.vs button[aria-selected="true"] { color: var(--accent); }
+.screen[data-theme="dark"] .vs button[aria-selected="true"] { color: #fff; }
+
+/* calculator */
+.cdisp { position: absolute; left: 12px; right: 12px; top: 92px; height: 168px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; padding: 0 14px 12px; box-sizing: border-box; }
+.cdisp small { font-size: 15px; color: var(--dim); min-height: 20px; }
+.cdisp b { font-size: 60px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; max-width: 100%; overflow: hidden; }
+.cgrid { position: absolute; left: 12px; right: 12px; bottom: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; justify-items: center; }
+.ck { width: 72px; height: 66px; border: 0; border-radius: 33px; background: var(--card); color: var(--on); font: inherit; font-size: 24px; font-weight: 500; cursor: pointer; display: grid; place-items: center; }
+.ck:active { filter: brightness(1.3); }
+.ck.op { color: var(--accent); font-weight: 700; }
+.screen[data-theme="dark"] .ck.op { color: #9cc4f4; }
+.ck.fn { font-size: 16px; font-weight: 700; }
+.ck.eq { background: var(--accent); color: #fff; font-weight: 700; }
+.ck svg { font-size: 23px; }
+
+/* clock */
+.bigt { font-size: 64px; font-weight: 800; letter-spacing: -.035em; font-variant-numeric: tabular-nums; text-align: center; padding: 40px 0 26px; }
+.alt { font-size: 28px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; display: block; }
+.pair { display: flex; gap: 8px; justify-content: center; }
+.pair .btn { min-width: 110px; }
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+
+/* gallery */
+.ggrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; border-radius: 20px; overflow: hidden; }
+.gi { border: 0; padding: 0; aspect-ratio: 9/16; background: var(--card) center/cover; cursor: pointer; }
+.gv { position: absolute; inset: 0; background: #000 center/contain no-repeat; }
+
+/* web */
+.wsearch { display: flex; flex-direction: column; align-items: center; padding: 56px 0 26px; }
+.wsearch img { width: 72px; height: 72px; }
+.wsearch b { font-size: 26px; font-weight: 800; margin-top: 12px; letter-spacing: -.02em; }
+.wfav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 4px; }
+.fav { background: none; border: 0; color: var(--on); font: inherit; font-size: 11.5px; font-weight: 500; display: flex; flex-direction: column; gap: 6px; align-items: center; cursor: pointer; padding: 0; }
+.fav i { width: 52px; height: 52px; border-radius: 16px; background: var(--c); color: #fff; display: grid; place-items: center; font-style: normal; font-weight: 800; font-size: 20px; }
+.addr { position: absolute; left: 10px; right: 10px; bottom: 14px; height: 50px; border-radius: 25px; display: flex; align-items: center; gap: 4px; padding: 0 4px; z-index: 5; }
+.addr input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font: inherit; font-size: 14px; color: var(--on); position: relative; padding: 0 4px; }
+.addr input::placeholder { color: var(--dim); }
+
+/* task manager */
+.mem { padding: 14px 16px; }
+.mem .n { font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+.mem .n span { font-size: 14px; font-weight: 500; color: var(--dim); letter-spacing: 0; }
+.mbar { height: 10px; border-radius: 5px; background: var(--sep); overflow: hidden; margin-top: 10px; }
+.mbar i { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+.small { height: 34px; padding: 0 14px; font-size: 13px; flex: none; }
+
+/* log */
+.logv { font-family: var(--mono); font-size: 11.5px; line-height: 1.65; padding: 10px 12px; }
+.logv div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logv i { font-style: normal; color: var(--dim); }
+
+/* blocksmith */
+.bstage { height: 152px; border-radius: 20px; background: linear-gradient(170deg, #7fb9ee, #bfe4c2); position: relative; overflow: hidden; margin-bottom: 12px; }
+.bcat { position: absolute; left: 44%; bottom: 16px; width: 44px; height: 44px; border-radius: 13px; background: #f6c84b; box-shadow: inset 0 -5px 0 rgba(0,0,0,.14); }
+.bsay { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); background: #fff; color: #16181f; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: 14px; white-space: nowrap; }
+.blk { display: inline-block; padding: 10px 14px; border-radius: 12px; color: #fff; font-size: 14px; font-weight: 600; margin-bottom: 3px; background: var(--c); }
+.blk.in { margin-left: 18px; }
+.blks { display: flex; flex-direction: column; align-items: flex-start; padding: 8px; }
+
+/* sheets, dialogs, toasts */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.34); z-index: 9; display: flex; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.scrim.on { opacity: 1; pointer-events: auto; }
+.sheet { position: absolute; left: 10px; right: 10px; bottom: 12px; border-radius: 30px; padding: 8px; z-index: 10; transform: translateY(110%); transition: transform .36s var(--spring); }
+.sheet.on { transform: none; }
+.sheet .bl { background: none; margin: 0; position: relative; }
+.sheet .st { text-align: center; font-size: 13px; font-weight: 600; color: var(--dim); padding: 8px 0 4px; position: relative; }
+.dlg { margin: auto 34px; flex: 1; border-radius: 30px; padding: 22px 18px 14px; text-align: center; transform: scale(.92); transition: transform .3s var(--spring); }
+.scrim.on .dlg { transform: none; }
+.dlg b { font-size: 17px; font-weight: 700; display: block; position: relative; }
+.dlg p { margin: 6px 0 16px; color: var(--dim); line-height: 1.4; position: relative; }
+.dlg .acts { display: flex; gap: 8px; position: relative; }
+.dlg .btn { flex: 1; padding: 0; }
+.toast { position: absolute; left: 50%; bottom: 84px; transform: translate(-50%, 16px); max-width: 300px; padding: 10px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .2s, transform .3s var(--spring); z-index: 20; white-space: nowrap; pointer-events: none; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 .before { position: absolute; inset: 0; z-index: 50; background-size: cover; display: none; }
 .before.on { display: block; }
@@ -185,12 +312,11 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 .tag.on { display: block; }
 
 @media (max-width: 800px) {
-  .app { grid-template-columns: minmax(0, 1fr); }
+  .app { display: flex; flex-direction: column; gap: 16px; }
   .side { display: contents; }
   .head { order: 1; } .screens { order: 2; } .stage { order: 3; } .opts { order: 4; } .note { order: 5; } .pk2 { order: 6; }
-  .app { display: flex; flex-direction: column; gap: 16px; }
 }
-@media (prefers-reduced-motion: reduce) { .view, .card, .frost { transition: none; } .hint svg { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .view, .card, .frost, .lg, .sheet, .vs .th { transition: none; } .hint svg { animation: none; } }
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -215,26 +341,42 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 <symbol id="batic" viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2.5"/><path d="M22 11v2"/></symbol>
 <symbol id="cal" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M4 10h16M8 3v4M16 3v4"/></symbol>
 <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.1"/></symbol>
+<symbol id="left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+<symbol id="right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2.5 2.5H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6zM14 3v5h5"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+<symbol id="bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"/></symbol>
+<symbol id="timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8.5"/><path d="M12 8v5l3 2M9 2h6"/></symbol>
+<symbol id="stop" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 7v5"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.5-4.5"/></symbol>
+<symbol id="del" viewBox="0 0 24 24"><path d="M9 5h12v14H9l-6-7zM13 10l4 4M17 10l-4 4"/></symbol>
+<symbol id="play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15"/></symbol>
+<symbol id="tabs" viewBox="0 0 24 24"><rect x="4" y="7" width="13" height="13" rx="3"/><path d="M8 3h9a3 3 0 0 1 3 3v9"/></symbol>
 </defs></svg>
 
 <div class="app">
   <div class="side">
     <div class="head">
       <h1>LiteKern Go shell</h1>
-      <p class="lead">A redesign to try on. Tap the screen and the phone's keys, then send me your picks.</p>
+      <p class="lead">Liquid glass on Adwaita's bones. Every app here is a new design you can use, so tap around.</p>
     </div>
     <div class="screens">
-      <p class="lbl">Screen</p>
+      <p class="lbl">Screens</p>
       <div class="chips" id="tabs"></div>
+      <p class="lbl" style="margin-top:12px">Apps</p>
+      <div class="chips" id="atabs"></div>
     </div>
-    <div class="opts" style="display:flex;flex-direction:column;gap:14px">
+    <div class="opts twoc">
       <div><p class="lbl">Compare</p><div class="chips" id="o-before"></div></div>
       <div><p class="lbl">Theme</p><div class="chips" id="o-theme"></div></div>
-      <div><p class="lbl">Accent</p><div class="chips" id="o-accent"></div></div>
-      <div><p class="lbl">Wallpaper</p><div class="chips" id="o-wall"></div></div>
+      <div style="grid-column:1/-1"><p class="lbl">Accent</p><div class="chips" id="o-accent"></div></div>
+      <div style="grid-column:1/-1"><p class="lbl">Wallpaper</p><div class="chips" id="o-wall"></div></div>
       <div><p class="lbl">App icons</p><div class="chips" id="o-plates"></div></div>
-      <div><p class="lbl">Home screen dock</p><div class="chips" id="o-dock"></div></div>
-      <div><p class="lbl">Clock</p><div class="chips" id="o-clock"></div></div>
+      <div><p class="lbl">Dock</p><div class="chips" id="o-dock"></div></div>
+      <div style="grid-column:1/-1"><p class="lbl">Clock</p><div class="chips" id="o-clock"></div></div>
     </div>
     <div class="note" id="note"></div>
     <div class="note pk2">
@@ -254,8 +396,10 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
       <div class="view recents" id="v-recents"></div>
       <div class="view qs" id="v-qs"></div>
       <div class="view power" id="v-power"></div>
-      <div class="view setv" id="v-settings"></div>
       <div class="view appv" id="v-app"></div>
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet lg strong" id="sheet"></div>
+      <div class="toast lg strong" id="toast"></div>
       <div class="before" id="before"></div><div class="tag" id="tag">CURRENT SHELL</div>
     </div>
     <div class="keys">
@@ -269,122 +413,262 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 <script>
 const A = /*ASSETS*/{};
 const $ = id => document.getElementById(id);
-const ic = n => `<svg class="i"><use href="#${n}"/></svg>`;
+const ic = n => `<svg class="i" aria-hidden="true"><use href="#${n}"/></svg>`;
 const APPS = [["files","Files"],["calculator","Calculator"],["settings","Settings"],["clock","Clock"],["browser","Web"],["blocksmith","Blocksmith"],["gallery","Gallery"],["taskmgr","Task Manager"],["log","Log"]];
 const name = id => APPS.find(a => a[0] === id)[1];
-const SHOT = { files: "a-files", calculator: "a-calc", settings: "a-settings", clock: "a-clock" };
-const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"],["settings","Settings app"]];
-const BEFORE = { lock: "b-lock", pin: "b-lock", home: "b-home", recents: "b-recents", qs: "b-qs", power: "b-power", settings: "a-settings" };
+const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"]];
+const BEFORE = { lock: "b-lock", pin: "b-lock", home: "b-home", recents: "b-recents", qs: "b-qs", power: "b-power", files: "a-files", calculator: "a-calc", settings: "a-settings", clock: "a-clock" };
 const NOTES = {
-  lock: ["Big stacked clock on the left, with the notifications close to it.", "Swipe up on the screen to unlock. All of this is easy in the C shell."],
-  pin: ["Soft round keys over the blurred wallpaper. Try 1234, then a wrong code.", "Easy in the C shell: the blur is drawn once."],
-  home: ["Clock moves to the top left, and a glass dock holds four apps within thumb reach.", "Easy in the C shell. The dock's blur can be drawn once per wallpaper."],
-  recents: ["Swipe sideways and cards snap. Swipe a card up to close it.", "Snap, blur and the outline already exist in the C shell. This page adds spacing and a title."],
-  qs: ["Grouped glass panels, with real sliders. Dark mode here works.", "Medium in the C shell: the panel has to redraw its blur as it slides, so on the phone it may fade in instead."],
-  power: ["The buttons sit by the Power key, on the right edge, so your thumb is already there.", "Easy in the C shell."],
-  settings: ["Large title, then rounded groups. This is the look for every app.", "Needs changes to the shared widgets, so all apps get it at once. Other apps still open as they are today."],
+  lock: ["Big bold clock, with glass notifications under it.", "Swipe up on the screen to unlock. Easy in the C shell."],
+  pin: ["Glass keys over the frosted wallpaper. Try 1234, then a wrong code.", "Easy in the C shell: the frost is drawn once, then keys go on top."],
+  home: ["A glass dock holds four apps within thumb reach.", "Easy in the C shell. The dock's frost can be drawn once per wallpaper."],
+  recents: ["Cards snap, and each one is the app's live state. Swipe one up to close it.", "Snap, blur and outlines exist in C already. Live cards become snapshots."],
+  qs: ["Glass panels with real sliders. The Dark mode tile works.", "Medium in C: blur on something that's moving is costly, so on the phone this may fade in."],
+  power: ["Buttons sit beside the Power key, where your thumb already is.", "Easy in the C shell."],
+  files: ["Tap a folder to go in, and tap a file for a glass sheet of actions.", "Adwaita boxed lists with a floating glass header. This is the template for most apps."],
+  calculator: ["It works. Glass header, calm keys, a big bold result.", "Easy in C. The keys stay flat, because only what floats gets glass."],
+  settings: ["Display works: change the theme and accent from inside the phone.", "Needs the shared widgets redone, which restyles every app at once."],
+  clock: ["Three tabs on a floating glass switcher. The stopwatch and timer run.", "The switcher's sliding pill is a simple spring in C."],
+  browser: ["Address bar at the bottom, in reach. Pages can't load in this mockup.", "The real one needs WebKit, which is building now."],
+  blocksmith: ["Your block coding app, cut down for a phone. Run plays the script.", "Dragging blocks on a small screen is the hard part, and it isn't shown here."],
+  gallery: ["Edge-to-edge pictures. Tap one for glass controls floating over it.", "Glass over a photo needs a blurred copy of what's under it, redrawn on each swipe."],
+  taskmgr: ["Real memory bar, and Stop asks first. It closes the app in Recent apps too.", "Memory figures here are examples."],
+  log: ["A plain, readable log under the glass header.", "Lines here are examples of the real format."],
 };
-const S = { view: "lock", before: 0, theme: "dark", accent: "#3584e4", wall: "crossing", plates: 0, dock: 1, clock: "stacked" };
-try { Object.assign(S, JSON.parse(localStorage.getItem("lk-mock") || "{}")); S.before = 0; } catch (e) {}
-const save = () => { try { localStorage.setItem("lk-mock", JSON.stringify(S)); } catch (e) {} };
-let opened = ["clock", "calculator", "files"], app = null;
+const S = { view: "lock", app: null, before: 0, theme: "dark", accent: "#3584e4", wall: "crossing", plates: 0, dock: 1, clock: "stacked" };
+try { Object.assign(S, JSON.parse(localStorage.getItem("lk-mock2") || "{}")); S.before = 0; if (S.view === "app") S.view = "home"; } catch (e) {}
+const save = () => { try { localStorage.setItem("lk-mock2", JSON.stringify(S)); } catch (e) {} };
+let opened = ["clock", "calculator", "files"];
 
 const now = new Date();
 const HH = String(now.getHours()).padStart(2, "0"), MM = String(now.getMinutes()).padStart(2, "0");
 const DATE = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 const icon = id => `<span class="gl"><img src="${A["i-" + id]}" alt=""></span>`;
 const btn = id => `<button class="ic" type="button" data-open="${id}">${icon(id)}<span class="lab">${name(id)}</span></button>`;
+const ACCENTS = [["Blue","#3584e4"],["Teal","#2190a4"],["Purple","#9141ac"],["Pink","#d56199"],["Orange","#ed5b00"],["Green","#3a944a"]];
+const accentName = c => (ACCENTS.find(a => a[1] === c) || ["Blue"])[0];
+
+// App state
+const T = {
+  files: { dir: null, items: { "": [["Documents",1,"3 items"],["Pictures",1,"12 items"],["Downloads",1,"Empty"],["README.TXT",0,"12 bytes"],["Welcome to LiteKern X.txt",0,"164 bytes"]], Documents: [["Notes.txt",0,"2 KB"],["Ideas.txt",0,"640 bytes"],["Homework.txt",0,"4 KB"]], Pictures: [["Screenshots",1,"3 items"],["Camera",1,"Empty"]], Downloads: [] } },
+  calc: { a: null, op: null, cur: "0", hist: "", fresh: true },
+  set: { page: null, pin: false, sleep: true },
+  clk: { tab: "alarm", alarms: [["07:30","Weekdays",true],["09:00","Saturday",false]], sw: 0, swOn: false, swT: 0, tm: 300, tmLeft: 0, tmOn: false, tmT: 0 },
+  gal: { open: null, list: ["w-crossing","w-aurora","w-drift","w-dusk","b-home","b-lock","a-calc"] },
+  blk: { said: false },
+};
 
 function renderLock() {
   const big = S.clock === "stacked" ? `${HH}<br>${MM}` : `${HH}:${MM}`;
   $("v-lock").dataset.clock = S.clock;
   $("v-lock").innerHTML = `<div class="date">${DATE}</div><div class="clock">${big}</div>
-    <div class="lnotes"><div class="lnote"><img src="${A["i-clock"]}" alt="">Alarm set for 07:30</div>
-    <div class="lnote"><img src="${A["i-settings"]}" alt="">Wi-Fi connected</div></div>
+    <div class="lnotes"><div class="lnote lg"><img src="${A["i-clock"]}" alt="">Alarm set for 07:30</div>
+    <div class="lnote lg"><img src="${A["i-settings"]}" alt="">Wi-Fi connected</div></div>
     <div class="hint">${ic("up")}Swipe up to unlock</div>`;
 }
 let code = "";
 function renderPin() {
-  const k = [1,2,3,4,5,6,7,8,9].map(n => `<button class="pk" type="button" data-k="${n}">${n}</button>`).join("");
+  const k = [1,2,3,4,5,6,7,8,9].map(n => `<button class="pk lg" type="button" data-k="${n}">${n}</button>`).join("");
   $("v-pin").innerHTML = `<div class="t">Enter PIN</div><div class="dots" id="dots">${"<i></i>".repeat(4)}</div>
-    <div class="pad">${k}<button class="pk t2" type="button" data-k="x">Delete</button><button class="pk" type="button" data-k="0">0</button><button class="pk t2" type="button" data-k="c">Cancel</button></div>`;
+    <div class="pad">${k}<button class="pk t2" type="button" data-k="x">Delete</button><button class="pk lg" type="button" data-k="0">0</button><button class="pk t2" type="button" data-k="c">Cancel</button></div>`;
 }
 function renderHome() {
   const dock = ["files","browser","gallery","settings"];
   const list = (S.dock ? APPS.filter(a => !dock.includes(a[0])) : APPS).map(a => btn(a[0])).join("");
-  const top = 176;
   $("v-home").className = "view home" + (S.view === "home" ? " on" : "") + (S.plates ? " plates" : "");
   $("v-home").innerHTML = `<div class="clock">${HH}:${MM}</div><div class="date">${DATE}</div>
-    <div class="grid" style="top:${top}px">${list}</div>
+    <div class="grid" style="top:176px">${list}</div>
     <div class="pdots" style="bottom:${S.dock ? 110 : 22}px"><i></i><i></i></div>
-    ${S.dock ? `<div class="dockb">${dock.map(btn).join("")}</div>` : ""}`;
+    ${S.dock ? `<div class="dockb lg">${dock.map(btn).join("")}</div>` : ""}`;
 }
 function renderRecents() {
-  const cards = opened.map(id => `<div class="card" data-id="${id}"><div class="h"><img src="${A["i-" + id]}" alt="">${name(id)}</div><div class="s"><img src="${A[SHOT[id]]}" alt="${name(id)}"></div></div>`).join("");
+  const cards = opened.map(id => `<div class="card" data-id="${id}"><div class="h"><img src="${A["i-" + id]}" alt="">${name(id)}</div><div class="s"><div class="mini"><div class="appcv"></div>${appHtml(id)}</div></div></div>`).join("");
   $("v-recents").innerHTML = `<div class="rtitle">Recent apps</div>` + (opened.length
-    ? `<div class="rail" id="rail">${cards}</div><button class="pillb" id="closeall" type="button">Close all</button>`
+    ? `<div class="rail" id="rail">${cards}</div><button class="pillb lg" id="closeall" type="button">Close all</button>`
     : `<div class="empty">No recent apps</div>`);
   const r = $("rail"); if (r) r.scrollLeft = r.scrollWidth;
 }
 function renderQs() {
   const t = [["wifi","Wi-Fi",1],["bt","Bluetooth",0],["moon","Dark mode",S.theme === "dark" ? 1 : 0],["dnd","Do not disturb",0],["plane","Airplane",0],["flash","Flashlight",0],["rot","Rotation lock",1],["shot","Screenshot",0]];
-  $("v-qs").innerHTML = `<div class="qhead"><div><div class="t">${HH}:${MM}</div><div class="d">${DATE}</div></div><button class="gear" id="qgear" type="button" aria-label="Settings">${ic("gear")}</button></div>
-    <div class="panel"><div class="tiles">${t.map(x => `<button class="tile" type="button" data-t="${x[0]}" aria-pressed="${!!x[2]}"><i>${ic(x[0])}</i><span>${x[1]}</span></button>`).join("")}</div></div>
-    <div class="panel"><label class="sl">${ic("sun")}<input id="s-br" type="range" min="0" max="100" value="70" aria-label="Brightness"></label><label class="sl">${ic("vol")}<input id="s-vol" type="range" min="0" max="100" value="40" aria-label="Volume"></label></div>
-    <div class="panel" style="padding:2px"><div class="qn"><img src="${A["i-clock"]}" alt=""><div><b>Alarm</b><small>Set for 07:30 tomorrow</small></div></div></div>
+  $("v-qs").innerHTML = `<div class="qhead"><div><div class="t">${HH}:${MM}</div><div class="d">${DATE}</div></div><button class="rb lg" id="qgear" type="button" aria-label="Settings">${ic("gear")}</button></div>
+    <div class="panel lg"><div class="tiles">${t.map(x => `<button class="tile" type="button" data-t="${x[0]}" aria-pressed="${!!x[2]}"><i>${ic(x[0])}</i><span>${x[1]}</span></button>`).join("")}</div></div>
+    <div class="panel lg"><label class="sl">${ic("sun")}<input id="s-br" type="range" min="0" max="100" value="70" aria-label="Brightness"></label><label class="sl">${ic("vol")}<input id="s-vol" type="range" min="0" max="100" value="40" aria-label="Volume"></label></div>
+    <div class="panel lg" style="padding:2px"><div class="qn"><img src="${A["i-clock"]}" alt=""><div><b>Alarm</b><small>Set for 07:30 tomorrow</small></div></div></div>
     <button class="clear" type="button" id="qclear">Clear all</button>`;
   ["s-br","s-vol"].forEach(id => { const e = $(id), up = () => e.style.setProperty("--v", e.value + "%"); up(); e.oninput = up; });
 }
 function renderPower() {
-  $("v-power").innerHTML = `<div class="pstack"><button class="pbtn off" type="button">Power off<i>${ic("pow")}</i></button><button class="pbtn" type="button">Restart<i>${ic("redo")}</i></button><button class="pbtn" type="button" id="plock">Lock<i>${ic("lockk")}</i></button></div>`;
+  $("v-power").innerHTML = `<div class="pstack"><button class="pbtn off" type="button" data-act="toast:Power off isn't wired up in the mockup">Power off<i class="lg">${ic("pow")}</i></button><button class="pbtn" type="button" data-act="toast:Restart isn't wired up in the mockup">Restart<i class="lg">${ic("redo")}</i></button><button class="pbtn" type="button" id="plock">Lock<i class="lg">${ic("lockk")}</i></button></div>`;
 }
-function renderSettings() {
-  const row = (i, c, t, s) => `<div class="srow" style="--c:${c}"><i>${ic(i)}</i><div><b>${t}</b><small>${s}</small></div></div>`;
-  $("v-settings").innerHTML = `<div class="stitle">Settings</div>
-    <div class="sgroup">${row("wifi", "var(--accent)", "Wi-Fi", "Connected")}</div>
-    <div class="sgroup">${row("pic", "#3a944a", "Display", "Dark, " + name2(S.accent))}${row("lockk", "#9141ac", "Lock Screen", "Swipe to unlock")}${row("batic", "#c88800", "Battery", "82%")}</div>
-    <div class="sgroup">${row("cal", "#dd2a7b", "Date and Time", "London")}${row("info", "#6f8396", "About Phone", "LiteKern Go on Galaxy A5")}</div>`;
+
+// Parts apps share
+const hb = (title, left, right) => `<div class="hb lg">${left || "<span></span>"}<div class="tt">${title}</div>${right || "<span></span>"}</div>`;
+const hbtn = (i, act, label) => `<button class="hbtn" type="button" data-act="${act}" aria-label="${label}">${ic(i)}</button>`;
+const scroll = h => `<div class="scroll">${h}</div>`;
+
+function filesHtml() {
+  const f = T.files, dir = f.dir || "", list = f.items[dir] || [];
+  const rows = list.map(([n, isDir, sub]) => `<button class="row" type="button" data-act="${isDir ? "dir:" + n : "fsheet:" + n}">${ic(isDir ? "folder" : "file").replace('class="i"', isDir ? 'class="i fold"' : 'class="i"')}<span class="ti"><b>${n}</b><small>${sub}</small></span>${isDir ? ic("right").replace('class="i"', 'class="i chev"') : ""}</button>`).join("");
+  return hb(dir || "Boot disk", dir ? hbtn("left", "updir", "Up a folder") : "", hbtn("search", "toast:Search isn't in the mockup", "Search"))
+    + scroll(`${dir ? "" : `<div class="h1">Files</div>`}${list.length ? `<div class="bl">${rows}</div>` : `<div class="empty" style="color:var(--dim);position:static;padding:90px 0">This folder is empty</div>`}`)
+    + `<div class="bot"><button class="gbtn lg" type="button" data-act="toast:New Folder isn't in the mockup">${ic("folder")}New Folder</button><button class="gbtn lg sug" type="button" data-act="toast:New File isn't in the mockup">${ic("plus")}New File</button></div>`;
 }
-const ACCENTS = [["Blue","#3584e4"],["Teal","#2190a4"],["Purple","#9141ac"],["Pink","#d56199"],["Orange","#ed5b00"],["Green","#3a944a"]];
-const name2 = c => (ACCENTS.find(a => a[1] === c) || ["Blue"])[0].toLowerCase();
+function calcHtml() {
+  const c = T.calc;
+  const k = [["C","fn","clr"],["del","fn","del"],["%","op","pct"],["÷","op","op:/"],["7","","n:7"],["8","","n:8"],["9","","n:9"],["×","op","op:*"],["4","","n:4"],["5","","n:5"],["6","","n:6"],["−","op","op:-"],["1","","n:1"],["2","","n:2"],["3","","n:3"],["+","op","op:+"],["+/−","fn","neg"],["0","","n:0"],[".","","dot"],["=","eq","eq"]];
+  return hb("Calculator") + `<div class="cdisp"><small>${c.hist || "&nbsp;"}</small><b style="font-size:${c.cur.length > 12 ? 26 : c.cur.length > 8 ? 40 : 60}px">${c.cur}</b></div>
+    <div class="cgrid">${k.map(([l, cl, a]) => `<button class="ck ${cl}" type="button" data-act="c:${a}" aria-label="${l === "del" ? "Delete" : l}">${l === "del" ? ic("del") : l}</button>`).join("")}</div>`;
+}
+function calcKey(a) {
+  const c = T.calc, [cmd, v] = a.split(":");
+  const f = n => { const r = Math.round(n * 1e10) / 1e10; return String(r); };
+  const run = () => { const x = +c.a, y = +c.cur; return c.op === "+" ? x + y : c.op === "-" ? x - y : c.op === "*" ? x * y : y === 0 ? NaN : x / y; };
+  if (c.cur === "Can't divide by 0" && cmd !== "clr") { c.cur = "0"; c.fresh = true; }
+  if (cmd === "n") { c.cur = c.fresh || c.cur === "0" ? v : (c.cur.length < 12 ? c.cur + v : c.cur); c.fresh = false; }
+  else if (cmd === "dot") { if (c.fresh) { c.cur = "0."; c.fresh = false; } else if (!c.cur.includes(".")) c.cur += "."; }
+  else if (cmd === "clr") { Object.assign(c, { a: null, op: null, cur: "0", hist: "", fresh: true }); }
+  else if (cmd === "del") { if (!c.fresh) { c.cur = c.cur.slice(0, -1) || "0"; if (c.cur === "0") c.fresh = true; } }
+  else if (cmd === "neg") { if (c.cur !== "0") c.cur = c.cur[0] === "-" ? c.cur.slice(1) : "-" + c.cur; }
+  else if (cmd === "pct") { c.cur = f(+c.cur / 100); c.fresh = true; }
+  else if (cmd === "op" || cmd === "eq") {
+    if (c.op && !(cmd === "op" && c.fresh)) {
+      const r = run(), sym = { "+": "+", "-": "−", "*": "×", "/": "÷" }[c.op];
+      c.hist = `${c.a} ${sym} ${c.cur} =`;
+      c.cur = Number.isNaN(r) ? "Can't divide by 0" : f(r);
+    }
+    if (cmd === "op") { c.a = c.cur; c.op = v; c.hist = `${c.a} ${{ "+": "+", "-": "−", "*": "×", "/": "÷" }[v]}`; } else { c.op = null; c.a = null; }
+    c.fresh = true;
+  }
+}
+function settingsHtml() {
+  const s = T.set, p = s.page;
+  const row = (i, c, t, sub, go) => `<button class="row" type="button" data-act="${go}"><span class="dot" style="--c:${c}">${ic(i)}</span><span class="ti"><b>${t}</b><small>${sub}</small></span>${ic("right").replace('class="i"', 'class="i chev"')}</button>`;
+  const back = hbtn("left", "spage:", "Back to Settings");
+  const info = (t, v) => `<div class="row"><span class="ti"><b>${t}</b></span><small style="margin:0">${v}</small></div>`;
+  const tog = (t, sub, on, act) => `<div class="row"><span class="ti"><b>${t}</b>${sub ? `<small>${sub}</small>` : ""}</span><button class="sw" type="button" role="switch" aria-checked="${on}" aria-label="${t}" data-act="${act}"></button></div>`;
+  if (!p) return hb("Settings") + scroll(`<div class="h1">Settings</div>
+    <div class="bl">${row("wifi", "var(--accent)", "Wi-Fi", "Home network", "spage:wifi")}</div>
+    <div class="bl">${row("pic", "#3a944a", "Display", (S.theme === "dark" ? "Dark" : "Light") + ", " + accentName(S.accent).toLowerCase(), "spage:display")}${row("lockk", "#9141ac", "Lock Screen", s.pin ? "PIN" : "Swipe to unlock", "spage:lock")}${row("batic", "#c88800", "Battery", "82%", "spage:battery")}</div>
+    <div class="bl">${row("cal", "#d56199", "Date and Time", "London", "spage:time")}${row("info", "#6f8396", "About Phone", "LiteKern Go on Galaxy A5", "spage:about")}</div>`);
+  const pages = {
+    wifi: ["Wi-Fi", `<div class="sec">Connected</div><div class="bl"><div class="row">${ic("wifi")}<span class="ti"><b>Home network</b><small>Strong signal</small></span></div></div><div class="sec">Other networks</div><div class="bl"><button class="row" type="button" data-act="toast:Joining isn't in the mockup">${ic("wifi")}<span class="ti"><b>Neighbour's Wi-Fi</b><small>Secured</small></span></button></div>`],
+    display: ["Display", `<div class="sec">Style</div><div class="bl"><button class="row" type="button" data-act="theme:dark">${ic("moon")}<span class="ti"><b>Dark</b></span>${S.theme === "dark" ? ic("right").replace("#right", "#up").replace('class="i"', 'class="i" style="color:var(--accent);opacity:0"') + `<span class="dot" style="width:12px;height:12px"></span>` : ""}</button><button class="row" type="button" data-act="theme:light">${ic("sun")}<span class="ti"><b>Light</b></span>${S.theme === "light" ? `<span class="dot" style="width:12px;height:12px"></span>` : ""}</button></div><div class="sec">Accent colour</div><div class="bl"><div class="row" style="justify-content:space-between">${ACCENTS.map(a => `<button type="button" data-act="accent:${a[1]}" aria-label="${a[0]}" class="swatch" style="background:${a[1]};${S.accent === a[1] ? "box-shadow:0 0 0 2px var(--on)" : "box-shadow:none"};border-color:transparent"></button>`).join("")}</div></div>`],
+    lock: ["Lock Screen", `<div class="bl">${tog("PIN", "Ask for it after you swipe", s.pin, "stog:pin")}${tog("Lock on sleep", "", s.sleep, "stog:sleep")}</div>`],
+    battery: ["Battery", `<div class="bl"><div class="mem"><div class="n">82% <span>Not charging</span></div><div class="mbar"><i style="width:82%"></i></div></div></div>`],
+    time: ["Date and Time", `<div class="bl">${info("Time zone", "London")}${info("Time", `${HH}:${MM}`)}</div>`],
+    about: ["About Phone", `<div class="bl">${info("Device", "Galaxy A5 (2015)")}${info("Model", "SM-A500FU")}${info("System", "LiteKern Go")}${info("Kernel", "Linux 6.12")}</div>`],
+  };
+  return hb(pages[p][0], back) + scroll(pages[p][1]);
+}
+function clockHtml() {
+  const c = T.clk;
+  const fmt = ms => { const t = Math.floor(ms / 10), m = String(Math.floor(t / 6000)).padStart(2, "0"), s = String(Math.floor(t / 100) % 60).padStart(2, "0"), h = String(t % 100).padStart(2, "0"); return `${m}:${s}.${h}`; };
+  const fmt2 = sec => `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+  const tabs = [["alarm","bell","Alarm"],["timer","timer","Timer"],["stop","stop","Stopwatch"]];
+  const idx = tabs.findIndex(t => t[0] === c.tab);
+  const vs = `<div class="vs lg" role="tablist"><span class="th" style="width:calc((100% - 8px) / 3);transform:translateX(${idx * 100}%)"></span>${tabs.map(t => `<button type="button" role="tab" aria-selected="${t[0] === c.tab}" data-act="ctab:${t[0]}">${ic(t[1])}${t[2]}</button>`).join("")}</div>`;
+  let body;
+  if (c.tab === "alarm") body = `<div class="bl">${c.alarms.map((a, i) => `<div class="row"><span class="ti"><span class="alt">${a[0]}</span><small>${a[1]}</small></span><button class="sw" type="button" role="switch" aria-checked="${a[2]}" aria-label="Alarm ${a[0]}" data-act="calarm:${i}"></button></div>`).join("")}</div>`;
+  else if (c.tab === "timer") {
+    const left = c.tmLeft || c.tm;
+    body = `<div class="bigt" id="clkT">${fmt2(left)}</div><div class="presets">${[60, 300, 600].map(s => `<button class="btn" type="button" data-act="cset:${s}" style="${c.tm === s && !c.tmOn ? "background:var(--accent);color:#fff" : ""}">${s / 60} min</button>`).join("")}</div><div class="pair"><button class="btn sug" type="button" data-act="ctm">${c.tmOn ? "Pause" : "Start"}</button></div>`;
+  } else body = `<div class="bigt" id="clkT">${fmt(c.sw + (c.swOn ? Date.now() - c.swT : 0))}</div><div class="pair"><button class="btn" type="button" data-act="csr">Reset</button><button class="btn ${c.swOn ? "" : "sug"}" type="button" data-act="css">${c.swOn ? "Stop" : "Start"}</button></div>`;
+  return hb("Clock", "", c.tab === "alarm" ? hbtn("plus", "toast:Adding alarms isn't in the mockup", "New alarm") : "") + scroll(body) + vs;
+}
+function webHtml() {
+  const favs = [["r3lay","#6d4bd8","r3"],["Wikipedia","#6f8396","W"],["BBC News","#b3261e","B"],["GitHub","#2b3038","G"]];
+  return hb("New tab", "", hbtn("tabs", "toast:Tabs aren't in the mockup", "Tabs"))
+    + scroll(`<div class="wsearch"><img src="${A["i-browser"]}" alt=""><b>Where to?</b></div><div class="wfav">${favs.map(f => `<button class="fav" type="button" data-act="toast:Pages can't load in the mockup"><i style="--c:${f[1]}">${f[2]}</i>${f[0]}</button>`).join("")}</div>`)
+    + `<form class="addr lg" id="addr"><button class="hbtn" type="button" data-act="toast:Nothing to go back to" aria-label="Back">${ic("left")}</button><input id="addri" aria-label="Search or enter address" placeholder="Search or enter address" autocomplete="off"><button class="hbtn" type="submit" aria-label="Go">${ic("search")}</button></form>`;
+}
+function blocksHtml() {
+  const b = T.blk;
+  return hb("Blocksmith", "", hbtn("more", "toast:Projects aren't in the mockup", "Project menu")) + scroll(`<div class="bstage">${b.said ? `<div class="bsay">Hello from Blocksmith!</div>` : ""}<div class="bcat"></div></div>
+    <div class="bl"><div class="blks"><span class="blk" style="--c:#c88800">when Run is tapped</span><span class="blk" style="--c:#2190a4">repeat 3 times</span><span class="blk in" style="--c:#9141ac">say "Hello from Blocksmith!"</span><span class="blk in" style="--c:#3584e4">turn 15 degrees</span></div></div>`)
+    + `<div class="bot"><button class="gbtn lg" type="button" data-act="toast:Blocks aren't draggable in the mockup">${ic("plus")}Add Block</button><button class="gbtn lg sug" type="button" data-act="brun">${ic("play")}Run</button></div>`;
+}
+function galleryHtml() {
+  const g = T.gal;
+  if (g.open != null) {
+    const a = g.list[g.open];
+    return `<div class="gv" style="background-image:url(${A[a]})"></div>` + hb(`Picture ${g.open + 1} of ${g.list.length}`, hbtn("left", "gclose", "Back to pictures"))
+      + `<div class="bot"><button class="gbtn lg" type="button" data-act="gwall:${a}">Wallpaper</button><button class="gbtn lg" type="button" data-act="toast:Set as lock screen">Lock Screen</button><button class="gbtn lg" type="button" data-act="gdel" aria-label="Delete" style="flex:0 0 50px">${ic("trash")}</button></div>`;
+  }
+  return hb("Gallery") + scroll(`<div class="h1">${g.list.length} pictures</div><div class="ggrid">${g.list.map((a, i) => `<button class="gi" type="button" data-act="gopen:${i}" aria-label="Picture ${i + 1}" style="background-image:url(${A[a]})"></button>`).join("")}</div>`);
+}
+function taskHtml() {
+  const mb = { files: 18, calculator: 9, settings: 14, clock: 11, browser: 164, blocksmith: 24, gallery: 42, taskmgr: 10, log: 8 };
+  const list = opened.filter(id => id !== "taskmgr");
+  const rows = list.map(id => `<div class="row"><img src="${A["i-" + id]}" alt="" style="width:36px;height:36px"><span class="ti"><b>${name(id)}</b><small>${mb[id]} MB</small></span><button class="btn small" type="button" data-act="tstop:${id}">Stop</button></div>`).join("");
+  const used = 412 + list.reduce((n, id) => n + mb[id], 0);
+  return hb("Task Manager") + scroll(`<div class="bl"><div class="mem"><div class="n">${used} MB <span>used of 1,970 MB</span></div><div class="mbar"><i style="width:${used / 19.7}%"></i></div></div></div>
+    <div class="sec">Running apps</div>${rows ? `<div class="bl">${rows}</div>` : `<div class="empty" style="color:var(--dim);position:static;padding:40px 0">No apps are running</div>`}`);
+}
+function logHtml() {
+  const L = ["LiteKern Go (on Linux)","storage: boot0 partition at 16384 (FAT32): read/write","lkx-start: system mounted ext4 rw","drm: driver vmwgfx (told of each change)","drm: 720x1280 on connector 42, 60 Hz","users: one admin, User, no password","net: Wi-Fi joined Home network","machine: time zone London","wallpaper: crossing, 156 KB, checked in 13 ms","desktop: ready","shell: Home","desktop: open Files","switcher: settles on Calculator","fx: 18 frames in 288 ms (62 fps)"];
+  return hb("Log", "", hbtn("more", "toast:Copying isn't in the mockup", "Log menu")) + scroll(`<div class="bl logv">${L.map((l, i) => `<div><i>${String(i * 137 % 900 + 100).padStart(3, "0")}</i> ${l}</div>`).join("")}</div>`);
+}
+function appHtml(id) {
+  return { files: filesHtml, calculator: calcHtml, settings: settingsHtml, clock: clockHtml, browser: webHtml, blocksmith: blocksHtml, gallery: galleryHtml, taskmgr: taskHtml, log: logHtml }[id]();
+}
+function drawApp() { if (S.view === "app") $("v-app").innerHTML = `<div class="appcv"></div>${appHtml(S.app)}`; }
+function openApp(id) {
+  opened = opened.filter(x => x !== id).concat(id);
+  S.app = id; closeOver(); go("app"); drawApp();
+}
+
+// Overlays
+function closeOver() { $("sheet").classList.remove("on"); $("scrim").classList.remove("on"); }
+function dialog(title, body, yes, act) {
+  $("scrim").innerHTML = `<div class="dlg lg strong" role="dialog" aria-label="${title}"><b>${title}</b><p>${body}</p><div class="acts"><button class="btn" type="button" data-act="over">Cancel</button><button class="btn des" type="button" data-act="${act}">${yes}</button></div></div>`;
+  $("scrim").classList.add("on");
+}
+let toastT;
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => e.classList.remove("on"), 1700); }
+function fileSheet(n) {
+  $("sheet").innerHTML = `<div class="st">${n}</div><div class="bl"><button class="row" type="button" data-act="ftoast:Opened">${ic("file")}<span class="ti"><b>Open</b></span></button><button class="row" type="button" data-act="ftoast:Rename isn't in the mockup">${ic("redo")}<span class="ti"><b>Rename</b></span></button><button class="row" type="button" data-act="fdel:${n}" style="color:var(--danger)">${ic("trash")}<span class="ti"><b>Delete</b></span></button></div>`;
+  $("scrim").innerHTML = ""; $("scrim").classList.add("on"); $("sheet").classList.add("on");
+}
 
 function go(v) {
   S.view = v; save();
-  document.querySelectorAll(".view").forEach(e => e.classList.toggle("on", e.id === "v-" + (v === "app" ? "app" : v)));
-  $("screen").dataset.frost = ["pin","recents","qs","power"].includes(v) ? 1 : 0;
+  document.querySelectorAll(".view").forEach(e => e.classList.toggle("on", e.id === "v-" + v));
+  $("screen").dataset.frost = ["pin","recents","qs","power","app"].includes(v) ? 1 : 0;
   $("barT").textContent = v === "lock" || v === "pin" ? "" : `${HH}:${MM}`;
-  $("bar").style.color = v === "settings" || v === "qs" ? "" : "#fff";
-  $("bar").style.display = v === "app" ? "none" : "";
+  const onGlass = (v === "app" && !(S.app === "gallery" && T.gal.open != null)) || v === "qs";
+  $("bar").style.color = onGlass ? "var(--on)" : "#fff";
   if (v === "pin") { code = ""; dots(); }
   if (v === "recents") renderRecents();
-  $("before").style.backgroundImage = BEFORE[v] ? `url(${A[BEFORE[v]]})` : "";
+  if (v === "app") drawApp();
+  closeOver();
   renderTabs(); renderNote(); renderBefore();
 }
-function openApp(id) {
-  if (!opened.includes(id)) opened.push(id);
-  else opened = opened.filter(x => x !== id).concat(id);
-  if (id === "settings") return go("settings");
-  app = id;
-  const src = A[SHOT[id]];
-  if (src) { $("v-app").innerHTML = `<img src="${src}" alt="${name(id)}">`; go("app"); }
-  else { opened = opened.filter(x => x !== id); }
-}
 function dots() { const d = $("dots"); if (d) [...d.children].forEach((e, i) => e.classList.toggle("f", i < code.length)); }
+const key = () => S.view === "app" ? S.app : S.view;
 
-function chips(id, items, key, after) {
+function chips(id, items, k, after) {
   const box = $(id); box.innerHTML = "";
   items.forEach(([label, val, swatch]) => {
     const b = document.createElement("button");
-    b.type = "button"; b.className = swatch ? "swatch" : "chip"; b.setAttribute("aria-pressed", String(S[key] === val));
+    b.type = "button"; b.className = swatch ? "swatch" : "chip"; b.setAttribute("aria-pressed", String(S[k] === val));
     if (swatch) { b.style.background = val; b.setAttribute("aria-label", label); b.title = label; } else b.textContent = label;
-    b.onclick = () => { S[key] = val; apply(); (after || (() => {}))(); };
+    b.onclick = () => { S[k] = val; apply(); };
     box.append(b);
   });
 }
-function renderTabs() { const b = $("tabs"); b.innerHTML = ""; VIEWS.forEach(([v, l]) => { const c = document.createElement("button"); c.type = "button"; c.className = "chip"; c.textContent = l; c.setAttribute("aria-pressed", String(S.view === v)); c.onclick = () => go(v); b.append(c); }); }
-function renderNote() { const n = NOTES[S.view] || ["This app isn't redesigned yet.", "It's today's screenshot, so you can see it beside the new shell."]; $("note").innerHTML = `<p><b>${n[0]}</b></p><p>${n[1]}</p>`; }
-function renderBefore() { const on = !!S.before && BEFORE[S.view]; $("before").classList.toggle("on", !!on); $("tag").classList.toggle("on", !!on); }
-function picks() { return `theme ${S.theme}, accent ${name2(S.accent)}, wallpaper ${S.wall}, icons ${S.plates ? "on plates" : "as they are"}, dock ${S.dock ? "on" : "off"}, clock ${S.clock}`; }
+function renderTabs() {
+  const mk = (box, list, on, fn) => { const b = $(box); b.innerHTML = ""; list.forEach(([v, l]) => { const c = document.createElement("button"); c.type = "button"; c.className = "chip"; c.textContent = l; c.setAttribute("aria-pressed", String(on === v)); c.onclick = () => fn(v); b.append(c); }); };
+  mk("tabs", VIEWS, S.view, go);
+  mk("atabs", APPS, S.view === "app" ? S.app : null, openApp);
+}
+function renderNote() { const n = NOTES[key()]; $("note").innerHTML = n ? `<p><b>${n[0]}</b></p><p>${n[1]}</p>` : ""; }
+function renderBefore() {
+  const b = BEFORE[key()], on = !!S.before && !!b;
+  $("before").style.backgroundImage = b ? `url(${A[b]})` : "";
+  $("before").classList.toggle("on", on); $("tag").classList.toggle("on", on);
+  $("tag").textContent = "CURRENT SHELL";
+}
+function picks() { return `theme ${S.theme}, accent ${accentName(S.accent).toLowerCase()}, wallpaper ${S.wall}, icons ${S.plates ? "on plates" : "as they are"}, dock ${S.dock ? "on" : "off"}, clock ${S.clock}`; }
 
 function apply() {
   save();
@@ -392,25 +676,83 @@ function apply() {
   $("screen").dataset.theme = S.theme;
   const w = A["w-" + S.wall + (S.theme === "light" ? "-light" : "")] || A["w-" + S.wall];
   $("wall").style.backgroundImage = $("frost").style.backgroundImage = `url(${w})`;
-  chips("o-before", [["New",0],["Current shell",1]], "before");
+  chips("o-before", [["New",0],["Current",1]], "before");
   chips("o-theme", [["Dark","dark"],["Light","light"]], "theme");
-  $("o-accent").innerHTML = ""; chips("o-accent", ACCENTS.map(a => [a[0], a[1], 1]), "accent");
+  chips("o-accent", ACCENTS.map(a => [a[0], a[1], 1]), "accent");
   chips("o-wall", [["Crossing","crossing"],["Aurora","aurora"],["Drift","drift"],["Dusk","dusk"]], "wall");
   chips("o-plates", [["As they are",0],["On plates",1]], "plates");
   chips("o-dock", [["On",1],["Off",0]], "dock");
   chips("o-clock", [["Stacked","stacked"],["One line","inline"]], "clock");
-  renderLock(); renderPin(); renderHome(); renderQs(); renderPower(); renderSettings();
+  renderLock(); renderPin(); renderHome(); renderQs(); renderPower();
   $("picks").textContent = picks();
   go(S.view);
+}
+
+// Stopwatch and timer tick
+setInterval(() => {
+  const c = T.clk, t = $("clkT");
+  if (c.tmOn) { const left = Math.ceil((c.tmEnd - Date.now()) / 1000); c.tmLeft = Math.max(left, 0); if (left <= 0) { c.tmOn = false; c.tmLeft = 0; toast("Timer finished"); if (S.view === "app" && S.app === "clock") drawApp(); } }
+  if (!t || S.view !== "app" || S.app !== "clock") return;
+  if (c.tab === "stop" && c.swOn) { const ms = c.sw + Date.now() - c.swT, q = Math.floor(ms / 10); t.textContent = `${String(Math.floor(q / 6000)).padStart(2, "0")}:${String(Math.floor(q / 100) % 60).padStart(2, "0")}.${String(q % 100).padStart(2, "0")}`; }
+  if (c.tab === "timer" && c.tmOn) t.textContent = `${String(Math.floor(c.tmLeft / 60)).padStart(2, "0")}:${String(c.tmLeft % 60).padStart(2, "0")}`;
+}, 50);
+
+// Everything tappable in an app
+function act(a) {
+  const i = a.indexOf(":"), cmd = i < 0 ? a : a.slice(0, i), arg = i < 0 ? "" : a.slice(i + 1);
+  const c = T.clk;
+  switch (cmd) {
+    case "toast": return toast(arg);
+    case "over": return closeOver();
+    case "dir": T.files.dir = T.files.dir && arg === "Screenshots" ? "Pictures/Screenshots" : arg; T.files.items["Pictures/Screenshots"] = T.files.items["Pictures/Screenshots"] || [["Screenshot_1.png",0,"412 KB"],["Screenshot_2.png",0,"388 KB"],["Screenshot_3.png",0,"401 KB"]]; T.files.items.Camera = T.files.items.Camera || []; break;
+    case "updir": T.files.dir = T.files.dir && T.files.dir.includes("/") ? "Pictures" : ["Screenshots","Camera"].includes(T.files.dir) ? "Pictures" : null; break;
+    case "fsheet": return fileSheet(arg);
+    case "ftoast": closeOver(); return toast(arg);
+    case "fdel": { closeOver(); const n = arg; return dialog("Delete this file?", n, "Delete", "fdel2:" + n); }
+    case "fdel2": { const d = T.files.dir || ""; T.files.items[d] = T.files.items[d].filter(x => x[0] !== arg); closeOver(); break; }
+    case "c": calcKey(arg); break;
+    case "spage": T.set.page = arg || null; break;
+    case "stog": T.set[arg] = !T.set[arg]; break;
+    case "theme": S.theme = arg; return apply();
+    case "accent": S.accent = arg; return apply();
+    case "ctab": c.tab = arg; break;
+    case "calarm": c.alarms[+arg][2] = !c.alarms[+arg][2]; break;
+    case "cset": c.tm = +arg; c.tmLeft = 0; c.tmOn = false; break;
+    case "ctm": if (c.tmOn) { c.tmOn = false; } else { c.tmEnd = Date.now() + (c.tmLeft || c.tm) * 1000; c.tmOn = true; } break;
+    case "css": if (c.swOn) { c.sw += Date.now() - c.swT; c.swOn = false; } else { c.swT = Date.now(); c.swOn = true; } break;
+    case "csr": c.sw = 0; c.swOn = false; break;
+    case "brun": T.blk.said = true; drawApp(); clearTimeout(T.blk.t); T.blk.t = setTimeout(() => { T.blk.said = false; if (S.app === "blocksmith") drawApp(); }, 2400); return;
+    case "gopen": T.gal.open = +arg; go("app"); return;
+    case "gclose": T.gal.open = null; go("app"); return;
+    case "gwall": { const w = arg.startsWith("w-") ? arg.slice(2) : null; if (w) { S.wall = w; apply(); toast("Wallpaper set"); } else toast("Screenshots can't be wallpaper here"); return; }
+    case "gdel": return dialog("Delete this picture?", "It can't be brought back.", "Delete", "gdel2");
+    case "gdel2": T.gal.list.splice(T.gal.open, 1); T.gal.open = null; closeOver(); go("app"); return;
+    case "tstop": return dialog("Stop " + name(arg) + "?", "Anything you haven't saved will be lost.", "Stop", "tstop2:" + arg);
+    case "tstop2": opened = opened.filter(o => o !== arg); closeOver(); break;
+    default: return;
+  }
+  drawApp();
 }
 
 // Keys
 $("k-home").onclick = () => go("home");
 $("k-rec").onclick = () => go(S.view === "recents" ? "home" : "recents");
-$("k-back").onclick = () => { const v = S.view; go(v === "pin" ? "lock" : v === "lock" ? "lock" : "home"); };
+$("k-back").onclick = () => {
+  if ($("scrim").classList.contains("on")) return closeOver();
+  if (S.view === "app") {
+    if (S.app === "files" && T.files.dir) return act("updir");
+    if (S.app === "settings" && T.set.page) return act("spage:");
+    if (S.app === "gallery" && T.gal.open != null) return act("gclose");
+    return go("home");
+  }
+  go(S.view === "pin" ? "lock" : S.view === "lock" ? "lock" : "home");
+};
 $("pw").onclick = () => go(S.view === "power" ? "home" : "power");
 $("bar").onclick = () => go(S.view === "qs" ? "home" : "qs");
+$("scrim").addEventListener("click", e => { if (e.target.id === "scrim") closeOver(); });
+$("screen").addEventListener("submit", e => { e.preventDefault(); toast("Pages can't load in the mockup"); });
 $("screen").addEventListener("click", e => {
+  const a = e.target.closest("[data-act]"); if (a) { e.preventDefault(); return act(a.dataset.act); }
   const o = e.target.closest("[data-open]"); if (o) return openApp(o.dataset.open);
   const k = e.target.closest("[data-k]");
   if (k) {
@@ -429,7 +771,7 @@ $("screen").addEventListener("click", e => {
     if (t.dataset.t === "moon") { S.theme = S.theme === "dark" ? "light" : "dark"; return apply(); }
     t.setAttribute("aria-pressed", t.getAttribute("aria-pressed") === "true" ? "false" : "true"); return;
   }
-  if (e.target.closest("#qgear")) return go("settings");
+  if (e.target.closest("#qgear")) return openApp("settings");
   if (e.target.closest("#plock")) return go("lock");
   if (e.target.closest("#closeall")) { opened = []; return renderRecents(); }
   if (e.target.id === "v-power" || e.target.id === "v-qs") return go("home");
