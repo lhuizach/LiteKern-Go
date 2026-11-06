@@ -157,7 +157,7 @@ tests pass.
 Needs phase 0. Every flash needs the owner's OK in chat, one change per flash.
 
 - [x] Flash lk2nd with Heimdall, check it boots to lk2nd (done: from the Fedora VM, `--BOOT`, `--no-reboot`; it boots to its fastboot menu: lk2nd-msm8916 23.1, A5U SM-A500FU, ARM64 available)
-- [ ] Flash the Nura Phosh boot and rootfs images with fastboot
+- [x] Nura Phosh flashed (one flash: `fastboot flash userdata` of the sparse image, 8 pieces, 193 s) and it boots on the phone
 - [ ] SSH in over USB (172.16.42.1)
 - [ ] Test and write down: screen, touch, Wi-Fi, USB, storage, SD card, camera,
       brightness, vibration, battery reading, sleep/wake
