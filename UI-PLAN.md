@@ -19,8 +19,8 @@ desktop shell. Built and tested in the VM first (see "Testing in the VM").
 
 ## The hardware keys
 
-Under the screen, left to right: **Back** (touch key), **Home**
-(physical button), **Recent apps** (touch key). On the side: Power, Volume Up and
+Under the screen, left to right: **Recent apps** (touch key), **Home**
+(physical button), **Back** (touch key). On the side: Power, Volume Up and
 Volume Down.
 
 | Key | Short press | Long press (500 ms) |
@@ -42,7 +42,7 @@ The touch keys have backlights. They turn on with any touch and off after a
 few seconds, like on stock Android.
 
 **Unverified:** what key codes Linux gives these keys on the A5. Expected:
-`KEY_HOMEPAGE` (Home), `KEY_BACK` (left key), `KEY_APPSELECT` or `KEY_MENU` (right key),
+`KEY_HOMEPAGE` (Home), `KEY_BACK` (right key), `KEY_APPSELECT` or `KEY_MENU` (left key),
 `KEY_POWER`, `KEY_VOLUMEUP/DOWN`. Check with `evtest` on the first Nura boot,
 then put the real codes in the key map. The touch-key backlight driver is also
 unverified.
@@ -73,7 +73,7 @@ sized for a 1024x600 netbook at about 118 ppi, so everything gets bigger.
 │                          │
 │                          │
 └──────────────────────────┘
-    [Back]   (Home)  [Recent]    hardware keys, not drawn
+    [Recent]  (Home)  [Back]     hardware keys, not drawn
 ```
 
 ## Screens
