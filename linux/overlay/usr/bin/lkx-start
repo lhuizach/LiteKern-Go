@@ -34,6 +34,7 @@ while [ -z "$disk" ] && [ $i -lt 100 ]; do
     i=$((i + 1))
 done
 echo "lkx-start: disk ${disk:-not found} after $((i * 200)) ms" > "$out"
+echo "lkx-start: system mounted $(grep -m1 " / " /proc/mounts | cut -d" " -f3,4 | cut -d, -f1)" > "$out"
 
 # The time: lkx-shell reads the EeePC's clock in the time zone Settings chose
 # (London unless changed: platform/machine.c), and sets it from the internet

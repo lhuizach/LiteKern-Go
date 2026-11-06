@@ -116,6 +116,7 @@ cp $BASE $T/disk.img
 SCREEN="corner=" SHOT=boot boot_until $T/disk.img "$ready_re" 120
 check "boots: Linux (through SYSLINUX on PCs), lkx-start finds the stick, the logo, the home screen" \
     '^lkx-start: disk /dev/(sda|vda) after [0-9]+ ms$' \
+    '^lkx-start: system mounted ext4 rw$' \
     '^LiteKern X \(on Linux\)$' \
     '^drm: 720x1280 on connector' \
     '^input: .*\(keyboard' \
