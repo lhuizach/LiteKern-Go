@@ -135,3 +135,16 @@ Then `fastboot boot boot-litekern-go.img` from lk2nd's menu (each `fastboot boot
 - The kernel's text console is the screen first (`console=tty0`), so a fault shows on the panel.
 - Not in this system yet: Wi-Fi (needs the firmware loader Nura has: the wcnss files come from the modem
   partition), so no ssh until that, and nothing runs the GPU.
+
+### First RAM boot of our own system (2026-11-06, evening): garbage on the screen, no boot
+
+`fastboot boot boot-litekern-go.img` (ramdisk 30 MB at 0x82000000, kernel 8.5 MB at 0x80080000): the phone's
+lk2nd screen stayed, with a band of coloured noise across the middle of it, and nothing booted (the PC saw no
+USB network from it). Nura's own ramdisk is 14 MB and boots fine.
+
+Theory, not yet checked: the ramdisk is copied over the memory lk2nd scans the screen from (a simple
+framebuffer somewhere above 0x82000000), so the noise is our compressed system overwriting the picture, and
+the boot then fails. Next: find the framebuffer's address on a running Nura (the device tree's `chosen`
+framebuffer node, or `journalctl -k | grep -i framebuffer`), then either keep the ramdisk below it (xz instead
+of gzip: 28 to 20 MB; fewer modules, 576 now; drop NetSurf for the test) or put `ramdisk_addr` above it in
+the boot image header (`phone/bootimg.py`), and try again.
