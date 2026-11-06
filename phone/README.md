@@ -107,8 +107,8 @@ Recipe: `/dev/input/event*` is `root:input`, so `sudo addgroup user input` once 
 ## Our kernel on the phone (`fastboot boot`, 2026-11-06)
 
 `phone/build-kernel.sh` then `phone/make-boot.sh` gave `boot-our-kernel.img` (Nura's boot image with our kernel),
-sent with `fastboot boot` from lk2nd's menu (reached with `sudo reboot bootloader`? no: that just rebooted
-into Nura; the volume-down-at-boot way worked). RAM only: nothing is written; a plain restart returns to
+sent with `fastboot boot` from lk2nd's menu. `sudo reboot bootloader` only restarted into Nura; the owner then
+reached the menu by the power-off and Volume Down way I suggested (their report, not checked). RAM only: nothing is written; a plain restart returns to
 Nura's own kernel.
 
 - It boots: `uname -v` shows our build (`#2 ... lhuir@GamingPC ... Buildroot gcc 14.3.0`).
