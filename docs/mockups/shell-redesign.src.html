@@ -1,0 +1,480 @@
+<title>LiteKern Go Shell</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:wght@200..700&family=Ubuntu+Sans+Mono:wght@400..600&display=swap">
+<style>
+/* Layout: a control column beside one real-size A5, keys and all.
+   The review page is a single dark look; the phone inside has its own theme. */
+:root {
+  color-scheme: dark;
+  --page: #0d0f15; --panel: #161922; --line: #2a2f3c; --text: #e8ebf3; --muted: #98a0b3;
+  --accent: #3584e4;
+  --ui: "Ubuntu Sans", system-ui, sans-serif;
+  --mono: "Ubuntu Sans Mono", ui-monospace, monospace;
+}
+html, body { height: 100%; }
+body { background: var(--page); color: var(--text); font-family: var(--ui); font-size: 14px; }
+.app {
+  display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 28px; min-height: 100%;
+  padding-block: 20px; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); box-sizing: border-box;
+  max-width: 1040px; margin: 0 auto;
+}
+.side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+h1 { font-size: 22px; font-weight: 500; margin: 0; letter-spacing: -.01em; }
+.lead { color: var(--muted); margin: 4px 0 0; line-height: 1.45; }
+.lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip:focus-visible, .key:focus-visible, .pw:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.swatch { width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 2px solid var(--page); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px #fff; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; line-height: 1.45; }
+.note b { font-weight: 600; }
+.note p { margin: 0; }
+.note p + p { margin-top: 8px; color: var(--muted); }
+.picks { display: flex; gap: 8px; align-items: flex-start; }
+.picks code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+
+.stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; }
+.fit { position: relative; flex: none; }
+.device {
+  position: absolute; left: 0; top: 0; width: 396px; height: 770px; transform-origin: 0 0;
+  background: linear-gradient(160deg, #23262e, #111318); border-radius: 44px;
+  box-shadow: 0 0 0 1px #3a3e49, 0 30px 70px rgba(0,0,0,.55);
+}
+.earpiece { position: absolute; top: 25px; left: 50%; width: 58px; height: 6px; margin-left: -29px; background: #000; border-radius: 4px; box-shadow: inset 0 0 0 1px #2c2f38; }
+.pw { position: absolute; right: -4px; top: 218px; width: 5px; height: 62px; padding: 0; border: 0; background: #464a55; border-radius: 0 3px 3px 0; cursor: pointer; }
+.screen {
+  position: absolute; left: 18px; top: 50px; width: 360px; height: 640px; overflow: hidden; background: #000;
+  border-radius: 4px; user-select: none; -webkit-user-select: none; touch-action: pan-y;
+  /* the phone's own tokens */
+  --bg: #15171e; --card: #20232c; --card2: #2b2f3a; --on: #f4f6fb; --dim: #a5adbf; --glass: rgba(26,29,38,.56); --rim: rgba(255,255,255,.14); --accent2: var(--accent);
+  color: var(--on);
+}
+.screen[data-theme="light"] {
+  --bg: #eef0f5; --card: #fff; --card2: #e6e9f0; --on: #171a22; --dim: #5e6678; --glass: rgba(255,255,255,.62); --rim: rgba(0,0,0,.08);
+}
+.keys { position: absolute; left: 18px; right: 18px; top: 696px; height: 62px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; box-sizing: border-box; }
+.key { background: none; border: 0; color: #7d8494; width: 62px; height: 42px; display: grid; place-items: center; cursor: pointer; border-radius: 12px; padding: 0; }
+.key svg { width: 19px; height: 19px; }
+.key.hk { width: 84px; height: 30px; border-radius: 15px; box-shadow: inset 0 0 0 1.5px #3c414d; }
+
+svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+
+/* wallpaper layers */
+.wall, .frost { position: absolute; inset: 0; background-size: cover; background-position: 50% 50%; }
+.frost { inset: -30px; filter: blur(22px) saturate(1.25) brightness(.68); opacity: 0; transition: opacity .3s ease; }
+.screen[data-frost="1"] .frost { opacity: 1; }
+.screen[data-theme="light"] .frost { filter: blur(22px) saturate(1.2) brightness(1.08); }
+
+.view { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(.975); transition: opacity .22s ease, transform .32s cubic-bezier(.2,.9,.25,1.05); }
+.view.on { opacity: 1; pointer-events: auto; transform: none; }
+
+.bar { position: absolute; left: 0; right: 0; top: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 500; z-index: 30; font-variant-numeric: tabular-nums; cursor: pointer; }
+.bar .r { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.bar .r svg { width: 15px; height: 15px; }
+.batt { width: 22px; height: 11px; border: 1.3px solid currentColor; border-radius: 3.5px; position: relative; box-sizing: border-box; padding: 1.2px; }
+.batt i { display: block; height: 100%; width: 82%; background: currentColor; border-radius: 1.2px; }
+.batt::after { content: ""; position: absolute; right: -3.6px; top: 2.4px; width: 2px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+
+/* lock */
+.lock { padding: 74px 26px 0; box-sizing: border-box; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0,.3); touch-action: none; cursor: grab; }
+.lock .date { font-size: 15px; font-weight: 500; opacity: .95; }
+.clock { font-weight: 200; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.lock .clock { font-size: 112px; line-height: .92; margin: 8px 0 26px -4px; }
+.lock[data-clock="inline"] .clock { font-size: 80px; line-height: 1; margin-left: -3px; }
+.lnotes { display: flex; flex-direction: column; gap: 8px; }
+.lnote { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 18px; background: rgba(18,20,28,.42); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); font-size: 13px; text-shadow: none; }
+.lnote img { width: 24px; height: 24px; }
+.hint { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; font-size: 13px; opacity: .85; }
+.hint svg { width: 18px; height: 18px; margin: 0 auto 2px; animation: nudge 2.2s ease-in-out infinite; }
+@keyframes nudge { 50% { transform: translateY(-5px); } }
+
+/* pin */
+.pin { color: #fff; display: flex; flex-direction: column; align-items: center; padding-top: 112px; box-sizing: border-box; }
+.pin .t { font-size: 17px; margin-bottom: 18px; }
+.dots { display: flex; gap: 16px; height: 14px; margin-bottom: 40px; }
+.dots i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.75); transition: background .1s; }
+.dots i.f { background: #fff; }
+.dots.bad { animation: shake .34s; }
+@keyframes shake { 20% { transform: translateX(-9px); } 45% { transform: translateX(8px); } 70% { transform: translateX(-5px); } }
+.pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px 22px; }
+.pk { width: 72px; height: 72px; border: 0; border-radius: 50%; font: inherit; font-size: 28px; font-weight: 300; color: #fff; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); cursor: pointer; }
+.pk:active { background: rgba(255,255,255,.26); }
+.pk.t2 { font-size: 14px; font-weight: 500; background: none; box-shadow: none; }
+
+/* home */
+.home { padding: 56px 22px 0; box-sizing: border-box; color: #fff; }
+.home .clock { font-size: 60px; line-height: 1; text-shadow: 0 1px 12px rgba(0,0,0,.28); margin-left: -2px; }
+.home .date { font-size: 14px; margin-top: 3px; opacity: .92; }
+.grid { position: absolute; left: 12px; right: 12px; display: grid; grid-template-columns: repeat(4, 1fr); row-gap: 16px; }
+.ic { background: none; border: 0; padding: 0; font: inherit; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
+.ic:active .gl { transform: scale(.9); }
+.gl { width: 58px; height: 58px; display: grid; place-items: center; transition: transform .16s cubic-bezier(.2,.9,.3,1.4); }
+.gl img { width: 58px; height: 58px; }
+.plates .gl { border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--rim), 0 4px 12px rgba(0,0,0,.2); }
+.plates .gl img { width: 44px; height: 44px; }
+.ic .lab { font-size: 11.5px; max-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.dockb { position: absolute; left: 10px; right: 10px; bottom: 12px; height: 88px; border-radius: 28px; background: var(--glass); backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3); box-shadow: inset 0 0 0 1px var(--rim); display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; }
+.dockb .ic .lab { display: none; }
+.pdots { position: absolute; left: 0; right: 0; display: flex; gap: 7px; justify-content: center; }
+.pdots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.4); }
+.pdots i:first-child { background: #fff; }
+
+/* recents */
+.recents { color: #fff; }
+.rtitle { position: absolute; top: 46px; left: 24px; font-size: 21px; font-weight: 400; }
+.rail { position: absolute; left: 0; right: 0; top: 96px; height: 440px; display: flex; gap: 16px; overflow-x: auto; overflow-y: visible; scroll-snap-type: x mandatory; padding: 0 72px; box-sizing: border-box; scrollbar-width: none; touch-action: pan-x; }
+.rail::-webkit-scrollbar { display: none; }
+.card { flex: none; width: 216px; scroll-snap-align: center; display: flex; flex-direction: column; gap: 10px; transition: transform .28s cubic-bezier(.2,.9,.25,1), opacity .22s; cursor: pointer; }
+.card.go { transform: translateY(-120%); opacity: 0; }
+.card .h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; height: 26px; }
+.card .h img { width: 24px; height: 24px; }
+.card .s { width: 216px; height: 384px; border-radius: 24px; overflow: hidden; background: #000; box-shadow: 0 0 0 1.5px rgba(255,255,255,.3), 0 18px 40px rgba(0,0,0,.45); }
+.card .s img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: top; pointer-events: none; }
+.empty { position: absolute; left: 0; right: 0; top: 280px; text-align: center; color: rgba(255,255,255,.8); }
+.pillb { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); border: 0; font: inherit; font-weight: 500; font-size: 14px; color: #fff; padding: 11px 26px; border-radius: 999px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); cursor: pointer; }
+
+/* quick settings */
+.qs { padding: 42px 12px 0; box-sizing: border-box; color: var(--on); display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.qhead { display: flex; align-items: flex-end; justify-content: space-between; padding: 0 10px 2px; }
+.qhead .t { font-size: 34px; font-weight: 300; font-variant-numeric: tabular-nums; line-height: 1; }
+.qhead .d { font-size: 13px; color: var(--dim); margin-top: 3px; }
+.gear { background: var(--glass); color: var(--on); border: 0; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; font-size: 19px; box-shadow: inset 0 0 0 1px var(--rim); }
+.panel { background: var(--glass); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); box-shadow: inset 0 0 0 1px var(--rim); border-radius: 26px; padding: 14px 12px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 4px; }
+.tile { background: none; border: 0; color: var(--on); font: inherit; font-size: 10.5px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; padding: 0; min-width: 0; }
+.tile i { width: 50px; height: 50px; border-radius: 50%; background: var(--card2); color: var(--on); display: grid; place-items: center; font-size: 22px; transition: background .16s, color .16s; }
+.tile[aria-pressed="true"] i { background: var(--accent); color: #fff; }
+.tile span { max-width: 74px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sl { display: flex; align-items: center; gap: 10px; font-size: 19px; color: var(--dim); padding: 3px 4px; }
+input[type=range] { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 26px; border-radius: 13px; background: linear-gradient(90deg, var(--accent) var(--v, 60%), var(--card2) var(--v, 60%)); cursor: pointer; margin: 0; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: #fff; }
+.qn { display: flex; gap: 10px; align-items: center; padding: 10px 12px; }
+.qn img { width: 34px; height: 34px; }
+.qn b { font-weight: 500; font-size: 13.5px; display: block; }
+.qn small { color: var(--dim); font-size: 12px; }
+.clear { align-self: center; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 500; color: var(--on); cursor: pointer; padding: 6px 14px; }
+
+/* power */
+.power { color: #fff; }
+.pstack { position: absolute; right: 14px; top: 150px; display: flex; flex-direction: column; gap: 14px; }
+.pbtn { background: none; border: 0; color: #fff; font: inherit; font-size: 15px; display: flex; align-items: center; justify-content: flex-end; gap: 14px; cursor: pointer; padding: 0; }
+.pbtn i { width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.pbtn.off i { background: #d9352f; box-shadow: none; }
+.pbtn:active i { transform: scale(.92); }
+
+/* settings, a redesigned app */
+.setv { background: var(--bg); color: var(--on); overflow-y: auto; scrollbar-width: none; }
+.setv::-webkit-scrollbar { display: none; }
+.stitle { padding: 96px 24px 22px; font-size: 34px; font-weight: 300; }
+.sgroup { margin: 0 12px 12px; background: var(--card); border-radius: 24px; overflow: hidden; }
+.srow { display: flex; align-items: center; gap: 14px; padding: 13px 16px; }
+.srow + .srow { box-shadow: 0 -1px 0 var(--card2); }
+.srow i { width: 36px; height: 36px; border-radius: 50%; background: var(--c, var(--accent)); color: #fff; display: grid; place-items: center; font-size: 19px; flex: none; }
+.srow b { font-weight: 500; font-size: 15.5px; display: block; }
+.srow small { font-size: 12.5px; color: var(--dim); }
+.appv img { width: 100%; height: 100%; display: block; }
+
+.before { position: absolute; inset: 0; z-index: 50; background-size: cover; display: none; }
+.before.on { display: block; }
+.tag { position: absolute; z-index: 51; left: 50%; top: 40px; transform: translateX(-50%); padding: 4px 10px; font: 500 11px var(--mono); letter-spacing: .08em; border-radius: 999px; background: #d9352f; color: #fff; display: none; }
+.tag.on { display: block; }
+
+@media (max-width: 800px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { display: contents; }
+  .head { order: 1; } .screens { order: 2; } .stage { order: 3; } .opts { order: 4; } .note { order: 5; } .pk2 { order: 6; }
+  .app { display: flex; flex-direction: column; gap: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .view, .card, .frost { transition: none; } .hint svg { animation: none; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="wifi" viewBox="0 0 24 24"><path d="M2 8.8a15 15 0 0 1 20 0M5.2 12.4a10.5 10.5 0 0 1 13.6 0M8.5 16a6 6 0 0 1 7 0"/><circle cx="12" cy="19.6" r=".7"/></symbol>
+<symbol id="bt" viewBox="0 0 24 24"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></symbol>
+<symbol id="dnd" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M7.5 12h9"/></symbol>
+<symbol id="plane" viewBox="0 0 24 24"><path d="M21 15.5v-2l-8-5V4a1.5 1.5 0 0 0-3 0v4.5l-8 5v2l8-2.5v5l-2.5 2v1.5l4-1 4 1V20L13 18v-5z"/></symbol>
+<symbol id="flash" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+<symbol id="rot" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5"/></symbol>
+<symbol id="shot" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+<symbol id="pow" viewBox="0 0 24 24"><path d="M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+<symbol id="redo" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8L20 8.5M20 3.5v5h-5"/></symbol>
+<symbol id="lockk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+<symbol id="back" viewBox="0 0 24 24"><path d="M9 6 4 11l5 5M4 11h11a5 5 0 0 1 0 10h-3"/></symbol>
+<symbol id="recent" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2.5"/></symbol>
+<symbol id="up" viewBox="0 0 24 24"><path d="m5 15 7-7 7 7"/></symbol>
+<symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+<symbol id="vol" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM17 9a4 4 0 0 1 0 6"/></symbol>
+<symbol id="pic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 16-5-5L6 20"/></symbol>
+<symbol id="batic" viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2.5"/><path d="M22 11v2"/></symbol>
+<symbol id="cal" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M4 10h16M8 3v4M16 3v4"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.1"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <div class="side">
+    <div class="head">
+      <h1>LiteKern Go shell</h1>
+      <p class="lead">A redesign to try on. Tap the screen and the phone's keys, then send me your picks.</p>
+    </div>
+    <div class="screens">
+      <p class="lbl">Screen</p>
+      <div class="chips" id="tabs"></div>
+    </div>
+    <div class="opts" style="display:flex;flex-direction:column;gap:14px">
+      <div><p class="lbl">Compare</p><div class="chips" id="o-before"></div></div>
+      <div><p class="lbl">Theme</p><div class="chips" id="o-theme"></div></div>
+      <div><p class="lbl">Accent</p><div class="chips" id="o-accent"></div></div>
+      <div><p class="lbl">Wallpaper</p><div class="chips" id="o-wall"></div></div>
+      <div><p class="lbl">App icons</p><div class="chips" id="o-plates"></div></div>
+      <div><p class="lbl">Home screen dock</p><div class="chips" id="o-dock"></div></div>
+      <div><p class="lbl">Clock</p><div class="chips" id="o-clock"></div></div>
+    </div>
+    <div class="note" id="note"></div>
+    <div class="note pk2">
+      <p class="lbl">Your picks</p>
+      <div class="picks"><code id="picks"></code><button class="chip" id="copy" type="button">Copy</button></div>
+    </div>
+  </div>
+  <div class="stage" id="stage"><div class="fit" id="fit"><div class="device" id="device">
+    <div class="earpiece"></div>
+    <button class="pw" id="pw" type="button" aria-label="Power key: opens the power menu"></button>
+    <div class="screen" id="screen" data-theme="dark">
+      <div class="wall" id="wall"></div><div class="frost" id="frost"></div>
+      <div class="bar" id="bar"><span id="barT"></span><span class="r"><svg class="i"><use href="#wifi"/></svg><span class="batt"><i></i></span>82%</span></div>
+      <div class="view lock" id="v-lock"></div>
+      <div class="view pin" id="v-pin"></div>
+      <div class="view home" id="v-home"></div>
+      <div class="view recents" id="v-recents"></div>
+      <div class="view qs" id="v-qs"></div>
+      <div class="view power" id="v-power"></div>
+      <div class="view setv" id="v-settings"></div>
+      <div class="view appv" id="v-app"></div>
+      <div class="before" id="before"></div><div class="tag" id="tag">CURRENT SHELL</div>
+    </div>
+    <div class="keys">
+      <button class="key" id="k-back" type="button" aria-label="Back key"><svg class="i"><use href="#back"/></svg></button>
+      <button class="key hk" id="k-home" type="button" aria-label="Home key"></button>
+      <button class="key" id="k-rec" type="button" aria-label="Recent apps key"><svg class="i"><use href="#recent"/></svg></button>
+    </div>
+  </div></div></div>
+</div>
+
+<script>
+const A = /*ASSETS*/{};
+const $ = id => document.getElementById(id);
+const ic = n => `<svg class="i"><use href="#${n}"/></svg>`;
+const APPS = [["files","Files"],["calculator","Calculator"],["settings","Settings"],["clock","Clock"],["browser","Web"],["blocksmith","Blocksmith"],["gallery","Gallery"],["taskmgr","Task Manager"],["log","Log"]];
+const name = id => APPS.find(a => a[0] === id)[1];
+const SHOT = { files: "a-files", calculator: "a-calc", settings: "a-settings", clock: "a-clock" };
+const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"],["settings","Settings app"]];
+const BEFORE = { lock: "b-lock", pin: "b-lock", home: "b-home", recents: "b-recents", qs: "b-qs", power: "b-power", settings: "a-settings" };
+const NOTES = {
+  lock: ["Big stacked clock on the left, with the notifications close to it.", "Swipe up on the screen to unlock. All of this is easy in the C shell."],
+  pin: ["Soft round keys over the blurred wallpaper. Try 1234, then a wrong code.", "Easy in the C shell: the blur is drawn once."],
+  home: ["Clock moves to the top left, and a glass dock holds four apps within thumb reach.", "Easy in the C shell. The dock's blur can be drawn once per wallpaper."],
+  recents: ["Swipe sideways and cards snap. Swipe a card up to close it.", "Snap, blur and the outline already exist in the C shell. This page adds spacing and a title."],
+  qs: ["Grouped glass panels, with real sliders. Dark mode here works.", "Medium in the C shell: the panel has to redraw its blur as it slides, so on the phone it may fade in instead."],
+  power: ["The buttons sit by the Power key, on the right edge, so your thumb is already there.", "Easy in the C shell."],
+  settings: ["Large title, then rounded groups. This is the look for every app.", "Needs changes to the shared widgets, so all apps get it at once. Other apps still open as they are today."],
+};
+const S = { view: "lock", before: 0, theme: "dark", accent: "#3584e4", wall: "crossing", plates: 0, dock: 1, clock: "stacked" };
+try { Object.assign(S, JSON.parse(localStorage.getItem("lk-mock") || "{}")); S.before = 0; } catch (e) {}
+const save = () => { try { localStorage.setItem("lk-mock", JSON.stringify(S)); } catch (e) {} };
+let opened = ["clock", "calculator", "files"], app = null;
+
+const now = new Date();
+const HH = String(now.getHours()).padStart(2, "0"), MM = String(now.getMinutes()).padStart(2, "0");
+const DATE = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+const icon = id => `<span class="gl"><img src="${A["i-" + id]}" alt=""></span>`;
+const btn = id => `<button class="ic" type="button" data-open="${id}">${icon(id)}<span class="lab">${name(id)}</span></button>`;
+
+function renderLock() {
+  const big = S.clock === "stacked" ? `${HH}<br>${MM}` : `${HH}:${MM}`;
+  $("v-lock").dataset.clock = S.clock;
+  $("v-lock").innerHTML = `<div class="date">${DATE}</div><div class="clock">${big}</div>
+    <div class="lnotes"><div class="lnote"><img src="${A["i-clock"]}" alt="">Alarm set for 07:30</div>
+    <div class="lnote"><img src="${A["i-settings"]}" alt="">Wi-Fi connected</div></div>
+    <div class="hint">${ic("up")}Swipe up to unlock</div>`;
+}
+let code = "";
+function renderPin() {
+  const k = [1,2,3,4,5,6,7,8,9].map(n => `<button class="pk" type="button" data-k="${n}">${n}</button>`).join("");
+  $("v-pin").innerHTML = `<div class="t">Enter PIN</div><div class="dots" id="dots">${"<i></i>".repeat(4)}</div>
+    <div class="pad">${k}<button class="pk t2" type="button" data-k="x">Delete</button><button class="pk" type="button" data-k="0">0</button><button class="pk t2" type="button" data-k="c">Cancel</button></div>`;
+}
+function renderHome() {
+  const dock = ["files","browser","gallery","settings"];
+  const list = (S.dock ? APPS.filter(a => !dock.includes(a[0])) : APPS).map(a => btn(a[0])).join("");
+  const top = 176;
+  $("v-home").className = "view home" + (S.view === "home" ? " on" : "") + (S.plates ? " plates" : "");
+  $("v-home").innerHTML = `<div class="clock">${HH}:${MM}</div><div class="date">${DATE}</div>
+    <div class="grid" style="top:${top}px">${list}</div>
+    <div class="pdots" style="bottom:${S.dock ? 110 : 22}px"><i></i><i></i></div>
+    ${S.dock ? `<div class="dockb">${dock.map(btn).join("")}</div>` : ""}`;
+}
+function renderRecents() {
+  const cards = opened.map(id => `<div class="card" data-id="${id}"><div class="h"><img src="${A["i-" + id]}" alt="">${name(id)}</div><div class="s"><img src="${A[SHOT[id]]}" alt="${name(id)}"></div></div>`).join("");
+  $("v-recents").innerHTML = `<div class="rtitle">Recent apps</div>` + (opened.length
+    ? `<div class="rail" id="rail">${cards}</div><button class="pillb" id="closeall" type="button">Close all</button>`
+    : `<div class="empty">No recent apps</div>`);
+  const r = $("rail"); if (r) r.scrollLeft = r.scrollWidth;
+}
+function renderQs() {
+  const t = [["wifi","Wi-Fi",1],["bt","Bluetooth",0],["moon","Dark mode",S.theme === "dark" ? 1 : 0],["dnd","Do not disturb",0],["plane","Airplane",0],["flash","Flashlight",0],["rot","Rotation lock",1],["shot","Screenshot",0]];
+  $("v-qs").innerHTML = `<div class="qhead"><div><div class="t">${HH}:${MM}</div><div class="d">${DATE}</div></div><button class="gear" id="qgear" type="button" aria-label="Settings">${ic("gear")}</button></div>
+    <div class="panel"><div class="tiles">${t.map(x => `<button class="tile" type="button" data-t="${x[0]}" aria-pressed="${!!x[2]}"><i>${ic(x[0])}</i><span>${x[1]}</span></button>`).join("")}</div></div>
+    <div class="panel"><label class="sl">${ic("sun")}<input id="s-br" type="range" min="0" max="100" value="70" aria-label="Brightness"></label><label class="sl">${ic("vol")}<input id="s-vol" type="range" min="0" max="100" value="40" aria-label="Volume"></label></div>
+    <div class="panel" style="padding:2px"><div class="qn"><img src="${A["i-clock"]}" alt=""><div><b>Alarm</b><small>Set for 07:30 tomorrow</small></div></div></div>
+    <button class="clear" type="button" id="qclear">Clear all</button>`;
+  ["s-br","s-vol"].forEach(id => { const e = $(id), up = () => e.style.setProperty("--v", e.value + "%"); up(); e.oninput = up; });
+}
+function renderPower() {
+  $("v-power").innerHTML = `<div class="pstack"><button class="pbtn off" type="button">Power off<i>${ic("pow")}</i></button><button class="pbtn" type="button">Restart<i>${ic("redo")}</i></button><button class="pbtn" type="button" id="plock">Lock<i>${ic("lockk")}</i></button></div>`;
+}
+function renderSettings() {
+  const row = (i, c, t, s) => `<div class="srow" style="--c:${c}"><i>${ic(i)}</i><div><b>${t}</b><small>${s}</small></div></div>`;
+  $("v-settings").innerHTML = `<div class="stitle">Settings</div>
+    <div class="sgroup">${row("wifi", "var(--accent)", "Wi-Fi", "Connected")}</div>
+    <div class="sgroup">${row("pic", "#3a944a", "Display", "Dark, " + name2(S.accent))}${row("lockk", "#9141ac", "Lock Screen", "Swipe to unlock")}${row("batic", "#c88800", "Battery", "82%")}</div>
+    <div class="sgroup">${row("cal", "#dd2a7b", "Date and Time", "London")}${row("info", "#6f8396", "About Phone", "LiteKern Go on Galaxy A5")}</div>`;
+}
+const ACCENTS = [["Blue","#3584e4"],["Teal","#2190a4"],["Purple","#9141ac"],["Pink","#d56199"],["Orange","#ed5b00"],["Green","#3a944a"]];
+const name2 = c => (ACCENTS.find(a => a[1] === c) || ["Blue"])[0].toLowerCase();
+
+function go(v) {
+  S.view = v; save();
+  document.querySelectorAll(".view").forEach(e => e.classList.toggle("on", e.id === "v-" + (v === "app" ? "app" : v)));
+  $("screen").dataset.frost = ["pin","recents","qs","power"].includes(v) ? 1 : 0;
+  $("barT").textContent = v === "lock" || v === "pin" ? "" : `${HH}:${MM}`;
+  $("bar").style.color = v === "settings" || v === "qs" ? "" : "#fff";
+  $("bar").style.display = v === "app" ? "none" : "";
+  if (v === "pin") { code = ""; dots(); }
+  if (v === "recents") renderRecents();
+  $("before").style.backgroundImage = BEFORE[v] ? `url(${A[BEFORE[v]]})` : "";
+  renderTabs(); renderNote(); renderBefore();
+}
+function openApp(id) {
+  if (!opened.includes(id)) opened.push(id);
+  else opened = opened.filter(x => x !== id).concat(id);
+  if (id === "settings") return go("settings");
+  app = id;
+  const src = A[SHOT[id]];
+  if (src) { $("v-app").innerHTML = `<img src="${src}" alt="${name(id)}">`; go("app"); }
+  else { opened = opened.filter(x => x !== id); }
+}
+function dots() { const d = $("dots"); if (d) [...d.children].forEach((e, i) => e.classList.toggle("f", i < code.length)); }
+
+function chips(id, items, key, after) {
+  const box = $(id); box.innerHTML = "";
+  items.forEach(([label, val, swatch]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = swatch ? "swatch" : "chip"; b.setAttribute("aria-pressed", String(S[key] === val));
+    if (swatch) { b.style.background = val; b.setAttribute("aria-label", label); b.title = label; } else b.textContent = label;
+    b.onclick = () => { S[key] = val; apply(); (after || (() => {}))(); };
+    box.append(b);
+  });
+}
+function renderTabs() { const b = $("tabs"); b.innerHTML = ""; VIEWS.forEach(([v, l]) => { const c = document.createElement("button"); c.type = "button"; c.className = "chip"; c.textContent = l; c.setAttribute("aria-pressed", String(S.view === v)); c.onclick = () => go(v); b.append(c); }); }
+function renderNote() { const n = NOTES[S.view] || ["This app isn't redesigned yet.", "It's today's screenshot, so you can see it beside the new shell."]; $("note").innerHTML = `<p><b>${n[0]}</b></p><p>${n[1]}</p>`; }
+function renderBefore() { const on = !!S.before && BEFORE[S.view]; $("before").classList.toggle("on", !!on); $("tag").classList.toggle("on", !!on); }
+function picks() { return `theme ${S.theme}, accent ${name2(S.accent)}, wallpaper ${S.wall}, icons ${S.plates ? "on plates" : "as they are"}, dock ${S.dock ? "on" : "off"}, clock ${S.clock}`; }
+
+function apply() {
+  save();
+  document.documentElement.style.setProperty("--accent", S.accent);
+  $("screen").dataset.theme = S.theme;
+  const w = A["w-" + S.wall + (S.theme === "light" ? "-light" : "")] || A["w-" + S.wall];
+  $("wall").style.backgroundImage = $("frost").style.backgroundImage = `url(${w})`;
+  chips("o-before", [["New",0],["Current shell",1]], "before");
+  chips("o-theme", [["Dark","dark"],["Light","light"]], "theme");
+  $("o-accent").innerHTML = ""; chips("o-accent", ACCENTS.map(a => [a[0], a[1], 1]), "accent");
+  chips("o-wall", [["Crossing","crossing"],["Aurora","aurora"],["Drift","drift"],["Dusk","dusk"]], "wall");
+  chips("o-plates", [["As they are",0],["On plates",1]], "plates");
+  chips("o-dock", [["On",1],["Off",0]], "dock");
+  chips("o-clock", [["Stacked","stacked"],["One line","inline"]], "clock");
+  renderLock(); renderPin(); renderHome(); renderQs(); renderPower(); renderSettings();
+  $("picks").textContent = picks();
+  go(S.view);
+}
+
+// Keys
+$("k-home").onclick = () => go("home");
+$("k-rec").onclick = () => go(S.view === "recents" ? "home" : "recents");
+$("k-back").onclick = () => { const v = S.view; go(v === "pin" ? "lock" : v === "lock" ? "lock" : "home"); };
+$("pw").onclick = () => go(S.view === "power" ? "home" : "power");
+$("bar").onclick = () => go(S.view === "qs" ? "home" : "qs");
+$("screen").addEventListener("click", e => {
+  const o = e.target.closest("[data-open]"); if (o) return openApp(o.dataset.open);
+  const k = e.target.closest("[data-k]");
+  if (k) {
+    const v = k.dataset.k;
+    if (v === "c") return go("lock");
+    if (v === "x") { code = code.slice(0, -1); return dots(); }
+    if (code.length < 4) code += v; dots();
+    if (code.length === 4) setTimeout(() => {
+      if (code === "1234") return go("home");
+      const d = $("dots"); d.classList.add("bad"); setTimeout(() => { d.classList.remove("bad"); code = ""; dots(); }, 340);
+    }, 140);
+    return;
+  }
+  const t = e.target.closest("[data-t]");
+  if (t) {
+    if (t.dataset.t === "moon") { S.theme = S.theme === "dark" ? "light" : "dark"; return apply(); }
+    t.setAttribute("aria-pressed", t.getAttribute("aria-pressed") === "true" ? "false" : "true"); return;
+  }
+  if (e.target.closest("#qgear")) return go("settings");
+  if (e.target.closest("#plock")) return go("lock");
+  if (e.target.closest("#closeall")) { opened = []; return renderRecents(); }
+  if (e.target.id === "v-power" || e.target.id === "v-qs") return go("home");
+});
+
+// Lock: swipe up
+(function () {
+  const L = $("v-lock"); let y0 = null;
+  L.addEventListener("pointerdown", e => { y0 = e.clientY; L.setPointerCapture(e.pointerId); L.style.transition = "none"; });
+  L.addEventListener("pointermove", e => { if (y0 === null) return; const d = Math.min(0, e.clientY - y0); L.style.transform = `translateY(${d}px)`; L.style.opacity = 1 + d / 300; });
+  const end = e => { if (y0 === null) return; const d = e.clientY - y0; y0 = null; L.style.transition = ""; L.style.transform = ""; L.style.opacity = ""; if (d < -70) go("pin"); };
+  L.addEventListener("pointerup", end); L.addEventListener("pointercancel", end);
+})();
+// Recent apps: tap a card, or swipe it up
+(function () {
+  const V = $("v-recents"); let c = null, x0, y0, lift = false;
+  V.addEventListener("pointerdown", e => { c = e.target.closest(".card"); x0 = e.clientX; y0 = e.clientY; lift = false; });
+  V.addEventListener("pointermove", e => {
+    if (!c) return; const dx = e.clientX - x0, dy = e.clientY - y0;
+    if (!lift && dy < -12 && Math.abs(dy) > Math.abs(dx)) { lift = true; c.style.transition = "none"; }
+    if (lift) { e.preventDefault(); c.style.transform = `translateY(${Math.min(0, dy)}px)`; c.style.opacity = 1 + dy / 420; }
+  });
+  const end = e => {
+    if (!c) return; const card = c, dy = e.clientY - y0, dx = e.clientX - x0; c = null;
+    card.style.transition = ""; card.style.opacity = "";
+    if (lift && dy < -90) { card.style.transform = ""; card.classList.add("go"); const id = card.dataset.id; setTimeout(() => { opened = opened.filter(o => o !== id); renderRecents(); }, 230); return; }
+    card.style.transform = "";
+    if (!lift && Math.abs(dx) < 8 && Math.abs(dy) < 8) openApp(card.dataset.id);
+  };
+  V.addEventListener("pointerup", end);
+  V.addEventListener("pointercancel", () => { if (c) { c.style.transform = ""; c.style.opacity = ""; c = null; } });
+})();
+$("copy").onclick = async () => {
+  const b = $("copy");
+  try { await navigator.clipboard.writeText(picks()); b.textContent = "Copied"; }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($("picks")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Selected"; }
+  setTimeout(() => (b.textContent = "Copy"), 1400);
+};
+// Fit the phone to the space
+function fit() {
+  const w = Math.min($("stage").clientWidth, 396 * 1.15), h = Math.max(innerHeight - 40, 520);
+  const k = innerWidth <= 800 ? Math.min(w / 402, 1) : Math.min(w / 402, h / 770, 1.15);
+  $("device").style.transform = `scale(${k})`;
+  $("fit").style.width = 400 * k + "px"; $("fit").style.height = 770 * k + "px";
+}
+addEventListener("resize", fit); fit();
+apply();
+</script>
