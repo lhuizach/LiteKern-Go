@@ -181,6 +181,37 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 .qn img { width: 34px; height: 34px; }
 .qn b { font-weight: 600; font-size: 13.5px; display: block; }
 .qn small { color: var(--dim); font-size: 12px; }
+/* control centre: a 4 x 4 grid of glass modules */
+.cc { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 73px; gap: 12px; padding: 0 4px; }
+.mod { border-radius: 26px; border: 0; padding: 0; font: inherit; color: var(--on); position: relative; overflow: hidden; }
+.mod.conn { grid-column: span 2; grid-row: span 2; border-radius: 30px; display: grid; grid-template-columns: 1fr 1fr; place-items: center; padding: 10px; box-sizing: border-box; }
+.rd { width: 58px; height: 58px; border-radius: 50%; border: 0; padding: 0; background: var(--card); color: var(--on); display: grid; place-items: center; font-size: 24px; cursor: pointer; position: relative; transition: background .18s, color .18s, transform .22s var(--spring); }
+.rd:active, .sq:active { transform: scale(.9); }
+.rd[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.sq { display: grid; place-items: center; font-size: 25px; cursor: pointer; transition: background .18s, color .18s, transform .22s var(--spring); }
+.sq svg { position: relative; }
+.sq[aria-pressed="true"] { background: #fff; color: #16181f; }
+.sq[aria-pressed="true"]::before { display: none; }
+.wide { grid-column: span 2; display: flex; align-items: center; gap: 11px; padding: 0 16px; text-align: left; cursor: pointer; transition: background .18s, color .18s, transform .22s var(--spring); }
+.wide:active { transform: scale(.96); }
+.wide svg { font-size: 23px; position: relative; flex: none; }
+.wide span { position: relative; min-width: 0; }
+.wide b { display: block; font-size: 13.5px; font-weight: 700; }
+.wide small { display: block; font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.wide[aria-pressed="true"] { background: #fff; color: #16181f; }
+.wide[aria-pressed="true"]::before { display: none; }
+.wide[aria-pressed="true"] small { color: rgba(22,24,31,.65); }
+.vsl { grid-column: span 1; grid-row: span 2; border-radius: 26px; touch-action: none; cursor: ns-resize; user-select: none; }
+.vsl .fill { position: absolute; left: 0; right: 0; bottom: 0; height: var(--v, 50%); background: rgba(255,255,255,.92); transition: height .08s linear; }
+.vsl svg { position: absolute; left: 50%; bottom: 16px; margin-left: -12px; width: 24px; height: 24px; color: var(--on); }
+.vsl.lit svg { color: #16181f; }
+.screen[data-theme="light"] .vsl .fill { background: var(--accent); }
+.screen[data-theme="light"] .vsl.lit svg { color: #fff; }
+.qdate { padding: 0 10px; }
+.ccn { display: flex; gap: 10px; align-items: center; padding: 9px 12px; margin: 0 4px; border-radius: 22px; }
+.ccn img { width: 34px; height: 34px; position: relative; }
+.ccn b { font-weight: 600; font-size: 13.5px; display: block; position: relative; }
+.ccn small { color: var(--dim); font-size: 12px; position: relative; }
 .clear { align-self: center; background: none; border: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--on); cursor: pointer; padding: 8px 14px; }
 
 /* power */
@@ -398,6 +429,7 @@ button.row:active { background: var(--sep); }
 <symbol id="del" viewBox="0 0 24 24"><path d="M9 5h12v14H9l-6-7zM13 10l4 4M17 10l-4 4"/></symbol>
 <symbol id="play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
 <symbol id="trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15"/></symbol>
+<symbol id="calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M8.5 7.5h7M8.5 12h.1M12 12h.1M15.5 12h.1M8.5 16.5h.1M12 16.5h.1M15.5 16.5h.1"/></symbol>
 <symbol id="tabs" viewBox="0 0 24 24"><rect x="4" y="7" width="13" height="13" rx="3"/><path d="M8 3h9a3 3 0 0 1 3 3v9"/></symbol>
 </defs></svg>
 
@@ -464,7 +496,7 @@ const name = id => APPS.find(a => a[0] === id)[1];
 const VIEWS = [["lock","Lock screen"],["pin","PIN"],["home","Home"],["drawer","All apps"],["recents","Recent apps"],["qs","Quick settings"],["power","Power menu"]];
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const OVER = ["qs", "power"];                       // these float over what was on screen
-const STAG = { lock: [".date,.clock,.lnote,.hint", "rise", 40], pin: [".t,.dots,.pk", "rise", 20], home: [".clock,.date,.ic,.pdots,.dockb", "popi", 18], drawer: [".dsearch,.ic", "rise", 22], recents: [".rtitle,.pillb", "rise", 40], qs: [".qhead,.panel,.clear", "fromt", 40], power: [".pbtn", "fromr", 55] };
+const STAG = { lock: [".date,.clock,.lnote,.hint", "rise", 40], pin: [".t,.dots,.pk", "rise", 20], home: [".clock,.date,.ic,.pdots,.dockb", "popi", 18], drawer: [".dsearch,.ic", "rise", 22], recents: [".rtitle,.pillb", "rise", 40], qs: [".qhead,.mod,.ccn", "popi", 26], power: [".pbtn", "fromr", 55] };
 const BEFORE = { lock: "b-lock", pin: "b-lock", home: "b-home", recents: "b-recents", qs: "b-qs", power: "b-power", files: "a-files", calculator: "a-calc", settings: "a-settings", clock: "a-clock" };
 const NOTES = {
   lock: ["Big bold clock, with glass notifications under it.", "Swipe up on the screen to unlock. Easy in the C shell."],
@@ -472,7 +504,7 @@ const NOTES = {
   home: ["Swipe up for all apps. Swipe down from the top for quick settings. Both follow your finger.", "Easy in C: the shell already drags home pages and quick settings."],
   drawer: ["Every app, A to Z, with a working search. Swipe down or press Home to leave.", "Easy in C. It replaces the All apps page you swipe sideways to today."],
   recents: ["Cards snap, and each one is the app's live state. Swipe one up to close it.", "Snap, blur and outlines exist in C already. Live cards become snapshots."],
-  qs: ["Glass panels with real sliders. The Dark mode tile works.", "Medium in C: blur on something that's moving is costly, so on the phone this may fade in."],
+  qs: ["A grid of glass modules with big vertical sliders. Drag them, and Dark Mode, Timer and Calculator work.", "Medium in C: the grid is easy, and blur on something moving may become a fade on the phone. Bluetooth and the flashlight need checking on the real phone."],
   power: ["Buttons sit beside the Power key, where your thumb already is.", "Easy in the C shell."],
   files: ["Tap a folder to go in, and tap a file for a glass sheet of actions.", "Adwaita boxed lists with a floating glass header. This is the template for most apps."],
   calculator: ["It works. Glass header, calm keys, a big bold result.", "Easy in C. The keys stay flat, because only what floats gets glass."],
@@ -547,13 +579,29 @@ function renderRecents() {
   const r = $("rail"); if (r) r.scrollLeft = r.scrollWidth;
 }
 function renderQs() {
-  const t = [["wifi","Wi-Fi",1],["bt","Bluetooth",0],["moon","Dark mode",S.theme === "dark" ? 1 : 0],["dnd","Do not disturb",0],["plane","Airplane",0],["flash","Flashlight",0],["rot","Rotation lock",1],["shot","Screenshot",0]];
-  $("v-qs").innerHTML = `<div class="qhead"><div><div class="t">${HH}:${MM}</div><div class="d">${DATE}</div></div><button class="rb lg" id="qgear" type="button" aria-label="Settings">${ic("gear")}</button></div>
-    <div class="panel lg"><div class="tiles">${t.map(x => `<button class="tile" type="button" data-t="${x[0]}" aria-pressed="${!!x[2]}"><i>${ic(x[0])}</i><span>${x[1]}</span></button>`).join("")}</div></div>
-    <div class="panel lg"><label class="sl">${ic("sun")}<input id="s-br" type="range" min="0" max="100" value="70" aria-label="Brightness"></label><label class="sl">${ic("vol")}<input id="s-vol" type="range" min="0" max="100" value="40" aria-label="Volume"></label></div>
-    <div class="panel lg" style="padding:2px"><div class="qn"><img src="${A["i-clock"]}" alt=""><div><b>Alarm</b><small>Set for 07:30 tomorrow</small></div></div></div>
-    <button class="clear" type="button" id="qclear">Clear all</button>`;
-  ["s-br","s-vol"].forEach(id => { const e = $(id), up = () => e.style.setProperty("--v", e.value + "%"); up(); e.oninput = up; });
+  const rd = (id, label, on) => `<button class="rd" type="button" data-t="${id}" aria-pressed="${!!on}" aria-label="${label}">${ic(id)}</button>`;
+  const sq = (id, label, on) => `<button class="mod lg sq" type="button" data-t="${id}" aria-pressed="${!!on}" aria-label="${label}">${ic(id)}</button>`;
+  const go2 = (app, i, label) => `<button class="mod lg sq" type="button" data-open="${app}" aria-label="${label}">${ic(i)}</button>`;
+  const vs = (id, i, v, label) => `<div class="mod lg vsl" id="${id}" role="slider" tabindex="0" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${v}" style="--v:${v}%"><div class="fill"></div>${ic(i)}</div>`;
+  const dark = S.theme === "dark";
+  $("v-qs").innerHTML = `<div class="qhead qdate"><div><div class="t">${HH}:${MM}</div><div class="d">${DATE}</div></div><button class="rb lg" id="qgear" type="button" aria-label="Settings">${ic("gear")}</button></div>
+    <div class="cc">
+      <div class="mod lg conn">${rd("plane", "Airplane mode", 0)}${rd("wifi", "Wi-Fi", 1)}${rd("bt", "Bluetooth", 0)}${rd("rot", "Rotation lock", 1)}</div>
+      ${vs("s-br", "sun", 70, "Brightness")}${vs("s-vol", "vol", 40, "Volume")}
+      <button class="mod lg wide" type="button" data-t="dnd" aria-pressed="false">${ic("dnd")}<span><b>Do Not Disturb</b><small id="dnds">Off</small></span></button>
+      <button class="mod lg wide" type="button" data-t="moon" aria-pressed="${dark}">${ic("moon")}<span><b>Dark Mode</b><small>${dark ? "On" : "Off"}</small></span></button>
+      ${sq("flash", "Flashlight", 0)}${go2("clock", "timer", "Timer")}${go2("calculator", "calc", "Calculator")}${sq("shot", "Screenshot", 0)}
+    </div>
+    <div class="ccn lg"><img src="${A["i-clock"]}" alt=""><div style="position:relative"><b>Alarm</b><small>Set for 07:30 tomorrow</small></div></div>`;
+  ["s-br", "s-vol"].forEach(id => {
+    const e = $(id); let drag = false, v0 = +e.getAttribute("aria-valuenow"), y0 = 0;
+    const set = v => { v = Math.max(0, Math.min(100, Math.round(v))); e.style.setProperty("--v", v + "%"); e.setAttribute("aria-valuenow", v); e.classList.toggle("lit", v > 18); };
+    set(v0);
+    e.addEventListener("pointerdown", p => { drag = true; y0 = p.clientY; v0 = +e.getAttribute("aria-valuenow"); e.setPointerCapture(p.pointerId); p.stopPropagation(); });
+    e.addEventListener("pointermove", p => { if (drag) set(v0 + (y0 - p.clientY) * 100 / e.getBoundingClientRect().height); });
+    e.addEventListener("pointerup", () => { drag = false; });
+    e.addEventListener("keydown", k => { if (k.key === "ArrowUp") set(+e.getAttribute("aria-valuenow") + 5); if (k.key === "ArrowDown") set(+e.getAttribute("aria-valuenow") - 5); });
+  });
 }
 function renderPower() {
   $("v-power").innerHTML = `<div class="pstack"><button class="pbtn off" type="button" data-act="toast:Power off isn't wired up in the mockup">Power off<i class="lg">${ic("pow")}</i></button><button class="pbtn" type="button" data-act="toast:Restart isn't wired up in the mockup">Restart<i class="lg">${ic("redo")}</i></button><button class="pbtn" type="button" id="plock">Lock<i class="lg">${ic("lockk")}</i></button></div>`;
@@ -914,7 +962,11 @@ $("screen").addEventListener("click", e => {
   const t = e.target.closest("[data-t]");
   if (t) {
     if (t.dataset.t === "moon") { S.theme = S.theme === "dark" ? "light" : "dark"; return apply(); }
-    t.setAttribute("aria-pressed", t.getAttribute("aria-pressed") === "true" ? "false" : "true"); return;
+    const on = t.getAttribute("aria-pressed") !== "true";
+    t.setAttribute("aria-pressed", String(on));
+    if (t.dataset.t === "dnd") $("dnds").textContent = on ? "On" : "Off";
+    if (t.dataset.t === "shot") { t.setAttribute("aria-pressed", "false"); toast("Screenshot saved"); }
+    return;
   }
   if (e.target.closest("#qgear")) return openApp("settings");
   if (e.target.closest("#plock")) return go("lock");
@@ -936,7 +988,7 @@ $("screen").addEventListener("click", e => {
     swallow = false; const Y = y(e), v = S.view;
     if ((v === "home" || v === "app") && Y < 44) p = { name: "qs", sign: 1, y0: Y, opening: true, id: e.pointerId };
     else if (v === "home" && !e.target.closest(".lock")) p = { name: "drawer", sign: -1, y0: Y, opening: true, id: e.pointerId };
-    else if (v === "qs") p = { name: "qs", sign: -1, y0: Y, opening: false, id: e.pointerId };
+    else if (v === "qs" && !e.target.closest(".vsl")) p = { name: "qs", sign: -1, y0: Y, opening: false, id: e.pointerId };
     else if (v === "drawer" && $("v-drawer").scrollTop <= 0 && !e.target.closest("input")) p = { name: "drawer", sign: 1, y0: Y, opening: false, id: e.pointerId };
     else p = null;
   }, true);
