@@ -54,3 +54,19 @@ are right. A flash, and this restore, are still untested.
 - Our own kernel is therefore tried by putting it on that boot partition (or `fastboot boot`, which writes
   nothing). `make-boot.sh`'s boot image is only useful for the second.
 - `fastboot getvar all` prints `wifimacaddr`, `btmacaddr` and `serialno`: filter `serial|imei|mac`.
+
+## First boot of Nura Phosh v26.06 on the A5 (phase 5 results)
+
+Tried by the owner on the phone itself, 2026-11-06:
+
+| Part | Result |
+|---|---|
+| Boot: lk2nd, then extlinux, then Nura | works; the first unlock into Phosh took a few minutes (the session's first start) |
+| Screen | works, "great" (the panel driver is in Nura's kernel) |
+| Wi-Fi | works: networks listed, joined, and the clock then set itself |
+| Camera | **not found** ("can't be found"), as the wiki user had reported |
+| SIM / mobile data | no SIM in the phone, so untested (the status bar's `?` is that) |
+| Bluetooth | an icon shows; untested |
+
+Not yet checked: touch details, speed, brightness slider, battery percentage, sound, the key codes
+(Back, Home, Recent apps, Power, volume), USB networking (172.16.42.1), SD card, storage.
