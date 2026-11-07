@@ -294,6 +294,7 @@ static void d_blank(int off)
                                    .crtc_id = crtc_id, .fb_id = fb_id, .mode_valid = 1, .mode = cur_mode };
         int r = ioctl(card, DRM_IOCTL_MODE_SETCRTC, &c);
         kprintf("drm: the screen is on%s\n", r ? " (the driver refused)" : "");
+        cursor_img = 0;                     /* the pointer's image goes back in: the display forgot it */
     }
 }
 
@@ -391,8 +392,10 @@ static void add_device(const char *path)
     d->pad = touchpad;
     plat_touchpad_present |= touchpad;
     d->abs = tablet && !mouse && !touchpad;
-    if (mouse || touchpad || (tablet && BIT(keys, BTN_LEFT)))
+    if (mouse || touchpad || (tablet && BIT(keys, BTN_LEFT))) {
         real_pointer = 1;
+        kprintf("input: %s counts as a pointer\n", name);
+    }
     if (d->abs || d->pad) {
         ioctl(fd, EVIOCGABS(ABS_X), &d->ax);
         ioctl(fd, EVIOCGABS(ABS_Y), &d->ay);
