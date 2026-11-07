@@ -19,3 +19,6 @@ admin/
 
 # An ssh key for the phone image (phone/make-rootfs-overlay.sh): the owner's, not for the repo
 /phone/authorized_keys
+
+# R3lay: the project URL and public key (apps/r3lay/r3lay.conf.example)
+/apps/r3lay/r3lay.conf

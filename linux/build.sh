@@ -123,6 +123,7 @@ for app in apps/*/; do
     n=$(basename "$app")
     mkdir -p "$OUT/lkx-overlay/usr/lib/litekern/apps/$n"
     cp "$LBUILD/apps/$n/$n" "$OUT/lkx-overlay/usr/lib/litekern/apps/$n/"
+    [ -f "apps/$n/$n.conf" ] && cp "apps/$n/$n.conf" "$OUT/lkx-overlay/usr/lib/litekern/apps/$n/" || true
 done
 
 [ "$PHONE" = 1 ] && bash phone/make-rootfs-overlay.sh "$OUT"

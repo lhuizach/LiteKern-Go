@@ -83,7 +83,7 @@ go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 # The home screen (kernel/desktop.c): tap_app N taps the N-th app (0: Files,
-# 1 Calculator, 2 Settings, 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager,
+# 1 Calculator, 2 Settings, 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager, 7 R3lay,
 # then Log; the tests' apps come before Log). Files, Gallery and Settings are
 # in the dock (y 1168; Web isn't in this build); the others in 4 columns of
 # 168 x 184 px tiles from y 352.
@@ -125,7 +125,7 @@ check "the home screen: its clock, a swipe up to all the apps and back, one open
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.
-path; tap_app 7; add phone_home sleep:1
+path; tap_app 8; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
@@ -434,7 +434,7 @@ check "the switcher settles on the nearest card; it and the power menu blur what
 
 # Notify's two notifications (the tests' image), then Power: their cards
 # under the lock screen's clock (white titles, 80..640 x 580..800).
-path; tap_app 10; add phone_home sleep:0.8 phone_power sleep:1.5
+path; tap_app 11; add phone_home sleep:0.8 phone_power sleep:1.5
 cp build/test-apps/litekernx.img build-linux/test/locknote.img
 SCREEN="has=ffffff@80,580,640,800" run $SHELL_BIN build-linux/test/locknote.img "$P"
 check "the lock screen shows notifications under the clock" \
@@ -564,9 +564,9 @@ check "Files opened, sent home, back and closed 8 times, ending cleanly each tim
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their home screen icons: Crash, Badcalls, Hang are the 8th to 10th.
+# Their home screen icons: Crash, Badcalls, Hang are the 9th to 11th.
 path
-for i in 7 8 9; do add phone_home sleep:0.5; tap_app "$i"; done
+for i in 8 9 10; do add phone_home sleep:0.5; tap_app "$i"; done
 add sleep:11 phone_home sleep:0.5; tap_app 0
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
@@ -599,7 +599,7 @@ check "apps: a crash, bad calls and a hang each end only the app" \
 # with them newest first. A tap on the first ("Again", 360,912) opens its app
 # and dismisses it. Pulled again: Dark Mode (530,589) and Do Not Disturb
 # (190,589), then Back closes it. Home held opens it too.
-path; tap_app 10; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
+path; tap_app 11; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
 go 360 912; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 530 589; click; add sleep:0.5
 go 190 589; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img

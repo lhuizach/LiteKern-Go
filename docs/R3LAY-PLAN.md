@@ -2,7 +2,15 @@
 
 A native C client for R3lay, the owner's messaging app. It talks to the same Supabase project as the web app, so it shares the same accounts, chats and messages. No calls in this version.
 
-Worked out from the web app inside `r3lay-1.4.0.apk` (a Capacitor wrapper around one 485 KB page) and four screenshots. Column lists below are only what that page uses, so they need checking against the real schema.
+Worked out from the web app inside `r3lay-1.4.0.apk` (a Capacitor wrapper around one 485 KB page) and four screenshots. Tables and row rules were then checked against the real project.
+
+## Where it stands
+
+Built in `apps/r3lay/`: sign in, stay signed in, sign out, chats and groups, reading, polling for new messages, sending, read ticks, finding a person, notifications while it runs. Tested against a fake server (`tests/r3lay/test-r3lay.sh`). Against the real project only a made-up login has been tried, which proves HTTPS, the URL and the key.
+
+Not done yet: a real account, accented text (accents come off, emoji are left out), profile pictures, settings and profile editing, Realtime. On the phone it needs Wi-Fi first, and the phone's clock must be right for HTTPS.
+
+Setup: copy `apps/r3lay/r3lay.conf.example` to `apps/r3lay/r3lay.conf` (git-ignored) and fill it in. `linux/build.sh` puts it next to the program.
 
 ## Scope
 
@@ -38,11 +46,11 @@ Security stays where it is: the client uses the same public key and the database
 ## How it fits our OS
 
 - **App:** `apps/r3lay/`, a normal KERN86 app using the shell's widgets and the flat Adwaita dark look.
-- **Network:** apps have no way to reach the internet yet, only Wi-Fi status calls. Add a small HTTPS system call (`SYS_HTTP`) in `platform/`, on top of the libcurl and OpenSSL already in the image. Non-blocking, so a slow network can't freeze the shell.
+- **Network:** apps are Linux programs, so no new system call was needed. The app loads libcurl itself and uses its non-blocking interface, so a slow network can't freeze it, and tokens never pass through the shell.
 - **New messages:** poll every few seconds while open, slower in the background. Supabase Realtime over WebSocket comes later. Polling only asks for rows newer than the last one seen.
 - **JSON:** a small parser in the app.
-- **Sign-in tokens:** Supabase's refresh token, saved in the app's private storage, so the password is never stored.
-- **Project URL and public key:** read from a file kept out of git, not written in the source.
+- **Sign-in tokens:** Supabase's refresh token, saved as `r3lay.session` in the user's home folder, so the password is never stored. That folder isn't private yet: the Files app can see it.
+- **Project URL and public key:** read from `r3lay.conf`, kept out of git.
 - **Pictures:** a small JPEG decoder (stb_image), with avatars shrunk once and cached.
 
 ## Known gaps to close
@@ -59,7 +67,7 @@ Each step is tested in the VM, then on the phone once Wi-Fi works.
 2. Sign in, stay signed in, sign out.
 3. Chat list, from one-to-one messages.
 4. Open a chat, read messages, polling for new ones.
-5. Send a message, with `client_ref` so a retry can't send it twice.
+5. Send a message, with `client_ref`. Nothing in the database makes `client_ref` unique, so the app only retries after a poll has shown the message didn't arrive.
 6. Groups.
 7. Accented text.
 8. Profile pictures.
@@ -71,9 +79,8 @@ Calls come after sound and WebRTC or WebKit, which is a separate decision.
 
 ## Needed from the owner
 
-- Confirm the tables above, ideally with the schema or the source.
 - A test account, typed in on the device, never in chat or git.
-- The calls block (see below) live on the backend before his brother uses the app.
+- The calls block (see below): the column is live; his account still needs setting.
 
 ## Calls until they're supported
 

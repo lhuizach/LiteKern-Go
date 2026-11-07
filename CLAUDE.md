@@ -100,7 +100,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 His list, from the owner, 7 Nov 2026. Games are our own originals with our own names and art, not copies of the named games.
 
 - Games: a lane-dodging traffic racer, Snake, a block-placing puzzle (like Block Blast), a falling-block puzzle (like Tetris), a knife-throwing game with a watermelon ("Watermelon tungin": exact idea to confirm).
-- Apps: R3lay (the owner's own messaging app: a Capacitor web app on Supabase, with realtime chat, file storage and WebRTC calls; the plan is our own C client for text chat, calls unlikely), Class Charts (no Android apps here, so it would be our own client, if its login and data can be reached at all: unverified), Weather, a music app such as Spotify (Spotify itself isn't available for this OS, so likely a local player first).
+- Apps: R3lay (the owner's own messaging app: a Capacitor web app on Supabase, with realtime chat, file storage and WebRTC calls; our own C client for text chat is in `apps/r3lay/`, see `docs/R3LAY-PLAN.md`; calls unlikely), Class Charts (no Android apps here, so it would be our own client, if its login and data can be reached at all: unverified), Weather, a music app such as Spotify (Spotify itself isn't available for this OS, so likely a local player first).
 - All the online apps need Wi-Fi working in our system first, and music needs sound.
 
 ## Open decisions
