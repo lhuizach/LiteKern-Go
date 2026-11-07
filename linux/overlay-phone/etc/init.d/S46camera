@@ -1,0 +1,8 @@
+#!/bin/sh
+# LiteKern Go on the phone: the Camera app talks to the focus motor through /dev/i2c-*.
+case "$1" in
+start)
+    modprobe i2c-dev 2>/dev/null
+    ;;
+esac
+exit 0

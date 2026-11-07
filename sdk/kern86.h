@@ -304,6 +304,12 @@ static inline int k86_notify(const char *title, const char *body)
     return k86_call(SYS_NOTIFY, (uintptr_t)title, (uintptr_t)body, 0, 0);
 }
 
+/* LiteKern Go: open another app, by its name. */
+static inline int k86_app_open(const char *name)
+{
+    return k86_call(SYS_APP_OPEN, (uintptr_t)name, 0, 0, 0);
+}
+
 /* speed: 0-100, 50 the usual. */
 static inline int k86_touchpad_set(int speed)
 {

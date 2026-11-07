@@ -1,0 +1,11 @@
+{
+  "name": "Camera",
+  "icon": "camera",
+  "entry": "camera.lkx",
+  "version": "1.0",
+  "order": 9,
+  "width": 720,
+  "height": 1224,
+  "min_width": 360,
+  "min_height": 600
+}

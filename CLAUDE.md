@@ -89,7 +89,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## Known risks
 
-- Camera: not working on Nura ("can't be found"), and no driver in our kernel yet; the brother wants to take photos sometimes. Both sensors answer on our system (rear IMX135, front S5K5E3YX), and the rear gave its first real photo on 7 Nov 2026 (`accomplishments/first-photo.png`), and the phone now makes colour photos itself with auto-exposure (`accomplishments/first-colour-photo.png`, 640x360): no autofocus or camera app yet. Screen and Wi-Fi do work.
+- Camera: not working on Nura ("can't be found"), and no driver in our kernel yet; the brother wants to take photos sometimes. Both sensors answer on our system (rear IMX135, front S5K5E3YX), and the rear gave its first real photo on 7 Nov 2026 (`accomplishments/first-photo.png`), and the phone now makes colour photos itself with auto-exposure (`accomplishments/first-colour-photo.png`), and the Camera app (`apps/camera`) has live preview, 720x1280 photos saved to Gallery, and a last-photo button. Autofocus is not working yet. Screen and Wi-Fi do work.
 - Games: Android games will not install on Linux. Waydroid might run them but is heavy on 2 GB RAM and unverified on this kernel.
 - Calls and mobile data are the hardest parts on mainline Linux and are not planned early.
 - Other reported gaps: display brightness and USB-OTG.

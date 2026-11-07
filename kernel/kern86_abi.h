@@ -281,6 +281,9 @@ struct k86_dirent {
  * 0xAARRGGBB pixels): its home screen icon. -ENOENT if it has none. */
 #define SYS_TASK_ICON       44
 #define K86_ICON            112
+/* LiteKern Go: ebx: an app's name. It opens, or comes to the front, once the
+ * call has returned. -ENOENT if there's no such app. */
+#define SYS_APP_OPEN        45
 #define K86_TASKS_MAX       16
 #define K86_TASK_FRONT      1   /* flags: its window is the one in front */
 #define K86_TASK_SELF       2   /* ... it's the one asking */

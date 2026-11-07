@@ -53,6 +53,9 @@ int desktop_log_out(void);
 /* The theme or wallpaper changed: redraw everything. */
 void desktop_refresh(void);
 /* LiteKern Go: an app's notification (SYS_NOTIFY; owner: its struct app). */
+/* LiteKern Go: open an app by name at the next tick (an app's request: it's
+ * waiting on the call, and opening animates). -1 if there's no such app. */
+int desktop_open_later(const char *name);
 void desktop_notify(const void *owner, const char *title, const char *body);
 /* The notifications, newest first, for the lock screen (titles only). */
 int desktop_note_count(void);

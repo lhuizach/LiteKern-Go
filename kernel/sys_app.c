@@ -638,6 +638,13 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
         if (user_check(a2, K86_ICON * K86_ICON * 4, 1))
             return -EFAULT;
         return lkx_task_icon((int32_t)a1, (uint32_t *)a2);
+    case SYS_APP_OPEN: {
+        char name[64];
+        int err = user_string(name, a1, sizeof(name));
+        if (err)
+            return err;
+        return desktop_open_later(name) ? -ENOENT : 0;
+    }
     case SYS_NOTIFY: {
         char title[K86_NOTE_TITLE], body[K86_NOTE_BODY];
         int err;

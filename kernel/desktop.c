@@ -3558,10 +3558,27 @@ int desktop_input_key(const struct key_event *k)
 
 static int last_machine_tick;
 
+static int open_later = -1;
+
+int desktop_open_later(const char *name)
+{
+    for (int i = 0; i < builtin_app_count; i++)
+        if (!strcmp(builtin_apps[i].name, name)) {
+            open_later = i;
+            return 0;
+        }
+    return -1;
+}
+
 void desktop_tick(void)
 {
     if (!started)
         return;
+    if (open_later >= 0) {
+        int i = open_later;
+        open_later = -1;
+        launch(i, (struct gfx_rect){ S()->w / 2 - 56, S()->h / 2 - 56, 112, 112 });
+    }
     dock_tick();
     pager_tick();
     qs_tick();
