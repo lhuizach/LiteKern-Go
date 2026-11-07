@@ -26,7 +26,10 @@ static const char *const styles[STYLES] = { "Standard", "Stacked", "Outline", "G
 
 static struct gfx_surface *cv;
 static struct k86_lock *l;
-static int active, held;                /* held: 0 none, 1 the picture, 2 opacity, 3 stretch */
+static int active, held;                /* held: 0 none, 1 the picture, 2 opacity, 3 stretch, 4 height */
+#define SLIDERS 3
+#define SNAP 6                          /* % from the middle that snaps to it */
+#define AUTO_Y 18                       /* about where the clock sits by itself, % */
 static int moved;                       /* a finger changed something, not saved yet */
 static uint32_t last_preview;
 static uint32_t picture[PW * PH];
@@ -62,7 +65,7 @@ static struct gfx_rect slider_rect(int k)
 
 static struct gfx_rect reset_rect(void)
 {
-    return (struct gfx_rect){ SIDE, slider_y(2) + 8, cv->w - 2 * SIDE, CHIP_H };
+    return (struct gfx_rect){ SIDE, slider_y(SLIDERS) + 8, cv->w - 2 * SIDE, CHIP_H };
 }
 
 static int inside(struct gfx_rect r, int x, int y)
@@ -103,6 +106,7 @@ static void draw(void)
         chip(style_rect(i), styles[i], l->clock_style == i);
     slider(0, "Opacity", l->clock_opacity, 20, 100);
     slider(1, "Stretch", l->clock_stretch, 100, 250);
+    slider(2, "Height", l->clock_y < 0 ? AUTO_Y : l->clock_y, 5, 95);
     chip(res, "Reset", 0);
     k86_present(0, 0, cv->w, cv->h);
 }
@@ -164,7 +168,7 @@ static void pointer(const struct k86_event *ev)
     struct gfx_rect pic = picture_rect();
     if (p.down) {
         held = inside(pic, p.x, p.y) ? 1 : 0;
-        for (int k = 0; k < 2; k++) {
+        for (int k = 0; k < SLIDERS; k++) {
             struct gfx_rect r = slider_rect(k);
             if (p.y >= slider_y(k) && p.y < slider_y(k) + ROW_H && p.x >= r.x - KNOB_R)
                 held = k + 2;
@@ -174,11 +178,15 @@ static void pointer(const struct k86_event *ev)
         struct gfx_rect s0 = slider_rect(0);
         if (held == 1) {
             l->clock_x = percent(p.x, pic.x, pic.w);
+            if (l->clock_x >= 50 - SNAP && l->clock_x <= 50 + SNAP)
+                l->clock_x = 50;                /* the middle is easy to find */
             l->clock_y = percent(p.y, pic.y, pic.h);
         } else if (held == 2) {
             l->clock_opacity = 20 + percent(p.x, s0.x, s0.w) * 80 / 100;
-        } else {
+        } else if (held == 3) {
             l->clock_stretch = 100 + percent(p.x, s0.x, s0.w) * 150 / 100;
+        } else {
+            l->clock_y = 5 + percent(p.x, s0.x, s0.w) * 90 / 100;
         }
         moved = 1;
         if (k86_uptime_ms() - last_preview >= PREVIEW_EVERY_MS)
