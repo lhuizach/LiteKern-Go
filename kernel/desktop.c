@@ -1480,7 +1480,11 @@ static __attribute__((unused)) void draw_dock(void)
  * snapshot is drawn scaled and faded over a copy of the rest, frame by
  * frame. Each frame is timed: when one runs late the frames it overlapped are
  * skipped, not the rest of the animation, so a slow machine gets fewer frames
- * of the same length of movement. The cost is logged for measuring. */
+ * of the same length of movement. Fading a whole screen is the dear part, so
+ * after a frame over ANIM_SOLID_MS the windows just move and scale. The cost
+ * is logged for measuring. */
+#define ANIM_SOLID_MS 24
+static int anim_solid;
 
 enum easing { EASE_OUT, EASE_BACK, EASE_IN_OUT };
 
@@ -1546,7 +1550,7 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
     gfx_blit(&save, 0, 0, s, 0, 0, s->w, s->h);
 
     struct gfx_rect prev[WM_MAX];
-    uint32_t t0 = uptime_ms(), worst = 0;
+    uint32_t t0 = uptime_ms(), worst = 0, worst_show = 0;
     int done = 0;
     for (int f = 1; f <= frames; f++) {
         uint32_t f0 = uptime_ms();
@@ -1557,7 +1561,7 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
         }
         for (int k = 0; k < n; k++) {
             struct gfx_rect r = lerp(g[k].from, g[k].to, et);
-            int alpha = g[k].a0 + (g[k].a1 - g[k].a0) * ea / 1024;
+            int alpha = anim_solid ? 255 : g[k].a0 + (g[k].a1 - g[k].a0) * ea / 1024;
             int rad = g[k].r0 + (g[k].r1 - g[k].r0) * t / 1024;
             gfx_blit_scaled(s, r, &g[k].snap, (struct gfx_rect){ 0, 0, g[k].snap.w, g[k].snap.h },
                             (uint32_t)(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha), rad);
@@ -1566,10 +1570,15 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
         }
         done = 1;
         drawn++;
+        uint32_t p0 = uptime_ms();
         screen_present();
-        uint32_t took = uptime_ms() - f0;
+        uint32_t took = uptime_ms() - f0, showing = uptime_ms() - p0;
         if (took > worst)
             worst = took;
+        if (showing > worst_show)
+            worst_show = showing;
+        if (took > ANIM_SOLID_MS)
+            anim_solid = 1;                 /* a slow machine: no more fading, from here on */
         int due = (int)((uptime_ms() - t0) * (uint32_t)frames / (uint32_t)ms);
         if (due > f && f < frames) {        /* late: on to where it should be by now */
             f = due < frames ? due : frames - 1;
@@ -1580,8 +1589,8 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
     }
     for (int k = 0; k < n && done; k++)
         shell_damage(prev[k]);              /* the final picture is composed by the caller */
-    kprintf("anim: %s %s, %d frames, %u ms, slowest frame %u ms\n", what, name, drawn,
-            uptime_ms() - t0, worst);
+    kprintf("anim: %s %s, %d frames, %u ms, slowest frame %u ms (showing it %u ms)%s\n", what, name, drawn,
+            uptime_ms() - t0, worst, worst_show, anim_solid ? ", no fade" : "");
 }
 
 static const char *name_of(struct wm_window *w)
@@ -1612,7 +1621,7 @@ static void anim_open(struct wm_window *w, struct gfx_rect from)
 static void anim_close(struct wm_window *w)
 {
     struct gfx_rect r = wm_rect(w);
-    struct ghost g = { w, { 0 }, r, { r.x + r.w / 14, r.y + r.h / 14, r.w - r.w / 7, r.h - r.h / 7 },
+    struct ghost g = { w, { 0 }, r, { r.x + r.w / 3, r.y + r.h / 3, r.w / 3, r.h / 3 },
                        255, 0, wm_is_maximised(w) ? 0 : WM_RADIUS, WM_RADIUS };
     if (!snapshot(0, w, &g.snap))
         return;

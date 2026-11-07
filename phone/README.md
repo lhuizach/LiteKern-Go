@@ -95,7 +95,7 @@ Nura is **Alpine (musl)**: our Buildroot programs are glibc and won't run on it 
 
 | Key | Device | Code |
 |---|---|---|
-| Recents (left touch key) | `tm2-touchkey` (event5) | 139 `KEY_MENU` |
+| Recents (left touch key) | `tm2-touchkey` (event5) | 580 `KEY_APPSELECT` in the device tree (first noted as 139 `KEY_MENU`) |
 | Back (right touch key) | `tm2-touchkey` (event5) | 158 `KEY_BACK` |
 | Home (physical) | `GPIO Buttons` (event2) | 172 `KEY_HOMEPAGE` |
 | Volume Up | `GPIO Buttons` (event2) | 115 |

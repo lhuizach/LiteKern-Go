@@ -369,7 +369,8 @@ static void add_device(const char *path)
      * each on a device of its own with no letters (the A5's pwrkey, resin, GPIO buttons, touchkey). */
     int keyboard = BIT(ev, EV_KEY) && ((BIT(keys, KEY_A) && BIT(keys, KEY_ENTER)) || BIT(keys, KEY_POWER) ||
                                        BIT(keys, KEY_VOLUMEUP) || BIT(keys, KEY_VOLUMEDOWN) ||
-                                       BIT(keys, KEY_BACK) || BIT(keys, KEY_HOMEPAGE) || BIT(keys, KEY_MENU));
+                                       BIT(keys, KEY_BACK) || BIT(keys, KEY_HOMEPAGE) || BIT(keys, KEY_MENU) ||
+                                       BIT(keys, KEY_APPSELECT));
     int mouse = BIT(ev, EV_REL) && BIT(rel, REL_X) && BIT(keys, BTN_LEFT);
     int tablet = BIT(ev, EV_ABS) && BIT(abs, ABS_X) && BIT(abs, ABS_Y) &&
                  (BIT(keys, BTN_LEFT) || BIT(keys, BTN_TOUCH));
@@ -556,7 +557,8 @@ static void read_device(struct dev *d)
                 }
             } else if (e->type == EV_REL && e->code == REL_WHEEL) {
                 plat_wheel(-e->value);          /* evdev: away from you is +1 */
-            } else if (e->type == EV_KEY && e->code < BTN_MISC) {
+            } else if (e->type == EV_KEY && (e->code < BTN_MISC || e->code == KEY_APPSELECT)) {
+                /* KEY_APPSELECT: the A5's Recents touch key, a code above the buttons'. */
                 if (e->value != 2)
                     kprintf("input: key %u %s\n", (unsigned)e->code, e->value ? "down" : "up");
                 plat_key(plat_evdev_key(e->code), e->value != 0);

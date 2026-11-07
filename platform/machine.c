@@ -191,6 +191,11 @@ void machine_init(void)
     target = getenv("LKX_TARGET") != 0;
     load();
     apply_zone();
+    long cur = read_long("/sys/devices/system/cpu/cpu0/cpufreq", ".", "scaling_cur_freq"),
+         top = read_long("/sys/devices/system/cpu/cpu0/cpufreq", ".", "cpuinfo_max_freq");
+    if (target)
+        kprintf("machine: cpu at %ld MHz, %ld at most (-1: no speed control)\n", cur < 0 ? -1 : cur / 1000,
+                top < 0 ? -1 : top / 1000);
     find_backlight();
     if (backlight[0] && saved_brightness >= 0)
         write_brightness(saved_brightness);
