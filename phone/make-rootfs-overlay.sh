@@ -40,7 +40,7 @@ cp "$W"/stock-wlan/out/wcnss.* "$O/lib/firmware/"
 mkdir -p "$O/lib/firmware/wlan/prima"
 ln -sf ../../postmarketos/wlan/prima/WCNSS_qcom_wlan_nv.bin "$O/lib/firmware/wlan/prima/"
 mkdir -p "$O/usr/bin"
-"$OUT/host/bin/aarch64-buildroot-linux-gnu-gcc" -O2 -o "$O/usr/bin/camgrab" phone/tools/camgrab.c
+"$OUT/host/bin/aarch64-buildroot-linux-gnu-gcc" -O2 -o "$O/usr/bin/camgrab" phone/tools/camgrab.c -lm
 cp build/litekernx.img "$O/usr/share/litekern/disk.img"
 if [ -f phone/authorized_keys ]; then
     mkdir -p "$O/root/.ssh"
