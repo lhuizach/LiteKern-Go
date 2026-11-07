@@ -110,9 +110,33 @@ static uint32_t mhead, mtail, mdropped;
 static int px = -1, py = -1;        /* where the pointer was last reported (-1: not yet) */
 static uint8_t held;
 
+static int screen_is_off;
+
+void plat_screen_power(int on)
+{
+    if (on == !screen_is_off)
+        return;
+    screen_is_off = !on;
+    kprintf("screen: %s\n", on ? "on" : "off");
+    if (be && be->blank)
+        be->blank(!on);
+}
+
+int plat_screen_on(void)
+{
+    return !screen_is_off;
+}
+
+/* Dark, the touchscreen and the keys do nothing (but Power, which wakes it):
+ * only where the backend can really blank the panel. */
+static int input_blocked(void)
+{
+    return screen_is_off && be && be->blank;
+}
+
 void plat_key(uint16_t key, int pressed)
 {
-    if (!key)
+    if (!key || (input_blocked() && key != KEY_PHONE_POWER))
         return;
     if (khead - ktail == QUEUE) {
         ktail++;
@@ -123,6 +147,8 @@ void plat_key(uint16_t key, int pressed)
 
 void plat_pointer(int x, int y, uint8_t buttons)
 {
+    if (input_blocked())
+        return;
     if (px < 0) {                   /* the desktop's pointer starts at the centre */
         px = fw / 2;
         py = fh / 2;
@@ -152,6 +178,8 @@ void plat_pointer(int x, int y, uint8_t buttons)
 
 void plat_wheel(int notches)
 {
+    if (input_blocked())
+        return;
     while (notches) {
         int n = notches > 127 ? 127 : notches < -127 ? -127 : notches;
         if (mhead - mtail == QUEUE) {

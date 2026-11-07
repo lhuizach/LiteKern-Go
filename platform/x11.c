@@ -395,4 +395,4 @@ static void x_close(void)
     }
 }
 
-const struct backend backend_x11 = { "x11", x_open, x_present, x_fd, x_due, x_pump, x_close, 0 };
+const struct backend backend_x11 = { "x11", x_open, x_present, x_fd, x_due, x_pump, x_close, 0, 0 };

@@ -43,12 +43,19 @@ struct backend {
     void (*close)(void);
     /* The display's own cursor, if it has one (kernel/screen.h); NULL: none. */
     screen_cursor_fn cursor;
+    /* The panel off (1) or on again (0), the picture kept; NULL: it can't
+     * (the VM, the tests: the screen is never "off" there). */
+    void (*blank)(int off);
 };
 
 extern const struct backend backend_headless, backend_x11, backend_drm;
 
 /* --- what backends call ---------------------------------------------------------------------- */
 
+/* The screen off or on (the Power key, kernel/machine.h). While it is off,
+ * only the Power key and nothing from the touchscreen reaches the shell. */
+void plat_screen_power(int on);
+int plat_screen_on(void);
 /* A key went down (1) or up (0); `key` is a KEY_* code (kernel/input.h). */
 void plat_key(uint16_t key, int pressed);
 /* Where the pointer is now, in screen pixels, and the MOUSE_* buttons held. */

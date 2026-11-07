@@ -42,6 +42,9 @@ static int shadowed;                /* the driver shows only what DIRTYFB says c
 static uint8_t *scan;               /* the dumb buffer, mapped */
 static uint32_t pitch, fb_id, crtc_id;
 static int sw, sh;
+static uint32_t conn_id;            /* the panel's connector and mode, to light it again */
+static struct drm_mode_modeinfo cur_mode;
+static int real_pointer;            /* a mouse or touchpad is there (a touchscreen alone: no pointer shown) */
 
 /* --- the screen -------------------------------------------------------------------------------- */
 
@@ -180,6 +183,8 @@ static int open_display(int *w, int *h)
         kprintf("drm: couldn't show the mode %s\n", mode.name);
         return -1;
     }
+    conn_id = best.connector_id;
+    cur_mode = mode;
     sw = *w = mode.hdisplay;
     sh = *h = mode.vdisplay;
     kprintf("drm: %ux%u on connector %u (%s), %u Hz\n", mode.hdisplay, mode.vdisplay, best.connector_id,
@@ -205,6 +210,14 @@ static const uint32_t *cursor_img;  /* what's in it */
 
 static int d_cursor(const uint32_t *argb, int w, int h, int hot_x, int hot_y, int x, int y)
 {
+    if (!real_pointer) {                    /* a touchscreen only: nothing to point with, so no pointer */
+        if (cursor_state > 0) {
+            struct drm_mode_cursor c = { .flags = DRM_MODE_CURSOR_BO, .crtc_id = crtc_id, .handle = 0 };
+            ioctl(card, DRM_IOCTL_MODE_CURSOR, &c);
+            cursor_img = 0;
+        }
+        return 0;
+    }
     if (cursor_state < 0)
         return -1;
     if (card < 0 || !crtc_id) {
@@ -265,6 +278,24 @@ none:
 }
 
 static void flush(void);
+
+/* The panel off (the crtc switched off: the driver powers the panel down) and
+ * on again with the same picture, which present kept writing to the buffer. */
+static void d_blank(int off)
+{
+    if (off) {
+        struct drm_mode_crtc c = { .crtc_id = crtc_id };
+        int r = ioctl(card, DRM_IOCTL_MODE_SETCRTC, &c);
+        kprintf("drm: the screen is off%s\n", r ? " (the driver refused: just black)" : "");
+        if (r && scan)
+            memset(scan, 0, (size_t)pitch * (size_t)sh);
+    } else {
+        struct drm_mode_crtc c = { .set_connectors_ptr = (uintptr_t)&conn_id, .count_connectors = 1,
+                                   .crtc_id = crtc_id, .fb_id = fb_id, .mode_valid = 1, .mode = cur_mode };
+        int r = ioctl(card, DRM_IOCTL_MODE_SETCRTC, &c);
+        kprintf("drm: the screen is on%s\n", r ? " (the driver refused)" : "");
+    }
+}
 
 static void d_present(const uint32_t *px, int stride, int x, int y, int w, int h)
 {
@@ -360,6 +391,8 @@ static void add_device(const char *path)
     d->pad = touchpad;
     plat_touchpad_present |= touchpad;
     d->abs = tablet && !mouse && !touchpad;
+    if (mouse || touchpad || (tablet && BIT(keys, BTN_LEFT)))
+        real_pointer = 1;
     if (d->abs || d->pad) {
         ioctl(fd, EVIOCGABS(ABS_X), &d->ax);
         ioctl(fd, EVIOCGABS(ABS_Y), &d->ay);
@@ -614,4 +647,4 @@ static void d_close(void)
         ioctl(tty, KDSETMODE, KD_TEXT);
 }
 
-const struct backend backend_drm = { "drm", d_open, d_present, d_fd, d_due, d_pump, d_close, d_cursor };
+const struct backend backend_drm = { "drm", d_open, d_present, d_fd, d_due, d_pump, d_close, d_cursor, d_blank };

@@ -4,6 +4,7 @@
 #include "kernel/desktop.h"
 #include "kernel/driver.h"
 #include "kernel/errno.h"
+#include "kernel/machine.h"
 #include "kernel/pmm.h"
 #include "kernel/power.h"
 #include "kernel/printk.h"
@@ -728,7 +729,10 @@ void lockscreen_tick(void)
         return;
     if (ls.power_down_ms && !ls.power_held && (int32_t)(uptime_ms() - ls.power_down_ms) >= POWER_HOLD_MS) {
         ls.power_held = 1;
-        set_menu(1);
+        if (machine_screen_on())
+            set_menu(1);
+        else
+            machine_screen(1);              /* held with the screen off: wake it, still locked */
     }
     if (ls.view == V_PROMPT && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
         show(V_CLOCK);                      /* left alone: back to the clock */
@@ -811,6 +815,18 @@ static void phone_key(const struct key_event *k)
         if (k->pressed && !ls.power_down_ms) {
             ls.power_down_ms = uptime_ms() | 1;
         } else if (!k->pressed) {
+            if (ls.power_down_ms && !ls.power_held) {
+                if (machine_screen_on()) {  /* a short press: the screen off, the lock stays */
+                    kprintf("lock: screen off (Power)\n");
+                    if (ls.menu_open)
+                        set_menu(0);
+                    show(V_CLOCK);
+                    machine_screen(0);
+                } else {                    /* ... and the next one: on, still locked */
+                    kprintf("lock: screen on (Power), still locked\n");
+                    machine_screen(1);
+                }
+            }
             ls.power_down_ms = 0;
             ls.power_held = 0;
         }

@@ -277,6 +277,16 @@ int machine_set_timezone(int z)
     return 0;
 }
 
+void machine_screen(int on)
+{
+    plat_screen_power(on);
+}
+
+int machine_screen_on(void)
+{
+    return plat_screen_on();
+}
+
 int machine_set_touchpad(int speed)
 {
     if (speed < 0 || speed > 100)

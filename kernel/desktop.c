@@ -3227,6 +3227,7 @@ static int phone_key(const struct key_event *k)
                 shell_flush();
                 kprintf("shell: lock (Power)\n");
                 lockscreen_lock();
+                machine_screen(0);              /* the screen off; the next Power wakes it, still locked */
             }
             power_down_ms = 0;
             power_held = 0;
