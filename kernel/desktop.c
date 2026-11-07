@@ -2696,23 +2696,11 @@ static void qs_slider(int k, int value)
     }
 }
 
-static void draw_qs(void)
+/* The modules, at the panel's place. Their words sit on solid colour, so they
+ * can go in the picture below; words over the dimmed screen can't. */
+static void draw_qs_modules(void)
 {
-    if (!qs_shown()) {
-        qs_taken = 0;
-        return;
-    }
     const struct theme *t = T();
-    struct gfx_rect p = qs_rect();
-    int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0;
-    open = open > 255 ? 255 : open;
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
-    /* The date, and Settings. */
-    if (rtc && clock_shown.month) {
-        char date[40];
-        date_long(date);
-        text_draw(VS, VX(QS_SIDE + 8), VY(p.y + (QS_HEAD - text_height(TEXT_HEADING)) / 2), date, TEXT_HEADING, SHELL_FG);
-    }
     struct gfx_rect g = qs_gear_rect();
     int gx = g.x + g.w / 2, gy = g.y + g.h / 2;
     uint32_t gear_bg = t->headerbar_bg;
@@ -2759,13 +2747,8 @@ static void draw_qs(void)
         gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, QS_MOD_R, bg);
         draw_tile_icon(i, r.x + r.w / 2, r.y + r.h / 2, works ? t->fg : t->fg_dim, bg);
     }
-    /* The notifications. */
-    if (!nnotes) {
-        const char *none = "No notifications";
-        text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(note_rect(0).y + 24), none, TEXT_BODY,
-                  gfx_mix(SHELL_FG, 0, 190));
+    if (!nnotes)
         return;
-    }
     for (int k = 0; k < notes_shown(); k++) {
         struct gfx_rect r = note_rect(k);
         if (k == qs_note)
@@ -2782,13 +2765,80 @@ static void draw_qs(void)
     gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->headerbar_bg);
     text_draw(VS, VX(c.x + (c.w - text_width("Clear all", TEXT_BOLD)) / 2), VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2),
               "Clear all", TEXT_BOLD, t->fg);
-    if (nnotes > notes_shown()) {
+}
+
+/* What sits straight on the dimming: drawn each frame. */
+static void draw_qs_words(void)
+{
+    struct gfx_rect p = qs_rect();
+    if (rtc && clock_shown.month) {
+        char date[40];
+        date_long(date);
+        text_draw(VS, VX(QS_SIDE + 8), VY(p.y + (QS_HEAD - text_height(TEXT_HEADING)) / 2), date, TEXT_HEADING, SHELL_FG);
+    }
+    if (!nnotes) {
+        const char *none = "No notifications";
+        text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(note_rect(0).y + 24), none, TEXT_BODY,
+                  gfx_mix(SHELL_FG, 0, 190));
+    } else if (nnotes > notes_shown()) {
+        struct gfx_rect c = qs_clear_rect();
         char more[12] = "+";
-        int n = nnotes - notes_shown();
-        more[1] = (char)('0' + n);
+        more[1] = (char)('0' + nnotes - notes_shown());
         memcpy(more + 2, " more", 6);
         text_draw(VS, VX(QS_SIDE + 8), VY(c.y + (c.h - text_height(TEXT_SMALL)) / 2), more, TEXT_SMALL, SHELL_FG);
     }
+}
+
+/* While it moves the modules are one picture, drawn once and slid: drawing them
+ * all again each frame (icons, words, a dozen rounded shapes) is too much here. */
+#define QS_KEY 0xff00feu                /* the picture's see-through colour */
+static uint32_t *qs_px;
+static int qs_pic_ok;
+
+static struct gfx_surface qs_pic(void)
+{
+    return (struct gfx_surface){ qs_px, S()->w, S()->h, S()->w };
+}
+
+static void qs_pic_take(void)
+{
+    if (!qs_px)
+        qs_px = (uint32_t *)pmm_alloc_contiguous(((uint32_t)(S()->w * S()->h * 4) + PAGE_SIZE - 1) / PAGE_SIZE);
+    if (!qs_px)
+        return;                         /* no memory: drawn each frame */
+    struct gfx_view v = { qs_pic(), 0, 0 };
+    struct gfx_view *outer = V;
+    int at = qs.x;
+    V = &v;
+    qs.x = FX(qs_h());                  /* drawn all the way open */
+    gfx_fill_rect(VS, 0, 0, VS->w, VS->h, QS_KEY);
+    draw_qs_modules();
+    qs.x = at;
+    V = outer;
+    qs_pic_ok = 1;
+}
+
+static void draw_qs(void)
+{
+    if (!qs_shown()) {
+        qs_taken = 0;
+        qs_pic_ok = 0;
+        return;
+    }
+    int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0, settled = qs.x == FX(qs_h());
+    open = open > 255 ? 255 : open;
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
+    if (settled)
+        qs_pic_ok = 0;                  /* open and still: tiles change, so it's drawn as it is */
+    else if (!qs_pic_ok)
+        qs_pic_take();
+    draw_qs_words();
+    if (settled || !qs_pic_ok) {
+        draw_qs_modules();
+        return;
+    }
+    struct gfx_surface pic = qs_pic();
+    gfx_blit_key(VS, VX(0), VY((qs.x - FX(qs_h())) / 256), &pic, QS_KEY);
 }
 
 /* The status bar's share: up to 4 notifying apps' icons after the time, a

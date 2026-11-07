@@ -98,6 +98,8 @@ struct gfx_view gfx_view_clip(const struct gfx_view *v, struct gfx_rect r);
  * animations: quick, not pretty up close. */
 void gfx_blit_scaled(struct gfx_surface *dst, struct gfx_rect d, const struct gfx_surface *src,
                      struct gfx_rect sr, uint32_t alpha, int radius);
+/* All of src onto dst at (dx, dy), but for its pixels of colour `key`. */
+void gfx_blit_key(struct gfx_surface *dst, int dx, int dy, const struct gfx_surface *src, uint32_t key);
 /* An ARGB image shrunk to ow x oh into out (ow * oh pixels), each pixel the
  * average of those it covers: done once, kept, and blitted from then on. */
 void gfx_scale_argb(const uint32_t *src, int w, int h, int stride, uint32_t *out, int ow, int oh);

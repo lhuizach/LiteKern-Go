@@ -385,6 +385,18 @@ void gfx_blit_scaled(struct gfx_surface *dst, struct gfx_rect d, const struct gf
     }
 }
 
+void gfx_blit_key(struct gfx_surface *dst, int dx, int dy, const struct gfx_surface *src, uint32_t key)
+{
+    int x0 = dx < 0 ? -dx : 0, x1 = dx + src->w > dst->w ? dst->w - dx : src->w;
+    for (int row = dy < 0 ? -dy : 0; row < src->h && row + dy < dst->h; row++) {
+        const uint32_t *p = src->px + row * src->stride;
+        uint32_t *d = dst->px + (row + dy) * dst->stride + dx;
+        for (int col = x0; col < x1; col++)
+            if (p[col] != key)
+                d[col] = p[col];
+    }
+}
+
 void gfx_scale_argb(const uint32_t *src, int w, int h, int stride, uint32_t *out, int ow, int oh)
 {
     for (int row = 0; row < oh; row++) {
