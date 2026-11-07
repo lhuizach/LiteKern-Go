@@ -44,6 +44,9 @@ echo "lkx-start: system mounted $(grep -m1 " / " /proc/mounts | cut -d" " -f3,4 
 # once connected (platform/net.c).
 export LKX_APPS=/usr/lib/litekern
 export LKX_TARGET=1
+# The phone's USB network is its own (S45usbnet): a DHCP client on it would
+# wipe the phone's address.
+[ -f /usr/share/litekern/disk.img ] && export LKX_NET_SKIP=usb0
 
 # Tests only (tests/linux/test-image.sh adds lkx.test=hwsim to the test copy's
 # syslinux.cfg): two simulated Wi-Fi radios, an access point on the second

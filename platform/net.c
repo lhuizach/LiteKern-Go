@@ -400,14 +400,9 @@ static void save_known(void)
 
 /* --- start ---------------------------------------------------------------------------------- */
 
-void net_init(void)
+/* What network devices there are, into eth and wlan. */
+static void find_links(void)
 {
-    if (!getenv("LKX_TARGET")) {
-        kprintf("net: the PC build leaves the PC's network alone\n");
-        return;
-    }
-    enabled = 1;
-    mkdir(RUN_DIR, 0700);
     const char *skip = getenv("LKX_NET_SKIP");
     DIR *d = opendir("/sys/class/net");
     struct dirent *e;
@@ -429,8 +424,13 @@ void net_init(void)
     }
     if (d)
         closedir(d);
-    /* The radio on (Fn+F2's switch may have left it blocked). */
-    d = opendir("/sys/class/rfkill");
+}
+
+/* The radio on (Fn+F2's switch may have left it blocked). */
+static void radio_on(void)
+{
+    DIR *d = opendir("/sys/class/rfkill");
+    struct dirent *e;
     while (d && (e = readdir(d))) {
         char path[300];
         if (e->d_name[0] == '.')
@@ -440,24 +440,56 @@ void net_init(void)
     }
     if (d)
         closedir(d);
+}
+
+static void wifi_start(void)
+{
+    set_up(wlan);
+    write_file(RUN_DIR "/wpa.conf", "ctrl_interface=" CTRL_DIR "\nupdate_config=0\n");
+    const char *argv[] = { "/usr/sbin/wpa_supplicant", "-B", "-i", wlan, "-D", "nl80211",
+                           "-c", RUN_DIR "/wpa.conf", 0 };
+    if (run(argv))
+        kprintf("net: Wi-Fi: wpa_supplicant didn't start\n");
+    for (int i = 0; i < 40 && wpa_connect(); i++)
+        usleep(50000);
+    for (int i = 0; i < nknown; i++)
+        wpa_add(known[i].ssid, known[i].pass, 0);
+    wpa_ok("SCAN");
+}
+
+void net_init(void)
+{
+    if (!getenv("LKX_TARGET")) {
+        kprintf("net: the PC build leaves the PC's network alone\n");
+        return;
+    }
+    enabled = 1;
+    mkdir(RUN_DIR, 0700);
+    find_links();
+    radio_on();
     if (eth[0])
         set_up(eth);
     load_known();
-    if (wlan[0]) {
-        set_up(wlan);
-        write_file(RUN_DIR "/wpa.conf", "ctrl_interface=" CTRL_DIR "\nupdate_config=0\n");
-        const char *argv[] = { "/usr/sbin/wpa_supplicant", "-B", "-i", wlan, "-D", "nl80211",
-                               "-c", RUN_DIR "/wpa.conf", 0 };
-        if (run(argv))
-            kprintf("net: Wi-Fi: wpa_supplicant didn't start\n");
-        for (int i = 0; i < 40 && wpa_connect(); i++)
-            usleep(50000);
-        for (int i = 0; i < nknown; i++)
-            wpa_add(known[i].ssid, known[i].pass, 0);
-        wpa_ok("SCAN");
-    }
+    if (wlan[0])
+        wifi_start();
     kprintf("net: Ethernet %s, Wi-Fi %s (%d remembered)%s\n", eth[0] ? eth : "none", wlan[0] ? wlan : "none",
             nknown, wlan[0] && ctrl < 0 ? "; Wi-Fi control failed" : "");
+}
+
+/* LiteKern Go: the phone's Wi-Fi chip starts its own firmware, seconds after
+ * the shell does, so its device can turn up late. */
+static void wifi_late(void)
+{
+    static uint32_t next_look;
+    if (wlan[0] || (int32_t)(uptime_ms() - next_look) < 0)
+        return;
+    next_look = uptime_ms() + 2000;
+    find_links();
+    if (!wlan[0])
+        return;
+    radio_on();
+    wifi_start();
+    kprintf("net: Wi-Fi %s turned up after the start%s\n", wlan, ctrl < 0 ? "; Wi-Fi control failed" : "");
 }
 
 /* --- every so often, from the loop ------------------------------------------------------------ */
@@ -586,6 +618,7 @@ void net_poll(void)
     if (!enabled || (int32_t)(uptime_ms() - next_poll) < 0)
         return;
     next_poll = uptime_ms() + 500;
+    wifi_late();
     /* Events that came while nobody asked. */
     char msg[2048];
     while (ctrl >= 0) {

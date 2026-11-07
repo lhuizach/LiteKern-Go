@@ -133,8 +133,8 @@ Then `fastboot boot boot-litekern-go.img` from lk2nd's menu (each `fastboot boot
   firmware copied from a running Nura (`~/lkx-phone/firmware`). glibc with kernel headers 6.12.
 - The shell's disk is the file `/usr/share/litekern/disk.img` (the phone has no stick); its log is `/tmp/lkx.log`.
 - The kernel's text console is the screen first (`console=tty0`), so a fault shows on the panel.
-- Not in this system yet: Wi-Fi (needs the firmware loader Nura has: the wcnss files come from the modem
-  partition), so no ssh until that, and nothing runs the GPU.
+- Wi-Fi: the chip's `wcnss.*` firmware is copied into the image from the stock package's `NON-HLOS.bin` (BL
+  file, `image/` folder), so nothing reads the phone's modem partitions. Nothing runs the GPU yet.
 
 ### First RAM boot of our own system (2026-11-06, evening): garbage on the screen, no boot
 

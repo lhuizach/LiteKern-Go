@@ -4,6 +4,7 @@
 #
 #   the kernel's modules   from phone/build-kernel.sh (~/lkx-phone/out/modules), with their
 #                          depmod files, so eudev and modprobe find the screen and touch drivers
+#   Wi-Fi firmware         ~/lkx-phone/stock-wlan/out/wcnss.*, out of the stock package's NON-HLOS.bin
 #   firmware               ~/lkx-phone/firmware, copied from a running Nura (the phone's own files):
 #                          `scp -r user@PHONE:/lib/firmware/. ~/lkx-phone/firmware/`
 #   the shell's disk       build/litekernx.img as a file: the phone has no stick (lkx-start)
@@ -29,6 +30,12 @@ for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid driv
 done
 depmod -b "$O" "$VER"
 [ -d "$W/firmware" ] && cp -a "$W/firmware/." "$O/lib/firmware/"
+# Wi-Fi: the chip's firmware, from the stock package's NON-HLOS.bin (`image/wcnss.*`),
+# not from the phone's partitions and not in git; the drivers ask for its
+# settings file by this path.
+cp "$W"/stock-wlan/out/wcnss.* "$O/lib/firmware/"
+mkdir -p "$O/lib/firmware/wlan/prima"
+ln -sf ../../postmarketos/wlan/prima/WCNSS_qcom_wlan_nv.bin "$O/lib/firmware/wlan/prima/"
 cp build/litekernx.img "$O/usr/share/litekern/disk.img"
 if [ -f phone/authorized_keys ]; then
     mkdir -p "$O/root/.ssh"
