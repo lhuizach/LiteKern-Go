@@ -23,11 +23,14 @@ M=$(ls -d "$W"/out/modules/lib/modules/*/ | head -1)
 cp -a "$M" "$O/lib/modules/"
 rm -f "$O"/lib/modules/*/build "$O"/lib/modules/*/source
 # Drivers a phone never uses (the RAM disk has to stay small, phone/README.md):
-# filesystems (btrfs, xfs, smb, ...), the firewall, USB HID, cameras, sensors.
+# filesystems (btrfs, xfs, smb, ...), the firewall, USB HID, sensors, and all but the camera pipeline of the media drivers.
 VER=$(basename "$M")
-for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid drivers/media drivers/iio; do
+for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid drivers/iio; do
     rm -rf "$O/lib/modules/$VER/kernel/$d"
 done
+# Of the media drivers, only what the camera pipeline (CAMSS) needs.
+find "$O/lib/modules/$VER/kernel/drivers/media" -name "*.ko*" |
+    grep -vE "/drivers/media/(v4l2-core|mc|common/videobuf2|platform/qcom/camss)/" | xargs -r rm -f
 depmod -b "$O" "$VER"
 [ -d "$W/firmware" ] && cp -a "$W/firmware/." "$O/lib/firmware/"
 # Wi-Fi: the chip's firmware, from the stock package's NON-HLOS.bin (`image/wcnss.*`),
@@ -36,6 +39,8 @@ depmod -b "$O" "$VER"
 cp "$W"/stock-wlan/out/wcnss.* "$O/lib/firmware/"
 mkdir -p "$O/lib/firmware/wlan/prima"
 ln -sf ../../postmarketos/wlan/prima/WCNSS_qcom_wlan_nv.bin "$O/lib/firmware/wlan/prima/"
+mkdir -p "$O/usr/bin"
+"$OUT/host/bin/aarch64-buildroot-linux-gnu-gcc" -O2 -o "$O/usr/bin/camgrab" phone/tools/camgrab.c
 cp build/litekernx.img "$O/usr/share/litekern/disk.img"
 if [ -f phone/authorized_keys ]; then
     mkdir -p "$O/root/.ssh"
