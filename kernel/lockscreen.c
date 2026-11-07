@@ -35,7 +35,8 @@
 #define PAD_BOTTOM  170                 /* its last row's centre, from the bottom */
 #define PAD_KEYS    12                  /* 1-9, Del, 0, OK */
 #define NOTES_SHOWN 4
-#define NOTE_H      88
+#define NOTE_H      108
+#define NOTE_ICON   68
 #define QUIET_MS    400                 /* input just after locking is ignored */
 #define SLIDE_MS    320                 /* the curtain sliding down (locking) or up (unlocking) */
 #define SHADOW      28                  /* the soft shadow along its bottom edge */
@@ -378,15 +379,19 @@ static void draw_prompt(struct gfx_surface *s, int ox, int oy)
     }
 }
 
-/* Notifications under the clock: their titles only, as the content may be private. */
+/* Notifications under the clock: which app, and the title, but not the text, as
+ * that may be private. */
 static void draw_notes(struct gfx_surface *s, int ox, int oy)
 {
     struct gfx_rect c = clock_rect();
     int n = desktop_note_count(), y = c.y + c.h + 36, x = 48, w = S()->w - 96;
     for (int i = 0; i < n && i < NOTES_SHOWN; i++, y += NOTE_H + 12) {
         gfx_blend_round_rect(s, x - ox, y - oy, w, NOTE_H, 24, WHITE, 40);
-        text_draw_fit(s, x + 28 - ox, y + (NOTE_H - text_height(TEXT_BOLD)) / 2 - oy, desktop_note_title(i), w - 56,
-                      TEXT_BOLD, WHITE);
+        desktop_note_icon(i, s, x + 20 - ox, y + (NOTE_H - NOTE_ICON) / 2 - oy, NOTE_ICON);
+        int tx = x + 20 + NOTE_ICON + 20, tw = w - (tx - x) - 24;
+        int h = text_height(TEXT_SMALL) + text_height(TEXT_BOLD), ty = y + (NOTE_H - h) / 2;
+        text_draw_fit(s, tx - ox, ty - oy, desktop_note_app(i), tw, TEXT_SMALL, gfx_mix(WHITE, 0, 200));
+        text_draw_fit(s, tx - ox, ty + text_height(TEXT_SMALL) - oy, desktop_note_title(i), tw, TEXT_BOLD, WHITE);
     }
     if (n > NOTES_SHOWN) {
         char more[16] = "+";

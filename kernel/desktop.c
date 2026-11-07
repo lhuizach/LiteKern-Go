@@ -2463,6 +2463,19 @@ const char *desktop_note_title(int i)
     return i >= 0 && i < nnotes ? notes[i].title : "";
 }
 
+const char *desktop_note_app(int i)
+{
+    return i >= 0 && i < nnotes && notes[i].app ? notes[i].app->name : "";
+}
+
+void desktop_note_icon(int i, struct gfx_surface *s, int x, int y, int size)
+{
+    const struct icon *ic = i >= 0 && i < nnotes && notes[i].app ? icon_find(notes[i].app->icon) : 0;
+    const uint32_t *sized = ic ? icon_sized(ic, size, size) : 0;
+    if (sized)
+        gfx_blit_alpha(s, x, y, sized, size, size, size);
+}
+
 static void note_remove(int k)
 {
     kprintf("notify: dismissed %s\n", notes[k].title);

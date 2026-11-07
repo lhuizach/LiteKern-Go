@@ -60,6 +60,9 @@ void desktop_notify(const void *owner, const char *title, const char *body);
 /* The notifications, newest first, for the lock screen (titles only). */
 int desktop_note_count(void);
 const char *desktop_note_title(int i);
+const char *desktop_note_app(int i);    /* the app's name; "" if it has gone */
+/* Its app's icon, size x size, at (x, y) on s. */
+void desktop_note_icon(int i, struct gfx_surface *s, int x, int y, int size);
 
 /* Pointer input, every packet: the shell's (top bar, menus, dock, app menu)
  * or passed on to the windows. */
