@@ -170,11 +170,9 @@ int wallpaper_render(const char *name, struct gfx_surface *dst)
     return draw_preset(name, dst, &hd);
 }
 
-uint32_t wallpaper_gen;
 
 int wallpaper_set(const char *name)
 {
-    wallpaper_gen++;
     struct header hd;
     uint32_t t0 = uptime_ms();
     int n;
@@ -251,7 +249,6 @@ void wallpaper_scale_cover(const uint32_t *px, int w, int h, int stride, struct 
 
 int wallpaper_set_image(const uint32_t *px, int w, int h, int stride)
 {
-    wallpaper_gen++;
     if (!image.px)
         return -ENODEV;
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096 || stride < w)
@@ -532,7 +529,6 @@ int wallpaper_render_packed(const void *data, uint32_t size, struct gfx_surface 
 
 int wallpaper_set_packed(const void *data, uint32_t size)
 {
-    wallpaper_gen++;
     if (!image.px)
         return -ENODEV;
     uint32_t t0 = uptime_ms();

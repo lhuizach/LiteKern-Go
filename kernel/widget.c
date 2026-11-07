@@ -675,8 +675,7 @@ void wg_dialog_draw(struct gfx_surface *s, struct wg_dialog *d)
 {
     const struct theme *t = T();
     int cx = d->r.x + d->r.w / 2, y = d->r.y + DLG_PAD;
-    /* Glass over the dimmed app: nearly solid, so its text stays easy to read. */
-    gfx_glass(s, d->r.x, d->r.y, d->r.w, d->r.h, 48, s, d->r.x, d->r.y, t->dialog_bg, 226, 255);
+    gfx_fill_round_rect(s, d->r.x, d->r.y, d->r.w, d->r.h, 36, t->dialog_bg);
     wg_label_centred(s, cx, y, d->title, WG_TEXT_HEADING);
     y += text_height(TEXT_HEADING) + 10;
     struct body_ctx b = { s, cx, y, d->body_error ? t->destructive : t->fg_dim };

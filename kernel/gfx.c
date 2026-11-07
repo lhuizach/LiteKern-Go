@@ -254,10 +254,13 @@ void gfx_blend_round_rect(struct gfx_surface *s, int x, int y, int w, int h, int
 void gfx_darken(struct gfx_surface *s, int x, int y, int w, int h, uint32_t alpha)
 {
     struct gfx_rect r = clip(s, x, y, w, h);
+    uint32_t left = 255 - (alpha > 255 ? 255 : alpha), keep = left + (left >> 7);     /* 0..256 */
     for (int row = r.y; row < r.y + r.h; row++) {
-        uint32_t *p = s->px + row * s->stride;
-        for (int col = r.x; col < r.x + r.w; col++)
-            p[col] = gfx_mix(0, p[col], alpha);
+        uint32_t *p = s->px + row * s->stride + r.x;
+        for (int col = 0; col < r.w; col++) {   /* two channels at a time: a full screen, each frame */
+            uint32_t c = p[col];
+            p[col] = ((c & 0xff00ff) * keep >> 8 & 0xff00ff) | ((c & 0xff00) * keep >> 8 & 0xff00);
+        }
     }
 }
 
@@ -345,17 +348,59 @@ void gfx_blit_scaled(struct gfx_surface *dst, struct gfx_rect d, const struct gf
         radius = d.w / 2;
     if (radius > d.h / 2)
         radius = d.h / 2;
+    /* Each column's source pixel, once; and two channels at a time: this is a whole
+     * screen, each frame of an app opening. */
+    static int xmap[4096];
+    uint32_t a = alpha >= 255 ? 256 : alpha + (alpha >> 7), ia = 256 - a;
+    int fast = c.w <= 4096;
+    for (int i = 0; fast && i < c.w; i++)
+        xmap[i] = (int)((uint32_t)(i + c.x - d.x) * step_x >> 16);
     for (int row = c.y; row < c.y + c.h; row++) {
         int ly = row - d.y;
         const uint32_t *sp = src->px + (sr.y + (int)((uint32_t)ly * step_y >> 16)) * src->stride + sr.x;
         uint32_t *dp = dst->px + row * dst->stride;
         int corner_row = ly < radius || ly >= d.h - radius;
+        if (fast && !corner_row) {
+            uint32_t *q = dp + c.x;
+            if (alpha >= 255) {
+                for (int i = 0; i < c.w; i++)
+                    q[i] = sp[xmap[i]];
+            } else {
+                for (int i = 0; i < c.w; i++) {
+                    uint32_t p = sp[xmap[i]], o = q[i];
+                    uint32_t rb = ((p & 0xff00ff) * a + (o & 0xff00ff) * ia) >> 8;
+                    uint32_t g = ((p & 0xff00) * a + (o & 0xff00) * ia) >> 8;
+                    q[i] = (rb & 0xff00ff) | (g & 0xff00);
+                }
+            }
+            continue;
+        }
         for (int col = c.x; col < c.x + c.w; col++) {
             int lx = col - d.x;
             if (corner_row && !in_round(lx, ly, d.w, d.h, radius))
                 continue;
             uint32_t p = sp[(uint32_t)lx * step_x >> 16];
             dp[col] = alpha >= 255 ? p : gfx_mix(p, dp[col], alpha);
+        }
+    }
+}
+
+void gfx_scale_argb(const uint32_t *src, int w, int h, int stride, uint32_t *out, int ow, int oh)
+{
+    for (int row = 0; row < oh; row++) {
+        int sy0 = row * h / oh, sy1 = (row + 1) * h / oh;
+        for (int col = 0; col < ow; col++) {
+            int sx0 = col * w / ow, sx1 = (col + 1) * w / ow;
+            uint32_t sa = 0, sr = 0, sg = 0, sb = 0, n = 0;
+            for (int y = sy0; y < sy1; y++)
+                for (int x = sx0; x < sx1; x++, n++) {
+                    uint32_t p = src[y * stride + x], a = p >> 24;
+                    sa += a;
+                    sr += (p >> 16 & 0xff) * a;
+                    sg += (p >> 8 & 0xff) * a;
+                    sb += (p & 0xff) * a;
+                }
+            out[row * ow + col] = !sa || !n ? 0 : (sa / n) << 24 | (sr / sa) << 16 | (sg / sa) << 8 | sb / sa;
         }
     }
 }
@@ -462,161 +507,6 @@ void gfx_blend(struct gfx_surface *dst, int dx, int dy,
             uint32_t s = p[col], o = d[col];
             d[col] = mix(s >> 16 & 0xff, o >> 16 & 0xff, alpha) << 16 |
                      mix(s >> 8 & 0xff, o >> 8 & 0xff, alpha) << 8 | mix(s & 0xff, o & 0xff, alpha);
-        }
-    }
-}
-
-/* One box-blur pass along a line of n pixels, step apart, from `in` to `out`
- * (the edges repeat their end pixels). */
-static void blur_line(const uint32_t *in, uint32_t *out, int n, int step, int r)
-{
-    int div = 2 * r + 1;
-    uint32_t sr = 0, sg = 0, sb = 0;
-    for (int i = -r; i <= r; i++) {
-        uint32_t p = in[(i < 0 ? 0 : i >= n ? n - 1 : i) * step];
-        sr += p >> 16 & 0xff, sg += p >> 8 & 0xff, sb += p & 0xff;
-    }
-    for (int i = 0; i < n; i++) {
-        out[i * step] = (sr / div) << 16 | (sg / div) << 8 | sb / div;
-        int add = i + r + 1, sub = i - r;
-        uint32_t a = in[(add >= n ? n - 1 : add) * step], s = in[(sub < 0 ? 0 : sub) * step];
-        sr += (a >> 16 & 0xff) - (s >> 16 & 0xff);
-        sg += (a >> 8 & 0xff) - (s >> 8 & 0xff);
-        sb += (a & 0xff) - (s & 0xff);
-    }
-}
-
-void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp)
-{
-    int qw = (s->w + 3) / 4, qh = (s->h + 3) / 4;
-    uint32_t *a = tmp, *b = tmp + qw * qh;
-    /* A quarter the size: each pixel the average of its 4x4. */
-    for (int y = 0; y < qh; y++)
-        for (int x = 0; x < qw; x++) {
-            uint32_t r = 0, g = 0, bl = 0, n = 0;
-            for (int yy = y * 4; yy < y * 4 + 4 && yy < s->h; yy++) {
-                const uint32_t *p = s->px + yy * s->stride;
-                for (int xx = x * 4; xx < x * 4 + 4 && xx < s->w; xx++, n++)
-                    r += p[xx] >> 16 & 0xff, g += p[xx] >> 8 & 0xff, bl += p[xx] & 0xff;
-            }
-            uint32_t inv = 65536 / n;       /* one multiply for each channel, not a divide */
-            a[y * qw + x] = ((r * inv) >> 16) << 16 | ((g * inv) >> 16) << 8 | ((bl * inv) >> 16);
-        }
-    /* Three passes each way. */
-    for (int pass = 0; pass < 3; pass++) {
-        for (int y = 0; y < qh; y++)
-            blur_line(a + y * qw, b + y * qw, qw, 1, radius);
-        for (int x = 0; x < qw; x++)
-            blur_line(b + x, a + x, qh, qw, radius);
-    }
-    /* Back up to full size, each pixel between its four nearest (bilinear). */
-    /* The same blend, worked out once per quarter-size pixel for each output row (the rows
-     * between two quarter rows) and once per column, not once per output pixel. */
-    static int col_x0[4096], col_x1[4096], col_wx[4096];
-    static int rr[1024], rg[1024], rb[1024];    /* the two rows blended: 8.8 fixed point */
-    if (s->w > 4096 || qw > 1024)
-        return;
-    for (int x = 0; x < s->w; x++) {
-        int fx = (x * 2 + 1) * 256 / 8 - 128;
-        col_x0[x] = fx < 0 ? 0 : fx >> 8;
-        col_wx[x] = fx < 0 ? 0 : fx & 255;
-        col_x1[x] = col_x0[x] + 1 < qw ? col_x0[x] + 1 : qw - 1;
-    }
-    int last_y0 = -1, last_wy = -1;
-    for (int y = 0; y < s->h; y++) {
-        int fy = (y * 2 + 1) * 256 / 8 - 128, y0 = fy < 0 ? 0 : fy >> 8, wy = fy < 0 ? 0 : fy & 255;
-        int y1 = y0 + 1 < qh ? y0 + 1 : qh - 1;
-        if (y0 != last_y0 || wy != last_wy) {
-            const uint32_t *r0 = a + y0 * qw, *r1 = a + y1 * qw;
-            for (int x = 0; x < qw; x++) {
-                int c0 = r0[x] >> 16 & 0xff, c1 = r1[x] >> 16 & 0xff;
-                rr[x] = c0 * 256 + (c1 - c0) * wy;
-                c0 = r0[x] >> 8 & 0xff, c1 = r1[x] >> 8 & 0xff;
-                rg[x] = c0 * 256 + (c1 - c0) * wy;
-                c0 = r0[x] & 0xff, c1 = r1[x] & 0xff;
-                rb[x] = c0 * 256 + (c1 - c0) * wy;
-            }
-            last_y0 = y0;
-            last_wy = wy;
-        }
-        uint32_t *d = s->px + y * s->stride;
-        for (int x = 0; x < s->w; x++) {
-            int x0 = col_x0[x], x1 = col_x1[x], wx = col_wx[x];
-            int r = (rr[x0] * 256 + (rr[x1] - rr[x0]) * wx) >> 16;
-            int g = (rg[x0] * 256 + (rg[x1] - rg[x0]) * wx) >> 16;
-            int b = (rb[x0] * 256 + (rb[x1] - rb[x0]) * wx) >> 16;
-            d[x] = (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
-        }
-    }
-}
-
-static uint32_t isqrt32(uint32_t n)
-{
-    uint32_t r = 0, bit = 1u << 30;
-    while (bit > n)
-        bit >>= 2;
-    while (bit) {
-        if (n >= r + bit) {
-            n -= r + bit;
-            r = (r >> 1) + bit;
-        } else {
-            r >>= 1;
-        }
-        bit >>= 2;
-    }
-    return r;
-}
-
-void gfx_glass(struct gfx_surface *dst, int x, int y, int w, int h, int r, const struct gfx_surface *frost,
-               int fx, int fy, uint32_t tint, uint32_t tint_a, uint32_t alpha)
-{
-    if (w <= 0 || h <= 0 || !alpha)
-        return;
-    if (r > h / 2)
-        r = h / 2;
-    if (r > w / 2)
-        r = w / 2;
-    for (int row = 0; row < h; row++) {
-        int sy = y + row;
-        if (sy < 0 || sy >= dst->h)
-            continue;
-        /* How far this row's edge is in from the side, in 1/256 px. */
-        int in = 0, dy = row < r ? r - row - 1 : row >= h - r ? row - (h - r) : -1;
-        if (dy >= 0) {
-            uint32_t d = (uint32_t)((2 * dy + 1) * (2 * dy + 1)), big = (uint32_t)(4 * r * r);
-            in = r * 256 - (int)(isqrt32((big - d) << 12) * 2);
-        }
-        int ipx = in >> 8, edge = 256 - (in & 255);
-        uint32_t *d = dst->px + sy * dst->stride;
-        const uint32_t *sp = frost->px + (fy + row < 0 ? 0 : fy + row >= frost->h ? frost->h - 1 : fy + row) * frost->stride;
-        for (int col = ipx; col < w - ipx; col++) {
-            int sx = x + col;
-            if (sx < 0 || sx >= dst->w)
-                continue;
-            int fcol = fx + col;
-            uint32_t p = sp[fcol < 0 ? 0 : fcol >= frost->w ? frost->w - 1 : fcol];
-            p = mix(tint >> 16 & 0xff, p >> 16 & 0xff, tint_a) << 16 |
-                mix(tint >> 8 & 0xff, p >> 8 & 0xff, tint_a) << 8 | mix(tint & 0xff, p & 0xff, tint_a);
-            /* The rim: light from above, a little down the sides. */
-            uint32_t lit = 0;
-            if (row == 0 || (dy >= 0 && row < r && col <= ipx))
-                lit = 120;
-            else if (row == 1)
-                lit = 64;
-            if (col - ipx <= 1 || w - ipx - 1 - col <= 1) {
-                uint32_t side = (uint32_t)(76 * (h - row) / h) + 16;
-                lit = lit > side ? lit : side;
-            }
-            if (lit)
-                p = mix(255, p >> 16 & 0xff, lit) << 16 | mix(255, p >> 8 & 0xff, lit) << 8 | mix(255, p & 0xff, lit);
-            if (row == h - 1)
-                p = mix(0, p >> 16 & 0xff, 44) << 16 | mix(0, p >> 8 & 0xff, 44) << 8 | mix(0, p & 0xff, 44);
-            uint32_t a = alpha;
-            if (col == ipx || col == w - ipx - 1)
-                a = a * (uint32_t)edge / 256;
-            uint32_t o = d[sx];
-            d[sx] = a >= 255 ? p : mix(p >> 16 & 0xff, o >> 16 & 0xff, a) << 16 |
-                                   mix(p >> 8 & 0xff, o >> 8 & 0xff, a) << 8 | mix(p & 0xff, o & 0xff, a);
         }
     }
 }

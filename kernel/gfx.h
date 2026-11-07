@@ -71,20 +71,6 @@ void gfx_blit(struct gfx_surface *dst, int dx, int dy,
 void gfx_blend(struct gfx_surface *dst, int dx, int dy,
                const struct gfx_surface *src, int sx, int sy, int w, int h, uint32_t alpha);
 
-/* Liquid glass: a rounded pane of `frost` (a frosted copy of what's behind,
- * sampled at fx+col, fy+row), mixed with tint at tint_a (0..255), with a
- * bright rim along its top and sides and a dark line along its bottom. alpha
- * fades the whole pane. Its corners are anti-aliased. */
-void gfx_glass(struct gfx_surface *dst, int x, int y, int w, int h, int r, const struct gfx_surface *frost,
-               int fx, int fy, uint32_t tint, uint32_t tint_a, uint32_t alpha);
-
-/* Frost the whole surface in place, for what's behind a pop-up: shrunk to
- * a quarter, box-blurred (radius in quarter pixels, three passes: nearly a
- * Gaussian), then scaled back up smoothly. tmp holds GFX_BLUR_TMP(w, h)
- * pixels. Done once when a pop-up opens: about 3 ms at 720x1280 on a PC. */
-#define GFX_BLUR_TMP(w, h) ((uint32_t)(((w) + 3) / 4 * (((h) + 3) / 4)) * 2u)
-void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp);
-
 /* Composite a w x h ARGB image onto dst at (dx, dy) using its alpha. */
 void gfx_blit_alpha(struct gfx_surface *dst, int dx, int dy,
                     const uint32_t *argb, int w, int h, int stride);
@@ -112,6 +98,9 @@ struct gfx_view gfx_view_clip(const struct gfx_view *v, struct gfx_rect r);
  * animations: quick, not pretty up close. */
 void gfx_blit_scaled(struct gfx_surface *dst, struct gfx_rect d, const struct gfx_surface *src,
                      struct gfx_rect sr, uint32_t alpha, int radius);
+/* An ARGB image shrunk to ow x oh into out (ow * oh pixels), each pixel the
+ * average of those it covers: done once, kept, and blitted from then on. */
+void gfx_scale_argb(const uint32_t *src, int w, int h, int stride, uint32_t *out, int ow, int oh);
 /* An ARGB image scaled to d, its alpha times `alpha` (0..255). */
 void gfx_blit_alpha_scaled(struct gfx_surface *dst, struct gfx_rect d, const uint32_t *argb, int w,
                            int h, int stride, uint32_t alpha);

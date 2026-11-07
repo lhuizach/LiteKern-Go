@@ -164,14 +164,14 @@ static void draw_toast(void);
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
-/* --- the frosted backdrop (the motion pass) -----------------------------------------------
- * Behind the app switcher and the power menu, what was on screen shows
- * blurred, like One UI's. It's drawn once as they open (backdrop_take:
- * the picture blurred, gfx_blur), then faded in with them; once they're all
- * there it stands in for everything under them, which isn't drawn at all. */
-#define BACKDROP_BLUR 5         /* quarter pixels: about 20 px on screen, three passes */
-static uint32_t *bd_px, *bd_tmp;
+/* --- the backdrop (the motion pass) ---------------------------------------------------
+ * What's on screen, kept once as a panel, the drawer, Recent apps or the power
+ * menu opens: while they move it stands in for everything under them, so a
+ * frame is one copy and a panel, not the whole shell drawn again. */
+static uint32_t *bd_px;
 static int bd_ok;               /* bd_px holds the picture */
+static int qs_taken;            /* ... for this opening of the panel */
+static int qs_shown(void);
 
 static struct gfx_surface backdrop(void)
 {
@@ -183,12 +183,10 @@ static void backdrop_take(int with_bar)
     struct gfx_surface *s = S();
     bd_ok = 0;
     if (!bd_px) {
-        uint32_t bytes = (uint32_t)(s->w * s->h * 4), tmp = GFX_BLUR_TMP(s->w, s->h) * 4;
+        uint32_t bytes = (uint32_t)(s->w * s->h * 4);
         bd_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (!bd_tmp)
-            bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (!bd_px || !bd_tmp)
-            return;                     /* no memory: plain dimming, as before */
+        if (!bd_px)
+            return;                     /* no memory: everything's drawn each frame */
     }
     uint32_t t0 = uptime_ms();
     struct gfx_view v = { backdrop(), 0, 0 };
@@ -202,43 +200,14 @@ static void backdrop_take(int with_bar)
     if (with_bar)
         draw_topbar();
     V = outer;
-    gfx_blur(&v.s, BACKDROP_BLUR, bd_tmp);
     bd_ok = 1;
-    kprintf("desktop: backdrop blurred in %u ms\n", (unsigned)(uptime_ms() - t0));
+    kprintf("desktop: backdrop taken in %u ms\n", (unsigned)(uptime_ms() - t0));
 }
 
-/* The wallpaper, frosted: what glass on the home and lock screens shows. Made
- * once for each picture. */
-static uint32_t *frost_px;
-static uint32_t frost_made;
-static struct gfx_surface frost_surf;
-
-const struct gfx_surface *desktop_frost(void)
-{
-    struct gfx_surface *s = S();
-    if (!frost_px) {
-        uint32_t bytes = (uint32_t)(s->w * s->h * 4), tmp = GFX_BLUR_TMP(s->w, s->h) * 4;
-        frost_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (!bd_tmp)
-            bd_tmp = (uint32_t *)pmm_alloc_contiguous((tmp + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (!frost_px || !bd_tmp)
-            return 0;
-        frost_made = wallpaper_gen - 1;
-    }
-    frost_surf = (struct gfx_surface){ frost_px, s->w, s->h, s->w };
-    if (frost_made != wallpaper_gen) {
-        frost_made = wallpaper_gen;
-        wallpaper_draw(&frost_surf, 0, 0, 0);
-        gfx_blur(&frost_surf, BACKDROP_BLUR, bd_tmp);
-    }
-    return &frost_surf;
-}
-
-/* The backdrop over the part of the screen being composed, at alpha. */
-static void backdrop_draw(uint32_t alpha)
+static void backdrop_draw(void)
 {
     struct gfx_surface b = backdrop();
-    gfx_blend(VS, 0, 0, &b, V->ox, V->oy, VS->w, VS->h, alpha);
+    gfx_blit(VS, 0, 0, &b, V->ox, V->oy, VS->w, VS->h);
 }
 
 /* Everything in r, bottom to top. */
@@ -247,12 +216,26 @@ static void compose(struct gfx_rect r)
     struct gfx_view v = { gfx_sub(S(), r), r.x, r.y };
     struct gfx_view *outer = V;
     V = &v;
-    if (sw_alpha >= 255 && sw_open && bd_ok) {
-        backdrop_draw(255);             /* all there: it stands in for what's under it */
+    if (started && qs_shown() && !qs_taken) {
+        qs_taken = 1;
+        backdrop_take(0);
+    }
+    if (started && bd_ok && (menu_open || menu_alpha > 0)) {
+        draw_menu();                    /* it stands in for everything, the status bar too */
+        draw_toast();
+        V = outer;
+        return;
+    }
+    if (bd_ok && (sw_open || sw_alpha > 0)) {
+        backdrop_draw();
         draw_switcher();
     } else if (sw_open && sw_alpha >= 255) {
         wallpaper_draw(VS, v.ox, v.oy, 0);
         draw_switcher();                /* all there: nothing under it shows */
+    } else if (bd_ok && (qs_shown() || drw_shown())) {
+        backdrop_draw();
+        if (drw_shown())
+            draw_drawer();
     } else {
         wallpaper_draw(VS, v.ox, v.oy, 0);
         if (home_shown()) {
@@ -262,11 +245,8 @@ static void compose(struct gfx_rect r)
         } else {
             wm_draw(VS, v.ox, v.oy);
         }
-        if (sw_alpha > 0) {
-            if (bd_ok)
-                backdrop_draw((uint32_t)sw_alpha);
-            draw_switcher();            /* fading in or out over what's under it */
-        }
+        if (sw_alpha > 0)
+            draw_switcher();            /* fading over what's under it */
     }
     if (started && !home_shown() && !sw_open)
         osk_draw(VS, v.ox, v.oy);
@@ -902,17 +882,13 @@ static int drw_moving, drw_y0 = -1, drw_from, drw_live;
 static uint32_t last_drw_tick;
 
 static int drw_shown(void) { return drw.x > 0 || drw.t > 0; }
-static int drw_alpha(void)
-{
-    int a = drw.x * 255 / FX(S()->h);
-    return a < 0 ? 0 : a > 255 ? 255 : a;
-}
+static int drw_top(void) { return S()->h - drw.x / 256; }     /* the sheet's top edge */
 
 static struct gfx_rect list_rect(int k)
 {
     const struct theme *t = T();
-    int x0 = (S()->w - HOME_COLS * t->tile_w) / 2, lift = (255 - drw_alpha()) * 140 / 255;
-    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, DRAWER_TOP + lift + (k / HOME_COLS) * t->tile_h,
+    int x0 = (S()->w - HOME_COLS * t->tile_w) / 2;
+    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, drw_top() + DRAWER_TOP + (k / HOME_COLS) * t->tile_h,
                               t->tile_w, t->tile_h };
 }
 
@@ -1023,11 +999,42 @@ static int visible(struct gfx_rect r)
     return !gfx_rect_empty(gfx_rect_intersect(r, (struct gfx_rect){ V->ox, V->oy, V->s.w, V->s.h }));
 }
 
+/* Icons at the sizes on screen, shrunk once: shrinking one well takes a while,
+ * and the drawer and home screen show a dozen on every frame. */
+#define ICON_SIZES 48
+static struct { const struct icon *ic; int w, h; uint32_t *px; } icon_sizes[ICON_SIZES];
+
+static const uint32_t *icon_sized(const struct icon *ic, int w, int h)
+{
+    if (w >= ic->w || h >= ic->h)
+        return 0;
+    int k = 0;
+    for (; k < ICON_SIZES && icon_sizes[k].ic; k++)
+        if (icon_sizes[k].ic == ic && icon_sizes[k].w == w && icon_sizes[k].h == h)
+            return icon_sizes[k].px;
+    if (k == ICON_SIZES)
+        return 0;
+    uint32_t *px = (uint32_t *)pmm_alloc_contiguous(((uint32_t)(w * h * 4) + PAGE_SIZE - 1) / PAGE_SIZE);
+    if (!px)
+        return 0;
+    gfx_scale_argb(ic->px, ic->w, ic->h, ic->w, px, w, h);
+    icon_sizes[k].ic = ic;
+    icon_sizes[k].w = w;
+    icon_sizes[k].h = h;
+    icon_sizes[k].px = px;
+    return px;
+}
+
 static void draw_icon(const struct app *a, struct gfx_rect r, uint32_t alpha)
 {
     const struct theme *t = T();
     const struct icon *ic = icon_find(a->icon);
     if (ic) {
+        const uint32_t *sized = alpha >= 255 ? icon_sized(ic, r.w, r.h) : 0;
+        if (sized) {
+            gfx_blit_alpha(VS, VX(r.x), VY(r.y), sized, r.w, r.h, r.w);
+            return;
+        }
         gfx_blit_alpha_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, ic->px, ic->w, ic->h,
                               ic->w, alpha);
     } else {                    /* no icon built in: its initial on an accent tile */
@@ -1198,18 +1205,9 @@ static void draw_topbar(void)
     struct gfx_rect bar = { 0, 0, S()->w, t->topbar_h };
     if (!visible(bar))
         return;
-    uint32_t bg;
-    if (qs_shown()) {                       /* quick settings: clear, over its frost */
-        bg = t->light ? 0xe0e0e0 : 0x202020;
-        bar_fg = t->fg;
-    } else if (home_shown() || sw_alpha > 0) {
-        bg = 0x202020;                      /* clear: about what's under it, for the icons' dim parts */
-        bar_fg = SHELL_FG;
-    } else {
-        bg = t->headerbar_bg;
-        gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
-        bar_fg = t->fg;
-    }
+    uint32_t bg = t->topbar_bg;             /* black on every screen, as on Phosh */
+    gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
+    bar_fg = SHELL_FG;
     int ty = (t->topbar_h - text_height(TEXT_BOLD)) / 2;
     char text[24];
     int clock_x;
@@ -1287,9 +1285,8 @@ static void draw_menu(void)
 {
     int al = menu_alpha;
     if (bd_ok)
-        backdrop_draw((uint32_t)al);                        /* what's behind, frosted */
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 90 : 140) * al / 255));   /* and dimmed */
-    struct gfx_surface b = backdrop();
+        backdrop_draw();
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(170 * al / 255));
     static const char *const labels[MENU_ITEMS] = { "Power off", "Restart", "Lock", "Log Out" };
     for (int k = 0; k < menu_items(); k++) {
         struct gfx_rect r = menu_item_rect(k);
@@ -1302,12 +1299,8 @@ static void draw_menu(void)
         int red = menu_kinds[k] == H_SHUTDOWN && !disabled;
         struct hit h = { menu_kinds[k], 0 };
         int held = same(h, pressed) && same(h, hover);
-        if (bd_ok)
-            gfx_glass(VS, VX(cx - PW_D / 2), VY(cy - PW_D / 2), PW_D, PW_D, PW_D / 2, &b, cx - PW_D / 2, cy - PW_D / 2,
-                      red ? 0xe0312a : WHITE, red ? 200 : held ? 80 : 34, (uint32_t)al);
-        else
-            gfx_blend_round_rect(VS, VX(cx - PW_D / 2), VY(cy - PW_D / 2), PW_D, PW_D, PW_D / 2,
-                                 red ? 0xe0312a : SHELL_POPOVER, (uint32_t)al);
+        gfx_blend_round_rect(VS, VX(cx - PW_D / 2), VY(cy - PW_D / 2), PW_D, PW_D, PW_D / 2,
+                             red ? 0xc01c28 : held ? 0x5d5d61 : SHELL_POPOVER, (uint32_t)al);
         if (al > 140) {
             uint32_t fg = disabled ? 0x9a9a9c : SHELL_FG;
             menu_icon(menu_kinds[k], cx, cy, fg);
@@ -1341,20 +1334,15 @@ static void draw_home(void)
             date[n++] = *q;
         date[n] = 0;
         const struct text_face *big = lockscreen_clock_face();
-        int x0 = page_x(0) + 40, y = t->topbar_h + 36;
-        text_draw_face(VS, VX(x0), VY(y), hm, big, SHELL_FG);
+        int cx = page_x(0) + S()->w / 2, y = t->topbar_h + 36;
+        text_draw_face(VS, VX(cx - text_width_face(hm, big) / 2), VY(y), hm, big, SHELL_FG);
         y += big->ascent + big->descent + 2;
-        text_draw(VS, VX(x0 + 4), VY(y), date, TEXT_BOLD, SHELL_FG);
+        text_draw(VS, VX(cx - text_width(date, TEXT_BOLD) / 2), VY(y), date, TEXT_BOLD, SHELL_FG);
     }
-    /* The dock: glass over the wallpaper, in reach of a thumb. */
-    const struct gfx_surface *frost = desktop_frost();
+    /* The dock: a dark bar over the wallpaper, in reach of a thumb. */
     struct gfx_rect d = home_dock();
-    if (dock_count() && visible(d)) {
-        if (frost)
-            gfx_glass(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, frost, d.x, d.y, WHITE, 34, 255);
-        else
-            gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, WHITE, A_DOCK);
-    }
+    if (dock_count() && visible(d))
+        gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, 0x1d1d20, 210);
     for (int i = 0; i < builtin_app_count; i++) {
         struct gfx_rect r = tile_rect(i);
         if (!visible(r))
@@ -1383,27 +1371,25 @@ static void draw_home(void)
     }
 }
 
-/* All apps, A to Z, over the frosted home screen. */
+/* All apps, A to Z, on a sheet that slides up over the home screen. */
 static void draw_drawer(void)
 {
-    int al = drw_alpha();
-    backdrop_draw((uint32_t)al);
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(70 * al / 255));
+    const struct theme *t = T();
+    int top = drw_top();
+    gfx_fill_round_rect(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, t->window_bg);
+    text_draw(VS, VX(48), VY(top + t->topbar_h + 12), "Apps", TEXT_HEADING, t->fg);
     for (int k = 0; k < builtin_app_count; k++) {
         struct gfx_rect r = list_rect(k);
         if (!visible(r))
             continue;
         struct hit h = { H_LIST, k };
         if (same(h, pressed) && same(h, hover))
-            gfx_blend_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
+            gfx_fill_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, t->button_bg);
         const struct app *a = &builtin_apps[list_app(k)];
         struct gfx_rect ir = { r.x + (r.w - HOME_ICON) / 2, r.y + 16, HOME_ICON, HOME_ICON };
-        draw_icon(a, ir, (uint32_t)al);
-        if (al > 140) {
-            int ty = ir.y + ir.h + 12, max_w = r.w - 8, tw = text_width(a->name, TEXT_SMALL);
-            text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
-                          TEXT_SMALL, SHELL_FG);
-        }
+        draw_icon(a, ir, 255);
+        int ty = ir.y + ir.h + 12, max_w = r.w - 8, tw = text_width(a->name, TEXT_SMALL);
+        text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w, TEXT_SMALL, t->fg);
     }
 }
 
@@ -1492,11 +1478,9 @@ static __attribute__((unused)) void draw_dock(void)
  *
  * A window is drawn once into a snapshot, left out of the picture, and the
  * snapshot is drawn scaled and faded over a copy of the rest, frame by
- * frame. Each frame is timed: if one takes longer than ANIM_MAX_FRAME_MS
- * (a slow machine), the rest are skipped, so an animation never makes
- * things feel slower. The cost is logged for measuring on the EeePC. */
-
-#define ANIM_MAX_FRAME_MS 30
+ * frame. Each frame is timed: when one runs late the frames it overlapped are
+ * skipped, not the rest of the animation, so a slow machine gets fewer frames
+ * of the same length of movement. The cost is logged for measuring. */
 
 enum easing { EASE_OUT, EASE_BACK, EASE_IN_OUT };
 
@@ -1586,9 +1570,9 @@ static void anim_run(struct ghost *g, int n, int frames, int ms, enum easing e, 
         uint32_t took = uptime_ms() - f0;
         if (took > worst)
             worst = took;
-        if (took > ANIM_MAX_FRAME_MS && f < frames) {
-            /* Too slow here: jump to the last frame. */
-            f = frames - 1;
+        int due = (int)((uptime_ms() - t0) * (uint32_t)frames / (uint32_t)ms);
+        if (due > f && f < frames) {        /* late: on to where it should be by now */
+            f = due < frames ? due : frames - 1;
             continue;
         }
         while (uptime_ms() - t0 < (uint32_t)(f * ms / frames))
@@ -2149,6 +2133,8 @@ static void sw_go(int i)
     struct wm_window *w = sw_win[i];
     kprintf("switcher: to %s\n", name_of(w));
     sw_set(0);
+    spring_snap(&swv);                  /* gone at once: the picture behind it is out of date */
+    sw_alpha = 0;
     shell_flush();
     if (wm_is_minimised(w))
         restore_window(w);
@@ -2161,7 +2147,7 @@ static void draw_switcher(void)
 {
     const struct theme *t = T();
     int al = sw_alpha, lift = (255 - al) * 160 / 255;      /* fading in, the cards rise into place */
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)((bd_ok ? 90 : 120) * al / 255));
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(190 * al / 255));
     if (!sw_n) {
         const char *none = "No recent apps";
         if (al > 160)
@@ -2179,7 +2165,7 @@ static void draw_switcher(void)
         if (al > 160)
             text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
                           name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
-        /* A thin light rim, so a dark app stands out from the blur behind it. */
+        /* A thin light rim, so a dark app stands out from what's behind it. */
         gfx_blend_round_rect(VS, VX(r.x - SW_RIM), VY(r.y - SW_RIM), r.w + 2 * SW_RIM, r.h + 2 * SW_RIM,
                              SW_RADIUS + SW_RIM, 0xffffff, (uint32_t)(SW_RIM_ALPHA * al / 255));
         gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
@@ -2189,11 +2175,7 @@ static void draw_switcher(void)
         text_draw(VS, VX(48), VY(t->topbar_h + 24 + lift / 4), "Recent apps", TEXT_HEADING, SHELL_FG);
     struct gfx_rect c = sw_clear_rect();
     c.y += lift;
-    struct gfx_surface bk = backdrop();
-    if (bd_ok)
-        gfx_glass(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, &bk, c.x, c.y, WHITE, 40, (uint32_t)al);
-    else
-        gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
+    gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
     if (al > 160)
         text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2),
                   VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2), "Close all", TEXT_BOLD, SHELL_FG);
@@ -2305,10 +2287,12 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
  * swipe sideways dismisses one, Clear all the lot. Back, Home, a tap on the
  * dimmed part or a swipe up closes it. */
 
-#define QS_TILE 120             /* a round tile */
 #define QS_HEAD 120             /* the date and Settings */
-#define QS_TILES_H (QS_TILE + 64)
-#define QS_SLIDER_H 110
+#define QS_SLIDER_H 96
+#define QS_PILL_H 112           /* a tile: a pill, two to a row */
+#define QS_PILL_GAP 16
+#define QS_TILES_H (2 * QS_PILL_H + QS_PILL_GAP + 24)
+#define QS_PANEL_R 48
 #define NOTE_MAX 8
 #define NOTE_H 112
 #define NOTE_GAP 12
@@ -2351,14 +2335,15 @@ static struct gfx_rect qs_gear_rect(void)
 
 static struct gfx_rect qs_tile_rect(int i)
 {
-    int cell = (S()->w - 2 * T()->margin) / QS_NTILES;
-    return (struct gfx_rect){ T()->margin + i * cell + (cell - QS_TILE) / 2, qs_top() + QS_HEAD, QS_TILE, QS_TILE };
+    int m = T()->margin, w = (S()->w - 2 * m - QS_PILL_GAP) / 2;
+    return (struct gfx_rect){ m + (i % 2) * (w + QS_PILL_GAP), qs_top() + QS_HEAD + QS_SLIDER_H + (i / 2) * (QS_PILL_H + QS_PILL_GAP),
+                              w, QS_PILL_H };
 }
 
 static struct gfx_rect qs_slider_rect(void)     /* the track, with room to grab it */
 {
     int m = T()->margin;
-    return (struct gfx_rect){ m + 72, qs_top() + QS_HEAD + QS_TILES_H + 20, S()->w - 2 * m - 96, 72 };
+    return (struct gfx_rect){ m + 72, qs_top() + QS_HEAD + 8, S()->w - 2 * m - 96, 72 };
 }
 
 static struct gfx_rect note_rect(int k)
@@ -2563,34 +2548,20 @@ static void date_long(char date[40])
     date[n] = '\0';
 }
 
-static int qs_frosted;                  /* what's behind it has been frosted, for this opening */
-
 static void draw_qs(void)
 {
     if (!qs_shown()) {
-        qs_frosted = 0;
+        qs_taken = 0;
         return;
     }
     const struct theme *t = T();
     struct gfx_rect p = qs_rect();
     int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0;
     open = open > 255 ? 255 : open;
-    if (!qs_frosted) {
-        qs_frosted = 1;
-        backdrop_take(0);
-    }
-    if (bd_ok)
-        backdrop_draw((uint32_t)open);
-    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * (t->light ? 0 : A_QS_DIM) / 255));
-    struct gfx_surface bk = backdrop();
-    uint32_t tint_a = t->light ? 150 : 26;
-    int side = t->margin - 8, panel_w = S()->w - 2 * side;
-    int ty = p.y + QS_HEAD - 16, ph = QS_TILES_H + 12;
-    if (bd_ok) {
-        gfx_glass(VS, VX(side), VY(ty), panel_w, ph, 56, &bk, side, ty < 0 ? 0 : ty, WHITE, tint_a, (uint32_t)open);
-        gfx_glass(VS, VX(side), VY(ty + ph + 12), panel_w, QS_SLIDER_H - 8, 56, &bk, side, ty + ph + 12 < 0 ? 0 : ty + ph + 12,
-                  WHITE, tint_a, (uint32_t)open);
-    }
+    int edge = p.y + p.h;
+    gfx_darken(VS, VX(0), VY(edge - QS_PANEL_R), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
+    gfx_fill_round_rect(VS, VX(0), VY(p.y - QS_PANEL_R), p.w, p.h + QS_PANEL_R, QS_PANEL_R, t->window_bg);
+    gfx_fill_round_rect(VS, VX(p.w / 2 - 36), VY(edge - 20), 72, 6, 3, t->border);
     /* The date, and Settings. */
     if (rtc && clock_shown.month) {
         char date[40];
@@ -2599,7 +2570,7 @@ static void draw_qs(void)
     }
     struct gfx_rect g = qs_gear_rect();
     int gx = g.x + g.w / 2, gy = g.y + g.h / 2;
-    uint32_t gear_bg = t->light ? 0xe6e8ee : 0x3b3f4a;
+    uint32_t gear_bg = t->button_bg;
     gfx_fill_circle(VS, VX(gx), VY(gy), g.w / 2, gear_bg);
     gfx_fill_circle(VS, VX(gx), VY(gy), 20, t->fg);                 /* a cog */
     static const int cog_dx[8] = { 0, 18, 26, 18, 0, -18, -26, -18 }, cog_dy[8] = { -26, -18, 0, 18, 26, 18, 0, -18 };
@@ -2608,16 +2579,21 @@ static void draw_qs(void)
     gfx_fill_circle(VS, VX(gx), VY(gy), 9, gear_bg);
     /* The tiles. */
     static const char *const names[QS_NTILES] = { "Wi-Fi", "Dark mode", "Do not disturb", "Lock" };
-    int cell = (S()->w - 2 * t->margin) / QS_NTILES;
     for (int i = 0; i < QS_NTILES; i++) {
         struct gfx_rect r = qs_tile_rect(i);
         int on = tile_on(i), works = tile_works(i);
         uint32_t bg = on ? t->accent_bg : t->button_bg, fg = on ? t->accent_fg : works ? t->fg : t->fg_dim;
-        gfx_fill_circle(VS, VX(r.x + r.w / 2), VY(r.y + r.h / 2), r.w / 2, bg);
-        draw_tile_icon(i, r.x + r.w / 2, r.y + r.h / 2, fg, bg);
-        int tw = text_width(names[i], TEXT_SMALL);
-        int lx = r.x + r.w / 2 - (tw < cell - 4 ? tw : cell - 4) / 2;
-        text_draw_fit(VS, VX(lx), VY(r.y + r.h + 8), names[i], cell - 4, TEXT_SMALL, works ? t->fg : t->fg_dim);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+        draw_tile_icon(i, r.x + 50, r.y + r.h / 2, fg, bg);
+        int tx = r.x + 92, tw = r.w - 92 - 12;
+        if (i == T_LOCK) {
+            text_draw_fit(VS, VX(tx), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), names[i], tw, TEXT_BOLD, fg);
+            continue;
+        }
+        int th = text_height(TEXT_BOLD), sh = text_height(TEXT_SMALL), ly = r.y + (r.h - th - sh - 2) / 2;
+        text_draw_fit(VS, VX(tx), VY(ly), names[i], tw, TEXT_BOLD, fg);
+        text_draw_fit(VS, VX(tx), VY(ly + th + 2), !works ? "None" : on ? "On" : "Off", tw, TEXT_SMALL,
+                      on ? t->accent_fg : t->fg_dim);
     }
     /* The brightness: a sun, then the slider. */
     struct gfx_rect sr = qs_slider_rect();
@@ -2644,10 +2620,7 @@ static void draw_qs(void)
         struct gfx_rect r = note_rect(k);
         if (k == qs_note)
             r.x += qs_note_dx;
-        if (bd_ok)
-            gfx_glass(VS, VX(r.x), VY(r.y), r.w, r.h, 48, &bk, r.x, r.y < 0 ? 0 : r.y, WHITE, tint_a, (uint32_t)open);
-        else
-            gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
         if (notes[k].app)
             draw_icon(notes[k].app, (struct gfx_rect){ r.x + 20, r.y + (r.h - 56) / 2, 56, 56 }, 255);
         int tx = r.x + 20 + 56 + 20, tw = r.w - (tx - r.x) - 20;

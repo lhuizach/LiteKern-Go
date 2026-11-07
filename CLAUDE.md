@@ -61,7 +61,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## GUI notes
 
-- Look and feel comes from LiteKern X. Reuse its design, then adapt to touch: taps replace clicks, drag to scroll, a portrait layout, and larger touch targets.
+- Style: Adwaita dark by default, flat like Phosh on Nura: solid surfaces, no live blur or glass (too slow on the Cortex-A53 and it looked poor). Panels slide over a kept copy of the screen, so each frame is one copy and a panel. Taps replace clicks, drag to scroll, a portrait layout, larger touch targets.
 - The existing LiteKern X GUI is the owner's own code, mostly C, with the KERN86 app architecture (`.lkx` format, `kerns.json` manifest, `kern86.h` API). Check how much of it assumes x86 or X11 before porting.
 - Draw to the framebuffer or DRM/KMS, read touch through evdev (or libinput). Software rendering is fine at first.
 - An on-screen keyboard will be needed.

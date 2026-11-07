@@ -272,9 +272,9 @@ static void draw_tabs(void)
     const struct theme *t = theme_get();
     int y = canvas.h - TAB_H, w = canvas.w / NTABS;
     gfx_fill_rect(&canvas, 0, y, canvas.w, TAB_H, t->window_bg);
-    /* A floating glass capsule, with a pill on the current tab. */
+    /* A rounded bar, with a pill on the current tab. */
     int bx = 24, by = y + 8, bw = canvas.w - 2 * bx, bh = TAB_H - 28;
-    gfx_glass(&canvas, bx, by, bw, bh, bh / 2, &canvas, bx, by, t->dialog_bg, 190, 255);
+    gfx_fill_round_rect(&canvas, bx, by, bw, bh, bh / 2, t->dialog_bg);
     for (int i = 0; i < NTABS; i++) {
         struct gfx_rect r = { i * w, y, w, TAB_H };
         int sel = (int)tab == i, cw = bw / NTABS;

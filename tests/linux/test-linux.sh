@@ -418,7 +418,7 @@ check "the app switcher: a tap goes to an app, a swipe up closes one, Close all 
 
 # The switcher settles on a card when let go (One UI's way): a short drag
 # springs back to Files, a long one goes on to Calculator. What's behind it,
-# and behind the power menu, is blurred once as they open.
+# and behind the power menu, is kept once as they open.
 path; open_app 1; add phone_home sleep:0.8; open_app 0; add phone_recents sleep:1
 go 300 620; add press:1; go 340 620; go 380 620; go 400 620; add sleep:0.2 release sleep:1
 go 100 620; add press:1; go 200 620; go 300 620; go 400 620; add sleep:0.2 release sleep:1
@@ -427,7 +427,7 @@ run $SHELL_BIN build-linux/test/disk.img "$P"
 check "the switcher settles on the nearest card; it and the power menu blur what's behind" \
     '^switcher: settles on Files$' \
     '^switcher: settles on Calculator$' \
-    '^desktop: backdrop blurred in [0-9]+ ms$' \
+    '^desktop: backdrop taken in [0-9]+ ms$' \
     '^shell: power menu open$' \
     '^fx: [0-9]+ frames in [0-9]+ ms' \
     '!crashed|PANIC'
@@ -596,12 +596,12 @@ check "apps: a crash, bad calls and a hang each end only the app" \
 
 # Notifications and quick settings (the tests' image): Notify (the 11th icon)
 # posts two; the status bar is pulled down (from 360,20 to 920): the panel,
-# with them newest first. A tap on the first ("Again", 360,526) opens its app
-# and dismisses it. Pulled again: Dark mode (276,236) and Do not disturb
-# (444,236) tiles, then Back closes it. Home held opens it too.
+# with them newest first. A tap on the first ("Again", 360,592) opens its app
+# and dismisses it. Pulled again: Dark mode (524,328) and Do not disturb
+# (188,456) tiles, then Back closes it. Home held opens it too.
 path; tap_app 10; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
-go 360 526; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 276 236; click; add sleep:0.5
-go 444 236; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
+go 360 592; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 524 328; click; add sleep:0.5
+go 188 456; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img
 run $SHELL_BIN build-linux/test/qs.img "$P"
 check "notifications: posted, in the pulled-down panel, a tap opens the app; the panel's tiles; Back, Home held" \
