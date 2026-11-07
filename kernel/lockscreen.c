@@ -487,7 +487,10 @@ static void clock_place(int *x, int *y)
     const struct lock_settings *c = &ls.set;
     int sw = S()->w, sh = S()->h;
     int cx = sw * (c->clock_x < 0 || c->clock_x > 100 ? 50 : c->clock_x) / 100;
-    int top = c->clock_y < 0 ? clock_y() + clk.top_gap : sh * c->clock_y / 100 - clk.h / 2;
+    /* By itself, the digits sit where the home screen's face puts them: the big faces
+     * have the space above their digits trimmed (tools/font-rasterize.py). */
+    int lead = !load_clock_face(HOME_FACE) ? clock_faces[HOME_FACE].glyphs['0' - 32].yoff : 0;
+    int top = c->clock_y < 0 ? clock_y() + lead + clk.top_gap : sh * c->clock_y / 100 - clk.h / 2;
     int left = cx - clk.w / 2;
     left = left < 8 ? 8 : left + clk.w > sw - 8 ? sw - 8 - clk.w : left;
     int date = text_height(TEXT_BOLD) + 12, above = c->clock_style == 3 ? date : 0, under = above ? 0 : date;
