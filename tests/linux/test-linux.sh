@@ -596,12 +596,12 @@ check "apps: a crash, bad calls and a hang each end only the app" \
 
 # Notifications and quick settings (the tests' image): Notify (the 11th icon)
 # posts two; the status bar is pulled down (from 360,20 to 920): the panel,
-# with them newest first. A tap on the first ("Again", 360,592) opens its app
-# and dismisses it. Pulled again: Dark mode (524,328) and Do not disturb
-# (188,456) tiles, then Back closes it. Home held opens it too.
+# with them newest first. A tap on the first ("Again", 360,912) opens its app
+# and dismisses it. Pulled again: Dark Mode (530,589) and Do Not Disturb
+# (190,589), then Back closes it. Home held opens it too.
 path; tap_app 10; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
-go 360 592; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 524 328; click; add sleep:0.5
-go 188 456; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
+go 360 912; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 530 589; click; add sleep:0.5
+go 190 589; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img
 run $SHELL_BIN build-linux/test/qs.img "$P"
 check "notifications: posted, in the pulled-down panel, a tap opens the app; the panel's tiles; Back, Home held" \

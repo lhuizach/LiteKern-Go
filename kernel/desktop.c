@@ -1342,7 +1342,7 @@ static void draw_home(void)
     /* The dock: a dark bar over the wallpaper, in reach of a thumb. */
     struct gfx_rect d = home_dock();
     if (dock_count() && visible(d))
-        gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, 0x1d1d20, 210);
+        gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, 0x1d1d20, 102);     /* 40% */
     for (int i = 0; i < builtin_app_count; i++) {
         struct gfx_rect r = tile_rect(i);
         if (!visible(r))
@@ -2281,23 +2281,28 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
 /* --- quick settings and notifications (LiteKern Go, UI-PLAN.md) -------------------------
  *
  * Pulled down from the status bar (or a tap on it, or Home held), over
- * whatever is on screen, which dims: the date and a Settings button; tiles
- * for Wi-Fi, Dark mode, Do not disturb and Lock; the brightness; then the
- * apps' notifications (SYS_NOTIFY), newest first: a tap opens the app, a
- * swipe sideways dismisses one, Clear all the lot. Back, Home, a tap on the
- * dimmed part or a swipe up closes it. */
+ * whatever is on screen, which dims: the control center, solid modules on a
+ * 4 x 4 grid: connections and Lock in a 2 x 2 block, tall brightness and
+ * volume sliders, wide Do Not Disturb and Dark Mode, and four shortcuts. Over
+ * them the date and a Settings button; under them the newest of the apps'
+ * notifications (SYS_NOTIFY): a tap opens the app, a swipe sideways dismisses
+ * one, Clear all the lot. Back, Home, a tap on the dimmed part or a swipe up
+ * closes it. */
 
 #define QS_HEAD 120             /* the date and Settings */
-#define QS_SLIDER_H 96
-#define QS_PILL_H 112           /* a tile: a pill, two to a row */
-#define QS_PILL_GAP 16
-#define QS_TILES_H (2 * QS_PILL_H + QS_PILL_GAP + 24)
-#define QS_PANEL_R 48
+#define QS_SIDE 32
+#define QS_CELL 146
+#define QS_GAP 24
+#define QS_BLOCK (2 * QS_CELL + QS_GAP)
+#define QS_GRID_H (4 * QS_CELL + 3 * QS_GAP)
+#define QS_ROUND 116            /* a round button in the block */
+#define QS_MOD_R 52             /* a module's corners */
+#define QS_NOTES 2              /* notifications that fit under the grid */
 #define NOTE_MAX 8
 #define NOTE_H 112
 #define NOTE_GAP 12
 #define QS_CLEAR_H 96
-#define A_QS_DIM 140            /* black over what's behind the panel */
+#define A_QS_DIM 215            /* black over what's behind it */
 
 struct note {
     const struct app *app;
@@ -2315,12 +2320,16 @@ static int qs_x0, qs_y0, qs_from, qs_finger;
 enum { QF_NONE, QF_PULL, QF_PANEL, QF_SLIDER, QF_NOTE, QF_DIM };
 static int qs_note = -1, qs_note_dx;
 
-enum { T_WIFI, T_DARK, T_DND, T_LOCK, QS_NTILES };
+static int qs_sl, qs_sl_from, qs_held = -1;     /* the slider held, its value then; the module held */
+
+enum { T_WIFI, T_DARK, T_DND, T_LOCK, T_AIR, T_BT, T_FLASH, T_TIMER, T_CALC, T_SHOT, QS_NTILES };
+
+static int notes_shown(void) { return nnotes < QS_NOTES ? nnotes : QS_NOTES; }
 
 static int qs_h(void)
 {
-    int list = nnotes ? nnotes * (NOTE_H + NOTE_GAP) + QS_CLEAR_H : 90;
-    return QS_HEAD + QS_TILES_H + QS_SLIDER_H + list + T()->margin;
+    int list = nnotes ? notes_shown() * (NOTE_H + NOTE_GAP) + QS_CLEAR_H : 90;
+    return QS_HEAD + QS_GRID_H + QS_GAP + list + T()->margin;
 }
 
 static int qs_shown(void) { return qs.x > 0 || qs.t > 0; }
@@ -2333,28 +2342,45 @@ static struct gfx_rect qs_gear_rect(void)
     return (struct gfx_rect){ S()->w - T()->margin - 88, qs_top() + 16, 88, 88 };
 }
 
-static struct gfx_rect qs_tile_rect(int i)
+static int qs_grid_y(void) { return qs_top() + QS_HEAD; }
+
+static struct gfx_rect qs_block_rect(void)
 {
-    int m = T()->margin, w = (S()->w - 2 * m - QS_PILL_GAP) / 2;
-    return (struct gfx_rect){ m + (i % 2) * (w + QS_PILL_GAP), qs_top() + QS_HEAD + QS_SLIDER_H + (i / 2) * (QS_PILL_H + QS_PILL_GAP),
-                              w, QS_PILL_H };
+    return (struct gfx_rect){ QS_SIDE, qs_grid_y(), QS_BLOCK, QS_BLOCK };
 }
 
-static struct gfx_rect qs_slider_rect(void)     /* the track, with room to grab it */
+static struct gfx_rect qs_tile_rect(int i)
 {
-    int m = T()->margin;
-    return (struct gfx_rect){ m + 72, qs_top() + QS_HEAD + 8, S()->w - 2 * m - 96, 72 };
+    int y = qs_grid_y(), row3 = y + QS_BLOCK + QS_GAP, row4 = row3 + QS_CELL + QS_GAP;
+    int right = i == T_WIFI || i == T_LOCK, low = i == T_BT || i == T_LOCK;
+    int inset = (QS_BLOCK - 2 * QS_ROUND) / 3;
+    switch (i) {
+    case T_DND:   return (struct gfx_rect){ QS_SIDE, row3, QS_BLOCK, QS_CELL };
+    case T_DARK:  return (struct gfx_rect){ QS_SIDE + QS_BLOCK + QS_GAP, row3, QS_BLOCK, QS_CELL };
+    case T_FLASH: return (struct gfx_rect){ QS_SIDE, row4, QS_CELL, QS_CELL };
+    case T_TIMER: return (struct gfx_rect){ QS_SIDE + QS_CELL + QS_GAP, row4, QS_CELL, QS_CELL };
+    case T_CALC:  return (struct gfx_rect){ QS_SIDE + 2 * (QS_CELL + QS_GAP), row4, QS_CELL, QS_CELL };
+    case T_SHOT:  return (struct gfx_rect){ QS_SIDE + 3 * (QS_CELL + QS_GAP), row4, QS_CELL, QS_CELL };
+    default:
+        return (struct gfx_rect){ QS_SIDE + inset + right * (QS_ROUND + inset), y + inset + low * (QS_ROUND + inset),
+                                  QS_ROUND, QS_ROUND };
+    }
+}
+
+static struct gfx_rect qs_slider_rect(int k)    /* 0 brightness, 1 volume */
+{
+    return (struct gfx_rect){ QS_SIDE + QS_BLOCK + QS_GAP + k * (QS_CELL + QS_GAP), qs_grid_y(), QS_CELL, QS_BLOCK };
 }
 
 static struct gfx_rect note_rect(int k)
 {
-    int y = qs_top() + QS_HEAD + QS_TILES_H + QS_SLIDER_H + k * (NOTE_H + NOTE_GAP);
-    return (struct gfx_rect){ T()->margin, y, S()->w - 2 * T()->margin, NOTE_H };
+    int y = qs_grid_y() + QS_GRID_H + QS_GAP + k * (NOTE_H + NOTE_GAP);
+    return (struct gfx_rect){ QS_SIDE, y, S()->w - 2 * QS_SIDE, NOTE_H };
 }
 
 static struct gfx_rect qs_clear_rect(void)
 {
-    struct gfx_rect last = note_rect(nnotes);
+    struct gfx_rect last = note_rect(notes_shown());
     return (struct gfx_rect){ S()->w / 2 - 120, last.y + 8, 240, 72 };
 }
 
@@ -2453,14 +2479,45 @@ static int tile_on(int i)
     }
 }
 
+/* Airplane mode, Bluetooth and the flashlight have nothing behind them yet. */
 static int tile_works(int i)
 {
+    if (i == T_AIR || i == T_BT || i == T_FLASH)
+        return 0;
     return i != T_WIFI || net_shown.wifi != K86_NET_NONE;
+}
+
+static void show_toast(const char *text);
+static void screenshot(void);
+static int volume;
+
+static void open_named(const char *name, struct gfx_rect from)
+{
+    qs_set(0, 1);
+    for (int i = 0; i < builtin_app_count; i++)
+        if (!strcmp(builtin_apps[i].name, name))
+            launch(i, from);
 }
 
 static void tile_tap(int i)
 {
     switch (i) {
+    case T_AIR:
+    case T_BT:
+    case T_FLASH:
+        show_toast("Not available yet");
+        break;
+    case T_TIMER:
+        open_named("Clock", qs_tile_rect(i));
+        return;
+    case T_CALC:
+        open_named("Calculator", qs_tile_rect(i));
+        return;
+    case T_SHOT:
+        qs_set(0, 1);
+        shell_flush();
+        screenshot();
+        return;
     case T_WIFI:
         if (tile_works(i))
             net_wifi_set(!wifi_on());
@@ -2486,12 +2543,15 @@ static void tile_tap(int i)
     damage_all();
 }
 
-static void brightness_at(int x)
+/* A slider dragged: from its value when the finger landed, by how far it's moved. */
+static void slider_drag(int y)
 {
-    struct gfx_rect r = qs_slider_rect();
-    int p = (x - r.x) * 100 / (r.w > 0 ? r.w : 1);
-    p = p < 5 ? 5 : p > 100 ? 100 : p;
-    if (machine_set_brightness(p) == 0) {
+    int least = qs_sl == 0 ? 5 : 0, p = qs_sl_from + (qs_y0 - y) * 100 / QS_BLOCK;
+    p = p > 100 ? 100 : p < least ? least : p;
+    if (qs_sl == 1) {
+        volume = p;
+        damage_all();
+    } else if (machine_set_brightness(p) == 0) {
         machine_status(&machine_shown);
         damage_all();
     }
@@ -2526,6 +2586,45 @@ static void draw_tile_icon(int i, int cx, int cy, uint32_t c, uint32_t bg)
         gfx_fill_circle(VS, VX(cx), VY(cy - 8), 7, bg);
         gfx_fill_rect(VS, VX(cx - 7), VY(cy - 8), 14, 6, bg);
         break;
+    case T_AIR:                             /* a plane, from above */
+        gfx_thick_line(VS, VX(cx), VY(cy - 24), VX(cx), VY(cy + 24), 6, c);
+        gfx_thick_line(VS, VX(cx), VY(cy - 6), VX(cx - 24), VY(cy + 10), 6, c);
+        gfx_thick_line(VS, VX(cx), VY(cy - 6), VX(cx + 24), VY(cy + 10), 6, c);
+        gfx_thick_line(VS, VX(cx), VY(cy + 18), VX(cx - 10), VY(cy + 25), 5, c);
+        gfx_thick_line(VS, VX(cx), VY(cy + 18), VX(cx + 10), VY(cy + 25), 5, c);
+        break;
+    case T_BT: {                            /* the Bluetooth rune */
+        static const int px[6] = { -12, 12, 0, 0, 12, -12 }, py[6] = { -12, 12, 24, -24, -12, 12 };
+        for (int k = 0; k < 5; k++)
+            gfx_thick_line(VS, VX(cx + px[k]), VY(cy + py[k]), VX(cx + px[k + 1]), VY(cy + py[k + 1]), 5, c);
+        break;
+    }
+    case T_FLASH:                           /* a bolt */
+        gfx_thick_line(VS, VX(cx + 8), VY(cy - 26), VX(cx - 12), VY(cy + 3), 6, c);
+        gfx_thick_line(VS, VX(cx - 12), VY(cy + 3), VX(cx + 12), VY(cy - 3), 6, c);
+        gfx_thick_line(VS, VX(cx + 12), VY(cy - 3), VX(cx - 8), VY(cy + 26), 6, c);
+        break;
+    case T_TIMER:                           /* a clock face with a button on top */
+        gfx_fill_circle(VS, VX(cx), VY(cy + 3), 24, c);
+        gfx_fill_circle(VS, VX(cx), VY(cy + 3), 19, bg);
+        gfx_thick_line(VS, VX(cx), VY(cy + 3), VX(cx), VY(cy - 9), 4, c);
+        gfx_thick_line(VS, VX(cx), VY(cy + 3), VX(cx + 9), VY(cy + 8), 4, c);
+        gfx_thick_line(VS, VX(cx - 7), VY(cy - 28), VX(cx + 7), VY(cy - 28), 5, c);
+        break;
+    case T_CALC:                            /* a calculator */
+        gfx_fill_round_rect(VS, VX(cx - 20), VY(cy - 26), 40, 52, 8, c);
+        gfx_fill_round_rect(VS, VX(cx - 13), VY(cy - 19), 26, 10, 2, bg);
+        for (int r = 0; r < 2; r++)
+            for (int q = 0; q < 3; q++)
+                gfx_fill_circle(VS, VX(cx - 11 + q * 11), VY(cy + 2 + r * 12), 3, bg);
+        break;
+    case T_SHOT:                            /* the four corners of the screen */
+        for (int q = 0; q < 4; q++) {
+            int sx = q & 1 ? 1 : -1, sy = q & 2 ? 1 : -1;
+            gfx_thick_line(VS, VX(cx + sx * 23), VY(cy + sy * 23), VX(cx + sx * 9), VY(cy + sy * 23), 5, c);
+            gfx_thick_line(VS, VX(cx + sx * 23), VY(cy + sy * 23), VX(cx + sx * 23), VY(cy + sy * 9), 5, c);
+        }
+        break;
     }
 }
 
@@ -2548,6 +2647,46 @@ static void date_long(char date[40])
     date[n] = '\0';
 }
 
+/* One module's solid colour: lit, held, or at rest. */
+static uint32_t qs_module_bg(int on, int held)
+{
+    const struct theme *t = T();
+    return on ? t->accent_bg : held ? t->button_bg : t->headerbar_bg;
+}
+
+/* A tall slider, filled up from the bottom, its icon inside. */
+static void qs_slider(int k, int value)
+{
+    const struct theme *t = T();
+    struct gfx_rect r = qs_slider_rect(k);
+    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, QS_MOD_R, t->headerbar_bg);
+    int lit = 0;
+    if (value >= 0) {
+        int h = r.h * value / 100;
+        struct gfx_rect low = { r.x, r.y + r.h - h, r.w, h };
+        struct gfx_view v = gfx_view_clip(V, low), *outer = V;
+        V = &v;                             /* the same rounded shape: only its lower part shows */
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, QS_MOD_R, t->fg);
+        V = outer;
+        lit = value >= 16;
+    }
+    int cx = r.x + r.w / 2, cy = r.y + r.h - 56;
+    uint32_t c = value < 0 ? t->fg_dim : lit ? t->headerbar_bg : t->fg;
+    if (k == 0) {
+        static const int dx[8] = { 0, 15, 22, 15, 0, -15, -22, -15 }, dy[8] = { -22, -15, 0, 15, 22, 15, 0, -15 };
+        gfx_fill_circle(VS, VX(cx), VY(cy), 12, c);
+        for (int q = 0; q < 8; q++)
+            gfx_fill_circle(VS, VX(cx + dx[q]), VY(cy + dy[q]), 3, c);
+    } else {
+        gfx_fill_rect(VS, VX(cx - 20), VY(cy - 8), 12, 16, c);
+        gfx_thick_line(VS, VX(cx - 8), VY(cy - 8), VX(cx + 6), VY(cy - 20), 5, c);
+        gfx_thick_line(VS, VX(cx + 6), VY(cy - 20), VX(cx + 6), VY(cy + 20), 5, c);
+        gfx_thick_line(VS, VX(cx + 6), VY(cy + 20), VX(cx - 8), VY(cy + 8), 5, c);
+        gfx_thick_line(VS, VX(cx + 14), VY(cy - 8), VX(cx + 18), VY(cy), 4, c);
+        gfx_thick_line(VS, VX(cx + 18), VY(cy), VX(cx + 14), VY(cy + 8), 4, c);
+    }
+}
+
 static void draw_qs(void)
 {
     if (!qs_shown()) {
@@ -2558,69 +2697,71 @@ static void draw_qs(void)
     struct gfx_rect p = qs_rect();
     int open = qs_h() ? qs.x * 255 / FX(qs_h()) : 0;
     open = open > 255 ? 255 : open;
-    int edge = p.y + p.h;
-    gfx_darken(VS, VX(0), VY(edge - QS_PANEL_R), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
-    gfx_fill_round_rect(VS, VX(0), VY(p.y - QS_PANEL_R), p.w, p.h + QS_PANEL_R, QS_PANEL_R, t->window_bg);
-    gfx_fill_round_rect(VS, VX(p.w / 2 - 36), VY(edge - 20), 72, 6, 3, t->border);
+    gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(open * A_QS_DIM / 255));
     /* The date, and Settings. */
     if (rtc && clock_shown.month) {
         char date[40];
         date_long(date);
-        text_draw(VS, VX(t->margin), VY(p.y + (QS_HEAD - text_height(TEXT_HEADING)) / 2), date, TEXT_HEADING, t->fg);
+        text_draw(VS, VX(QS_SIDE + 8), VY(p.y + (QS_HEAD - text_height(TEXT_HEADING)) / 2), date, TEXT_HEADING, SHELL_FG);
     }
     struct gfx_rect g = qs_gear_rect();
     int gx = g.x + g.w / 2, gy = g.y + g.h / 2;
-    uint32_t gear_bg = t->button_bg;
+    uint32_t gear_bg = t->headerbar_bg;
     gfx_fill_circle(VS, VX(gx), VY(gy), g.w / 2, gear_bg);
     gfx_fill_circle(VS, VX(gx), VY(gy), 20, t->fg);                 /* a cog */
     static const int cog_dx[8] = { 0, 18, 26, 18, 0, -18, -26, -18 }, cog_dy[8] = { -26, -18, 0, 18, 26, 18, 0, -18 };
     for (int k = 0; k < 8; k++)
         gfx_fill_circle(VS, VX(gx + cog_dx[k]), VY(gy + cog_dy[k]), 7, t->fg);
     gfx_fill_circle(VS, VX(gx), VY(gy), 9, gear_bg);
-    /* The tiles. */
-    static const char *const names[QS_NTILES] = { "Wi-Fi", "Dark mode", "Do not disturb", "Lock" };
-    for (int i = 0; i < QS_NTILES; i++) {
+    /* The connections and Lock. */
+    struct gfx_rect b = qs_block_rect();
+    gfx_fill_round_rect(VS, VX(b.x), VY(b.y), b.w, b.h, QS_MOD_R + 8, t->headerbar_bg);
+    static const int round[4] = { T_AIR, T_WIFI, T_BT, T_LOCK };
+    for (int k = 0; k < 4; k++) {
+        int i = round[k], on = tile_on(i), works = tile_works(i);
         struct gfx_rect r = qs_tile_rect(i);
-        int on = tile_on(i), works = tile_works(i);
-        uint32_t bg = on ? t->accent_bg : t->button_bg, fg = on ? t->accent_fg : works ? t->fg : t->fg_dim;
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
-        draw_tile_icon(i, r.x + 50, r.y + r.h / 2, fg, bg);
-        int tx = r.x + 92, tw = r.w - 92 - 12;
-        if (i == T_LOCK) {
-            text_draw_fit(VS, VX(tx), VY(r.y + (r.h - text_height(TEXT_BOLD)) / 2), names[i], tw, TEXT_BOLD, fg);
-            continue;
-        }
-        int th = text_height(TEXT_BOLD), sh = text_height(TEXT_SMALL), ly = r.y + (r.h - th - sh - 2) / 2;
-        text_draw_fit(VS, VX(tx), VY(ly), names[i], tw, TEXT_BOLD, fg);
-        text_draw_fit(VS, VX(tx), VY(ly + th + 2), !works ? "None" : on ? "On" : "Off", tw, TEXT_SMALL,
-                      on ? t->accent_fg : t->fg_dim);
+        uint32_t bg = on ? t->accent_bg : qs_held == i ? t->button_hover : t->button_bg;
+        uint32_t fg = on ? t->accent_fg : works ? t->fg : t->fg_dim;
+        gfx_fill_circle(VS, VX(r.x + r.w / 2), VY(r.y + r.h / 2), r.w / 2, bg);
+        draw_tile_icon(i, r.x + r.w / 2, r.y + r.h / 2, fg, bg);
     }
-    /* The brightness: a sun, then the slider. */
-    struct gfx_rect sr = qs_slider_rect();
-    int cy = sr.y + sr.h / 2, bright = machine_shown.brightness;
-    uint32_t sun = bright >= 0 ? t->fg : t->fg_dim;
-    static const int ray_dx[8] = { 0, 15, 22, 15, 0, -15, -22, -15 }, ray_dy[8] = { -22, -15, 0, 15, 22, 15, 0, -15 };
-    gfx_fill_circle(VS, VX(t->margin + 30), VY(cy), 12, sun);
-    for (int k = 0; k < 8; k++)
-        gfx_fill_circle(VS, VX(t->margin + 30 + ray_dx[k]), VY(cy + ray_dy[k]), 3, sun);
-    gfx_fill_round_rect(VS, VX(sr.x), VY(cy - 6), sr.w, 12, 6, t->button_bg);
-    if (bright >= 0) {
-        int kx = sr.x + sr.w * bright / 100;
-        gfx_fill_round_rect(VS, VX(sr.x), VY(cy - 6), kx - sr.x, 12, 6, t->accent_bg);
-        gfx_fill_circle(VS, VX(kx), VY(cy), 22, t->fg);
+    /* Brightness (none on a phone without a backlight) and volume. */
+    qs_slider(0, machine_shown.brightness);
+    qs_slider(1, volume);
+    /* Do Not Disturb and Dark Mode. */
+    static const int wide[2] = { T_DND, T_DARK };
+    static const char *const wide_name[2] = { "Do Not Disturb", "Dark Mode" };
+    for (int k = 0; k < 2; k++) {
+        int i = wide[k], on = tile_on(i);
+        struct gfx_rect r = qs_tile_rect(i);
+        uint32_t bg = qs_module_bg(on, qs_held == i), fg = on ? t->accent_fg : t->fg;
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, QS_MOD_R, bg);
+        draw_tile_icon(i, r.x + 48, r.y + r.h / 2, fg, bg);
+        int tx = r.x + 82, by = r.y + (r.h - text_height(TEXT_BOLD) - text_height(TEXT_SMALL)) / 2;
+        text_draw_fit(VS, VX(tx), VY(by), wide_name[k], r.w - 90, TEXT_BOLD, fg);
+        text_draw(VS, VX(tx), VY(by + text_height(TEXT_BOLD)), on ? "On" : "Off", TEXT_SMALL, on ? fg : t->fg_dim);
+    }
+    /* The shortcuts. */
+    static const int small[4] = { T_FLASH, T_TIMER, T_CALC, T_SHOT };
+    for (int k = 0; k < 4; k++) {
+        int i = small[k], works = tile_works(i);
+        struct gfx_rect r = qs_tile_rect(i);
+        uint32_t bg = qs_module_bg(0, qs_held == i);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, QS_MOD_R, bg);
+        draw_tile_icon(i, r.x + r.w / 2, r.y + r.h / 2, works ? t->fg : t->fg_dim, bg);
     }
     /* The notifications. */
     if (!nnotes) {
         const char *none = "No notifications";
         text_draw(VS, VX((S()->w - text_width(none, TEXT_BODY)) / 2), VY(note_rect(0).y + 24), none, TEXT_BODY,
-                  t->fg_dim);
+                  gfx_mix(SHELL_FG, 0, 190));
         return;
     }
-    for (int k = 0; k < nnotes; k++) {
+    for (int k = 0; k < notes_shown(); k++) {
         struct gfx_rect r = note_rect(k);
         if (k == qs_note)
             r.x += qs_note_dx;
-        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, t->radius * 2, t->view_bg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, 44, t->headerbar_bg);
         if (notes[k].app)
             draw_icon(notes[k].app, (struct gfx_rect){ r.x + 20, r.y + (r.h - 56) / 2, 56, 56 }, 255);
         int tx = r.x + 20 + 56 + 20, tw = r.w - (tx - r.x) - 20;
@@ -2629,9 +2770,16 @@ static void draw_qs(void)
                       t->fg_dim);
     }
     struct gfx_rect c = qs_clear_rect();
-    gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg);
+    gfx_fill_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->headerbar_bg);
     text_draw(VS, VX(c.x + (c.w - text_width("Clear all", TEXT_BOLD)) / 2), VY(c.y + (c.h - text_height(TEXT_BOLD)) / 2),
               "Clear all", TEXT_BOLD, t->fg);
+    if (nnotes > notes_shown()) {
+        char more[12] = "+";
+        int n = nnotes - notes_shown();
+        more[1] = (char)('0' + n);
+        memcpy(more + 2, " more", 6);
+        text_draw(VS, VX(QS_SIDE + 8), VY(c.y + (c.h - text_height(TEXT_SMALL)) / 2), more, TEXT_SMALL, SHELL_FG);
+    }
 }
 
 /* The status bar's share: up to 4 notifying apps' icons after the time, a
@@ -2681,13 +2829,23 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
         qs_from = qs.x;
         if (!inside(qs_rect(), x, y)) {
             qs_finger = QF_DIM;
-        } else if (machine_shown.brightness >= 0 && inside(qs_slider_rect(), x, y)) {
+        } else if (machine_shown.brightness >= 0 && inside(qs_slider_rect(0), x, y)) {
             qs_finger = QF_SLIDER;
-            brightness_at(x);
+            qs_sl = 0;
+            qs_sl_from = machine_shown.brightness;
+        } else if (inside(qs_slider_rect(1), x, y)) {
+            qs_finger = QF_SLIDER;
+            qs_sl = 1;
+            qs_sl_from = volume;
         } else {
             qs_finger = QF_PANEL;
             qs_note = -1;
-            for (int k = 0; k < nnotes; k++)
+            qs_held = -1;
+            for (int i = 0; i < QS_NTILES; i++)
+                if (inside(qs_tile_rect(i), x, y))
+                    qs_held = i;
+            damage_all();
+            for (int k = 0; k < notes_shown(); k++)
                 if (inside(note_rect(k), x, y)) {
                     qs_finger = QF_NOTE;
                     qs_note = k;
@@ -2711,10 +2869,13 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
         }
         return 1;
     case QF_SLIDER:
-        if (held)
-            brightness_at(x);
-        else
+        if (held) {
+            slider_drag(y);
+        } else {
             qs_finger = QF_NONE;
+            if (qs_sl == 1)
+                kprintf("qs: volume %d%%\n", volume);
+        }
         return 1;
     case QF_NOTE:
         if (held) {
@@ -2748,6 +2909,8 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
             return 1;
         }
         qs_finger = QF_NONE;
+        qs_held = -1;
+        damage_all();
         if (dy < -SWIPE_SLOP) {
             qs_set(qs.x > FX(h) * 2 / 3, 0);
             return 1;
