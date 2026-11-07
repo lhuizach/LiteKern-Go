@@ -89,7 +89,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## Known risks
 
-- Camera: **confirmed not working** on the first Nura boot ("can't be found"), as a wiki user had reported; the brother wants to take photos sometimes. This is the biggest conflict. Screen and Wi-Fi do work.
+- Camera: not working on Nura ("can't be found"), and no driver in our kernel yet; the brother wants to take photos sometimes. Both sensors now answer on our system (rear IMX135, front S5K5E3YX), but there is no picture yet. Screen and Wi-Fi do work.
 - Games: Android games will not install on Linux. Waydroid might run them but is heavy on 2 GB RAM and unverified on this kernel.
 - Calls and mobile data are the hardest parts on mainline Linux and are not planned early.
 - Other reported gaps: display brightness and USB-OTG.
