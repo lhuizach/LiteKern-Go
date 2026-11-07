@@ -2791,7 +2791,7 @@ static void draw_qs_words(void)
 
 /* While it moves the modules are one picture, drawn once and slid: drawing them
  * all again each frame (icons, words, a dozen rounded shapes) is too much here. */
-#define QS_KEY 0xff00feu                /* the picture's see-through colour */
+#define QS_KEY 0x010203u                /* see-through: near black, as smoothed corners blend with it */
 static uint32_t *qs_px;
 static int qs_pic_ok;
 
