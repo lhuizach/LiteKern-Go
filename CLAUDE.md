@@ -9,7 +9,7 @@ It is built for the owner's younger brother, who wants a normal phone OS with a 
 1. Boot the A5 into the LiteKern Go GUI.
 2. A touch-first interface in the LiteKern X style at 720x1280 portrait.
 3. Reliable basics: display, touch, Wi-Fi, USB, storage.
-4. The small extras the brother asked for (not listed yet, ask the owner).
+4. The brother's extras (see Brother's extras below).
 
 Proposed v1 is done when the phone boots to the GUI, takes touch input and joins Wi-Fi.
 
@@ -95,11 +95,18 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 - Flashing wipes Android. It is unverified whether lk2nd and Nura leave modem data alone.
 - Some guides and links still use the old postmarketOS name.
 
+## Brother's extras
+
+His list, from the owner, 7 Nov 2026. Games are our own originals with our own names and art, not copies of the named games.
+
+- Games: a lane-dodging traffic racer, Snake, a block-placing puzzle (like Block Blast), a falling-block puzzle (like Tetris), a knife-throwing game with a watermelon ("Watermelon tungin": exact idea to confirm).
+- Apps: R3lay (unknown, ask what it is), Class Charts (no Android apps here, so it would be our own client, if its login and data can be reached at all: unverified), Weather, a music app such as Spotify (Spotify itself isn't available for this OS, so likely a local player first).
+- All the online apps need Wi-Fi working in our system first, and music needs sound.
+
 ## Open decisions
 
 - Confirm with the brother that no APK games and a possibly missing camera are acceptable.
 - GUI path: port the existing C GUI or rewrite it.
-- List the small extras he wants.
 - Get the admin code and finish the installs.
 - Download the stock firmware before any flashing.
 - Boot Nura once and check whether the camera works.
