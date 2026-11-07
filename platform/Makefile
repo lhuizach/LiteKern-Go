@@ -25,6 +25,8 @@ OPT ?= -O2
 CFLAGS := $(ARCH_FLAGS) -std=gnu11 $(OPT) -g -Wall -Wextra -Werror -fno-strict-aliasing \
           -Iplatform/include -I. -I$(KBUILD)/gen -DLKX_LINUX \
           -D_FILE_OFFSET_BITS=64
+# LiteKern Go's build number (About Phone): how many commits there are.
+CFLAGS += -DLKX_BUILD='"$(shell git rev-list --count HEAD 2>/dev/null || echo 0)"'
 LDFLAGS := $(ARCH_FLAGS)
 
 # The kernel code that comes along unchanged.

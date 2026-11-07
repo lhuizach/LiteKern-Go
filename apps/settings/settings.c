@@ -22,6 +22,7 @@
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
 #include "apps/settings/network.h"
+#include "apps/settings/about.h"
 #include "apps/settings/clockedit.h"
 #include "apps/settings/pin.h"
 #include "apps/settings/system.h"
@@ -34,7 +35,6 @@
 #define SECTION_GAP 40
 #define SLOP 24                         /* px a finger moves before it's a drag (a scroll) */
 #define BACK_ID 100                     /* the header's back arrow */
-#define VERSION "0.3 (phase 3, in the VM)"
 
 enum page { P_HOME, P_WIFI, P_DISPLAY, P_LOCK, P_BATTERY, P_TIME, P_ABOUT, NPAGES };
 static const char *const titles[NPAGES] = { "Settings", "Wi-Fi", "Display", "Lock Screen", "Battery",
@@ -96,7 +96,7 @@ static void home_details(void)
     if (machine.battery < 0)
         copy(details[P_BATTERY - 1], "No battery", 64);
     copy(details[P_TIME - 1], machine.timezone >= 0 ? lkx_zones[machine.timezone].name : "The phone's own clock", 64);
-    copy(details[P_ABOUT - 1], "LiteKern Go", 64);
+    copy(details[P_ABOUT - 1], about_phone_name(), 64);
 }
 
 static void home_layout(void)
@@ -436,33 +436,6 @@ static void spots_draw(void)
 
 /* --- About Phone --------------------------------------------------------------------------- */
 
-static void about_draw(void)
-{
-    const struct theme *t = theme_get();
-    int w = canvas.w - 2 * MARGIN, y = 24;
-    gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, t->window_bg);
-    text_draw(&canvas, MARGIN, y, "LiteKern Go", TEXT_LARGE, t->fg);
-    y += text_height(TEXT_LARGE) + 8;
-    text_draw_fit(&canvas, MARGIN, y, "A phone OS for the Samsung Galaxy A5 (2015).", w, TEXT_BODY, t->fg_dim);
-    y += text_height(TEXT_BODY) + SECTION_GAP;
-    static const char *const keys[] = { "Version", "Built for", "Users" };
-    char n[8] = { (char)('0' + users.count % 10), 0 };
-    const char *values[] = { VERSION,
-#ifdef __aarch64__
-                             "the phone (aarch64)",
-#else
-                             "a virtual machine (x86_64)",
-#endif
-                             n };
-    for (int i = 0; i < 3; i++, y += t->row_h) {
-        gfx_fill_rect(&canvas, MARGIN, y + t->row_h - 1, w, 1, gfx_mix(t->fg, t->window_bg, 30));
-        int ty = y + (t->row_h - text_height(TEXT_BODY)) / 2;
-        text_draw(&canvas, MARGIN, ty, keys[i], TEXT_BODY, t->fg);
-        text_draw(&canvas, canvas.w - MARGIN - text_width(values[i], TEXT_BODY), ty, values[i], TEXT_BODY, t->fg_dim);
-    }
-    k86_present(0, 0, canvas.w, canvas.h);
-}
-
 /* --- pages --------------------------------------------------------------------------------- */
 
 static void draw(void)
@@ -557,6 +530,8 @@ static void show_page(enum page p)
     pin_cancel();
     page = p;
     k86_logf("settings: page %s", names[page]);
+    if (page == P_ABOUT)
+        about_open(&canvas, app.wallpaper);
     header();
     next_refresh = k86_uptime_ms() + 2000;  /* Wi-Fi and Battery refresh themselves */
     scroll = 0;
@@ -772,7 +747,7 @@ static void home_pointer(const struct k86_event *ev)
 /* Back (Esc): a dialog first, then the list of pages. */
 static int busy(void)
 {
-    return pin_active() || (page == P_WIFI && network_page_busy());
+    return pin_active() || (page == P_WIFI && network_page_busy()) || (page == P_ABOUT && about_editing());
 }
 
 static void key(const struct key_event *k)
@@ -785,6 +760,8 @@ static void key(const struct key_event *k)
         network_page_key(k);
         return;
     }
+    if (page == P_ABOUT && about_key(k))
+        return;
     if (k->pressed && k->key == KEY_ESC && page != P_HOME) {
         show_page(P_HOME);
         return;
@@ -880,6 +857,8 @@ int main(void)
                 system_page_pointer(&ev);
             else if (page == P_DISPLAY || page == P_LOCK)
                 spots_pointer(&ev);
+            else if (page == P_ABOUT)
+                about_pointer(&ev);
             break;
         case K86_EVENT_SCROLL:
             if (page == P_WIFI)
