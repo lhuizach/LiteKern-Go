@@ -499,7 +499,8 @@ void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp)
                 for (int xx = x * 4; xx < x * 4 + 4 && xx < s->w; xx++, n++)
                     r += p[xx] >> 16 & 0xff, g += p[xx] >> 8 & 0xff, bl += p[xx] & 0xff;
             }
-            a[y * qw + x] = (r / n) << 16 | (g / n) << 8 | bl / n;
+            uint32_t inv = 65536 / n;       /* one multiply for each channel, not a divide */
+            a[y * qw + x] = ((r * inv) >> 16) << 16 | ((g * inv) >> 16) << 8 | ((bl * inv) >> 16);
         }
     /* Three passes each way. */
     for (int pass = 0; pass < 3; pass++) {
@@ -509,22 +510,42 @@ void gfx_blur(struct gfx_surface *s, int radius, uint32_t *tmp)
             blur_line(b + x, a + x, qh, qw, radius);
     }
     /* Back up to full size, each pixel between its four nearest (bilinear). */
+    /* The same blend, worked out once per quarter-size pixel for each output row (the rows
+     * between two quarter rows) and once per column, not once per output pixel. */
+    static int col_x0[4096], col_x1[4096], col_wx[4096];
+    static int rr[1024], rg[1024], rb[1024];    /* the two rows blended: 8.8 fixed point */
+    if (s->w > 4096 || qw > 1024)
+        return;
+    for (int x = 0; x < s->w; x++) {
+        int fx = (x * 2 + 1) * 256 / 8 - 128;
+        col_x0[x] = fx < 0 ? 0 : fx >> 8;
+        col_wx[x] = fx < 0 ? 0 : fx & 255;
+        col_x1[x] = col_x0[x] + 1 < qw ? col_x0[x] + 1 : qw - 1;
+    }
+    int last_y0 = -1, last_wy = -1;
     for (int y = 0; y < s->h; y++) {
         int fy = (y * 2 + 1) * 256 / 8 - 128, y0 = fy < 0 ? 0 : fy >> 8, wy = fy < 0 ? 0 : fy & 255;
         int y1 = y0 + 1 < qh ? y0 + 1 : qh - 1;
-        const uint32_t *r0 = a + y0 * qw, *r1 = a + y1 * qw;
+        if (y0 != last_y0 || wy != last_wy) {
+            const uint32_t *r0 = a + y0 * qw, *r1 = a + y1 * qw;
+            for (int x = 0; x < qw; x++) {
+                int c0 = r0[x] >> 16 & 0xff, c1 = r1[x] >> 16 & 0xff;
+                rr[x] = c0 * 256 + (c1 - c0) * wy;
+                c0 = r0[x] >> 8 & 0xff, c1 = r1[x] >> 8 & 0xff;
+                rg[x] = c0 * 256 + (c1 - c0) * wy;
+                c0 = r0[x] & 0xff, c1 = r1[x] & 0xff;
+                rb[x] = c0 * 256 + (c1 - c0) * wy;
+            }
+            last_y0 = y0;
+            last_wy = wy;
+        }
         uint32_t *d = s->px + y * s->stride;
         for (int x = 0; x < s->w; x++) {
-            int fx = (x * 2 + 1) * 256 / 8 - 128, x0 = fx < 0 ? 0 : fx >> 8, wx = fx < 0 ? 0 : fx & 255;
-            int x1 = x0 + 1 < qw ? x0 + 1 : qw - 1;
-            uint32_t p00 = r0[x0], p01 = r0[x1], p10 = r1[x0], p11 = r1[x1], out = 0;
-            for (int sh = 0; sh <= 16; sh += 8) {
-                int c00 = p00 >> sh & 0xff, c01 = p01 >> sh & 0xff, c10 = p10 >> sh & 0xff, c11 = p11 >> sh & 0xff;
-                int top = c00 * 256 + (c01 - c00) * wx, bot = c10 * 256 + (c11 - c10) * wx;
-                int c = (top * 256 + (bot - top) * wy) >> 16;
-                out |= (uint32_t)c << sh;
-            }
-            d[x] = out;
+            int x0 = col_x0[x], x1 = col_x1[x], wx = col_wx[x];
+            int r = (rr[x0] * 256 + (rr[x1] - rr[x0]) * wx) >> 16;
+            int g = (rg[x0] * 256 + (rg[x1] - rg[x0]) * wx) >> 16;
+            int b = (rb[x0] * 256 + (rb[x1] - rb[x0]) * wx) >> 16;
+            d[x] = (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
         }
     }
 }

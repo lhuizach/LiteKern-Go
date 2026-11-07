@@ -115,7 +115,7 @@ make -s build/litekernx.img
 # lkx-shell and the apps, with Buildroot's compiler, into the overlay.
 echo "== lkx-shell and the apps, for $ARCH"
 CROSS=$OUT/host/bin/$ARCH-buildroot-linux-gnu-gcc
-make -s -f platform/Makefile CC="$CROSS" ARCH_FLAGS= LBUILD=$LBUILD KERNEL_BUILD=0
+make -s -f platform/Makefile CC="$CROSS" ARCH_FLAGS= OPT=$([ "$PHONE" = 1 ] && echo -O3 || echo -O2) LBUILD=$LBUILD KERNEL_BUILD=0
 rm -rf "$OUT/lkx-overlay"
 mkdir -p "$OUT/lkx-overlay/usr/bin" "$OUT/lkx-overlay/usr/lib/litekern/apps"
 cp $LBUILD/lkx-shell "$OUT/lkx-overlay/usr/bin/"

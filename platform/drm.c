@@ -557,6 +557,8 @@ static void read_device(struct dev *d)
             } else if (e->type == EV_REL && e->code == REL_WHEEL) {
                 plat_wheel(-e->value);          /* evdev: away from you is +1 */
             } else if (e->type == EV_KEY && e->code < BTN_MISC) {
+                if (e->value != 2)
+                    kprintf("input: key %u %s\n", (unsigned)e->code, e->value ? "down" : "up");
                 plat_key(plat_evdev_key(e->code), e->value != 0);
             } else if (e->type == EV_KEY && (e->code == BTN_LEFT || e->code == BTN_RIGHT || e->code == BTN_MIDDLE ||
                                              (d->abs && e->code == BTN_TOUCH))) {

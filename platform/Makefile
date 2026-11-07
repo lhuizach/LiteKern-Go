@@ -21,7 +21,8 @@ CC     := gcc
 # LiteKern Go: ARCH_FLAGS= (empty) builds for the compiler's own CPU, 64-bit
 # (x86_64 for the VM, aarch64 for the phone).
 ARCH_FLAGS ?=
-CFLAGS := $(ARCH_FLAGS) -std=gnu11 -O2 -g -Wall -Wextra -Werror -fno-strict-aliasing \
+OPT ?= -O2
+CFLAGS := $(ARCH_FLAGS) -std=gnu11 $(OPT) -g -Wall -Wextra -Werror -fno-strict-aliasing \
           -Iplatform/include -I. -I$(KBUILD)/gen -DLKX_LINUX \
           -D_FILE_OFFSET_BITS=64
 LDFLAGS := $(ARCH_FLAGS)
