@@ -186,6 +186,23 @@ static void apply_zone(void)
 
 /* --- kernel/machine.h ------------------------------------------------------------------------- */
 
+/* The CPU's speed policy. The shell draws in short bursts, too short for Linux's
+ * usual policy to speed the CPU up, so animations crawled at a low clock: the
+ * whole clock while the screen is on, the usual policy while it's off. */
+static void cpu_governor(const char *name)
+{
+    if (!target)
+        return;
+    FILE *f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "w");
+    if (!f) {
+        kprintf("machine: no cpu speed control\n");
+        return;
+    }
+    fputs(name, f);
+    int bad = fclose(f);
+    kprintf("machine: cpu policy %s%s\n", name, bad ? " refused" : "");
+}
+
 void machine_init(void)
 {
     target = getenv("LKX_TARGET") != 0;
@@ -196,6 +213,7 @@ void machine_init(void)
     if (target)
         kprintf("machine: cpu at %ld MHz, %ld at most (-1: no speed control)\n", cur < 0 ? -1 : cur / 1000,
                 top < 0 ? -1 : top / 1000);
+    cpu_governor("performance");
     find_backlight();
     if (backlight[0] && saved_brightness >= 0)
         write_brightness(saved_brightness);
@@ -284,6 +302,8 @@ int machine_set_timezone(int z)
 
 void machine_screen(int on)
 {
+    if (on != plat_screen_on())
+        cpu_governor(on ? "performance" : "schedutil");
     plat_screen_power(on);
 }
 
