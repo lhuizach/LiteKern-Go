@@ -94,6 +94,7 @@ static struct text_face clock_faces[K86_CLOCK_FONTS];
 static const char *const clock_files[K86_CLOCK_FONTS] = {
     "fonts/clock.lkxf", "fonts/clock-light.lkxf", "fonts/clock-thin.lkxf",
     "fonts/clock-condensed.lkxf", "fonts/clock-mono.lkxf", "fonts/clock-serif.lkxf",
+    "fonts/clock-slim.lkxf",
 };
 
 static uint32_t le(const uint8_t *p, int n)
@@ -166,6 +167,8 @@ static int screen_buffer(struct gfx_surface *s)
     return 0;
 }
 
+static int clock_gen;                   /* up by one whenever the clock's mask or the background changes */
+
 /* The wallpaper it shows, darkened so the clock reads. */
 static void make_background(void)
 {
@@ -180,6 +183,7 @@ static void make_background(void)
     else
         wallpaper_draw(b, 0, 0, 0);         /* the desktop's own */
     gfx_darken(b, 0, 0, b->w, b->h, DIM);
+    clock_gen++;                        /* the glass clock shows what's behind it */
 }
 
 /* --- the clock ----------------------------------------------------------------------------- */
@@ -261,9 +265,78 @@ static struct {
     char hm[8];
     int font, style, stretch, top_gap;  /* top_gap: above the digits, in the font's line */
     struct gfx_surface tmp;
-    uint8_t *raw, *mask;
+    uint8_t *raw, *mask, *edge, *work;  /* edge: the glass style's rim */
     int w, h;
 } clk = { .font = -1 };
+
+/* Glass: the wallpaper behind the digits, blurred, kept until the clock, its place or
+ * the background changes. So it's blurred once a minute at most, and each frame of a
+ * slide is only a blend, as for the other styles. */
+#define GLASS_R 7                       /* each of three box blurs: about 20 px in all */
+static struct {
+    struct gfx_surface pic;
+    int x0, y0, w, h, left, top, gen;
+} glass = { .gen = -1 };
+
+/* One box blur pass over count lines of n pixels: `along` apart within a line,
+ * `across` from one line to the next. */
+static void box_pass(uint32_t *p, int n, int count, int along, int across, uint32_t *line)
+{
+    const int r = GLASS_R, k = 2 * GLASS_R + 1;
+    for (int c = 0; c < count; c++) {
+        uint32_t *q = p + (size_t)c * (size_t)across;
+        int sr = 0, sg = 0, sb = 0;
+        for (int i = -r; i <= r; i++) {
+            uint32_t v = q[(size_t)(i < 0 ? 0 : i >= n ? n - 1 : i) * (size_t)along];
+            sr += (int)(v >> 16 & 255);
+            sg += (int)(v >> 8 & 255);
+            sb += (int)(v & 255);
+        }
+        for (int i = 0; i < n; i++) {
+            line[i] = (uint32_t)(sr / k) << 16 | (uint32_t)(sg / k) << 8 | (uint32_t)(sb / k);
+            uint32_t out = q[(size_t)(i - r < 0 ? 0 : i - r) * (size_t)along];
+            uint32_t in = q[(size_t)(i + r + 1 >= n ? n - 1 : i + r + 1) * (size_t)along];
+            sr += (int)(in >> 16 & 255) - (int)(out >> 16 & 255);
+            sg += (int)(in >> 8 & 255) - (int)(out >> 8 & 255);
+            sb += (int)(in & 255) - (int)(out & 255);
+        }
+        for (int i = 0; i < n; i++)
+            q[(size_t)i * (size_t)along] = line[i];
+    }
+}
+
+static int glass_make(int left, int top)
+{
+    static uint32_t line[2048];
+    struct gfx_surface *b = &ls.bg;
+    if (!b->px || (!glass.pic.px && screen_buffer(&glass.pic)))
+        return -1;
+    if (glass.gen == clock_gen && glass.left == left && glass.top == top)
+        return 0;
+    int x0 = left - 2 * GLASS_R, y0 = top - 2 * GLASS_R, x1 = left + clk.w + 2 * GLASS_R, y1 = top + clk.h + 2 * GLASS_R;
+    x0 = x0 < 0 ? 0 : x0;
+    y0 = y0 < 0 ? 0 : y0;
+    x1 = x1 > b->w ? b->w : x1;
+    y1 = y1 > b->h ? b->h : y1;
+    int w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0 || w > 2048 || h > 2048)
+        return -1;
+    uint32_t *p = glass.pic.px;
+    for (int y = 0; y < h; y++)
+        memcpy(p + (size_t)y * (size_t)w, b->px + (size_t)(y0 + y) * (size_t)b->stride + x0, (size_t)w * 4);
+    for (int pass = 0; pass < 3; pass++) {
+        box_pass(p, w, h, 1, w, line);
+        box_pass(p, h, w, w, 1, line);
+    }
+    glass.x0 = x0;
+    glass.y0 = y0;
+    glass.w = w;
+    glass.h = h;
+    glass.left = left;
+    glass.top = top;
+    glass.gen = clock_gen;
+    return 0;
+}
 
 static void clock_mask(const char *hm)
 {
@@ -271,16 +344,19 @@ static void clock_mask(const char *hm)
     if (!clk.tmp.px && screen_buffer(&clk.tmp))
         return;
     if (!clk.raw) {
-        struct gfx_surface a = { 0 }, b = { 0 };
-        if (screen_buffer(&a) || screen_buffer(&b))
+        struct gfx_surface a = { 0 }, b = { 0 }, e = { 0 }, k = { 0 };
+        if (screen_buffer(&a) || screen_buffer(&b) || screen_buffer(&e) || screen_buffer(&k))
             return;
         clk.raw = (uint8_t *)a.px;
         clk.mask = (uint8_t *)b.px;
+        clk.edge = (uint8_t *)e.px;
+        clk.work = (uint8_t *)k.px;
     }
     if (clk.font == c->clock_font && clk.style == c->clock_style && clk.stretch == c->clock_stretch &&
         !strcmp(clk.hm, hm))
         return;
     memcpy(clk.hm, hm, sizeof(clk.hm));
+    clock_gen++;
     clk.font = c->clock_font;
     clk.style = c->clock_style;
     clk.stretch = c->clock_stretch;
@@ -330,6 +406,17 @@ static void clock_mask(const char *hm)
             }
         memcpy(clk.raw, clk.mask, (size_t)w * (size_t)h);
     }
+    if (c->clock_style == 3) {                  /* glass: its rim, where it meets the edge */
+        int r = 2;                              /* a hairline: thin digits have little inside */
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int inner = x >= r && y >= r && x < w - r && y < h - r;
+                for (int k = 1; inner && k <= r; k++)
+                    inner = clk.raw[y * w + x - k] > 127 && clk.raw[y * w + x + k] > 127 &&
+                            clk.raw[(y - k) * w + x] > 127 && clk.raw[(y + k) * w + x] > 127;
+                clk.work[y * w + x] = inner ? 0 : clk.raw[y * w + x];
+            }
+    }
     int stretched = h * (c->clock_stretch < 100 ? 100 : c->clock_stretch) / 100;
     stretched = stretched > t->h * 3 / 4 ? t->h * 3 / 4 : stretched;
     for (int y = 0; y < stretched; y++) {
@@ -338,6 +425,12 @@ static void clock_mask(const char *hm)
         uint8_t *o = clk.mask + (size_t)y * (size_t)w;
         for (int x = 0; x < w; x++)
             o[x] = (uint8_t)((a[x] * (256 - frac) + b[x] * frac) >> 8);
+        if (c->clock_style == 3) {
+            const uint8_t *ea = clk.work + (size_t)row * (size_t)w, *eb = row + 1 < h ? ea + w : ea;
+            uint8_t *eo = clk.edge + (size_t)y * (size_t)w;
+            for (int x = 0; x < w; x++)
+                eo[x] = (uint8_t)((ea[x] * (256 - frac) + eb[x] * frac) >> 8);
+        }
     }
     clk.w = w;
     clk.h = stretched;
@@ -352,8 +445,8 @@ static void clock_place(int *x, int *y)
     int top = c->clock_y < 0 ? clock_y() + clk.top_gap : sh * c->clock_y / 100 - clk.h / 2;
     int left = cx - clk.w / 2;
     left = left < 8 ? 8 : left + clk.w > sw - 8 ? sw - 8 - clk.w : left;
-    int under = text_height(TEXT_BOLD) + 12;    /* the date */
-    top = top < 60 ? 60 : top + clk.h + under > sh - 80 ? sh - 80 - under - clk.h : top;
+    int date = text_height(TEXT_BOLD) + 12, above = c->clock_style == 3 ? date : 0, under = above ? 0 : date;
+    top = top < 60 + above ? 60 + above : top + clk.h + under > sh - 80 ? sh - 80 - under - clk.h : top;
     *x = left;
     *y = top;
 }
@@ -461,7 +554,25 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
     clock_mask(hm);
     int left, top, alpha = ls.set.clock_opacity * 255 / 100;
     clock_place(&left, &top);
-    for (int y = 0; y < clk.h; y++) {
+    int glassy = ls.set.clock_style == 3 && !glass_make(left, top);
+    for (int y = 0; glassy && y < clk.h; y++) {
+        int dy = top + y - oy, gy = top + y - glass.y0;
+        if (dy < 0 || dy >= s->h || gy < 0 || gy >= glass.h)
+            continue;
+        uint32_t *row = s->px + (size_t)dy * (size_t)s->stride;
+        const uint8_t *m = clk.mask + (size_t)y * (size_t)clk.w, *e = clk.edge + (size_t)y * (size_t)clk.w;
+        const uint32_t *g = glass.pic.px + (size_t)gy * (size_t)glass.w;
+        uint32_t shine = (uint32_t)(60 - 50 * y / (clk.h > 0 ? clk.h : 1));     /* lighter at the top */
+        for (int x = 0; x < clk.w; x++) {
+            int dx = left + x - ox, gx = left + x - glass.x0;
+            if (!m[x] || dx < 0 || dx >= s->w || gx < 0 || gx >= glass.w)
+                continue;
+            uint32_t fill = gfx_mix(WHITE, g[gx], 70 + shine);         /* frosted: mostly what's behind */
+            fill = gfx_mix(WHITE, fill, (uint32_t)(e[x] * 150 / 255));  /* the rim catches the light */
+            row[dx] = gfx_mix(fill, row[dx], (uint32_t)(m[x] * alpha / 255));
+        }
+    }
+    for (int y = 0; !glassy && y < clk.h; y++) {
         int dy = top + y - oy;
         if (dy < 0 || dy >= s->h)
             continue;
@@ -477,7 +588,8 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
         text_draw(s, left + clk.w + 12 - ox, top + clk.h - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
     int dw = text_width(date, TEXT_BOLD), dx = left + clk.w / 2 - dw / 2;
     dx = dx < 8 ? 8 : dx + dw > S()->w - 8 ? S()->w - 8 - dw : dx;
-    text_draw(s, dx - ox, top + clk.h + 12 - oy, date, TEXT_BOLD, WHITE);
+    int dy = ls.set.clock_style == 3 ? top - 12 - text_height(TEXT_BOLD) : top + clk.h + 12;
+    text_draw(s, dx - ox, dy - oy, date, TEXT_BOLD, WHITE);
 }
 
 /* The PIN pad: the time small at the top, "Enter PIN", a dot for each digit
@@ -1089,7 +1201,7 @@ const struct lock_settings *lockscreen_settings(void)
 static void clock_choices(const struct lock_settings *s)
 {
     ls.set.clock_font = s->clock_font >= 0 && s->clock_font < K86_CLOCK_FONTS ? s->clock_font : 0;
-    ls.set.clock_style = s->clock_style >= 0 && s->clock_style <= 2 ? s->clock_style : 0;
+    ls.set.clock_style = s->clock_style >= 0 && s->clock_style <= 3 ? s->clock_style : 0;
     ls.set.clock_opacity = s->clock_opacity < 20 || s->clock_opacity > 100 ? 100 : s->clock_opacity;
     ls.set.clock_stretch = s->clock_stretch < 100 || s->clock_stretch > 250 ? 100 : s->clock_stretch;
     ls.set.clock_x = s->clock_x < 0 || s->clock_x > 100 ? 50 : s->clock_x;
@@ -1108,6 +1220,7 @@ int lockscreen_preview(const struct lock_settings *s, uint32_t *out, int w, int 
     if (!ls.active && strcmp(drawn, s->wallpaper)) {    /* only once: this takes a while */
         memcpy(ls.set.wallpaper, s->wallpaper, sizeof(ls.set.wallpaper));
         make_background();
+        clock_gen++;
         memcpy(drawn, s->wallpaper, sizeof(drawn));
     }
     clock_choices(s);

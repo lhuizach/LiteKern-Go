@@ -40,7 +40,7 @@ WALLPAPER_PNGS   := $(wildcard assets/wallpapers/*.png)
 WALLPAPER_LKXW   := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.lkxw,$(WALLPAPER_PNGS))
 WALLPAPER_THUMBS := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.thumb.lkxw,$(WALLPAPER_PNGS))
 
-CLOCK_FONTS := light thin condensed mono serif
+CLOCK_FONTS := light thin condensed mono serif slim
 
 # Apps: each folder in apps/ holds kerns.json and C sources. Their programs are
 # built by platform/Makefile; the ramdisk carries the manifests, which is how

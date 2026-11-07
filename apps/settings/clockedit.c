@@ -19,8 +19,10 @@
 #define BACK_ID 100
 #define PREVIEW_EVERY_MS 70
 
-static const char *const fonts[K86_CLOCK_FONTS] = { "Bold", "Light", "Thin", "Condensed", "Mono", "Serif" };
-static const char *const styles[3] = { "Standard", "Stacked", "Outline" };
+static const char *const fonts[K86_CLOCK_FONTS] = { "Bold", "Light", "Thin", "Condensed", "Mono", "Serif", "Slim" };
+#define STYLES 4
+static const char *const styles[STYLES] = { "Standard", "Stacked", "Outline", "Glass" };
+#define FONT_ROWS ((K86_CLOCK_FONTS + 2) / 3)
 
 static struct gfx_surface *cv;
 static struct k86_lock *l;
@@ -44,13 +46,13 @@ static struct gfx_rect font_rect(int i)
 
 static struct gfx_rect style_rect(int i)
 {
-    int w = (cv->w - 2 * SIDE - 2 * GAP) / 3, y = 12 + PH + 16 + 2 * (CHIP_H + GAP) + 8;
+    int w = (cv->w - 2 * SIDE - (STYLES - 1) * GAP) / STYLES, y = 12 + PH + 16 + FONT_ROWS * (CHIP_H + GAP) + 8;
     return (struct gfx_rect){ SIDE + i * (w + GAP), y, w, CHIP_H };
 }
 
 static int slider_y(int k)
 {
-    return 12 + PH + 16 + 3 * (CHIP_H + GAP) + 16 + k * ROW_H;
+    return 12 + PH + 16 + (FONT_ROWS + 1) * (CHIP_H + GAP) + 16 + k * ROW_H;
 }
 
 static struct gfx_rect slider_rect(int k)
@@ -97,7 +99,7 @@ static void draw(void)
     gfx_rect_outline(cv, p.x - 1, p.y - 1, PW + 2, PH + 2, t->border);
     for (int i = 0; i < K86_CLOCK_FONTS; i++)
         chip(font_rect(i), fonts[i], l->clock_font == i);
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < STYLES; i++)
         chip(style_rect(i), styles[i], l->clock_style == i);
     slider(0, "Opacity", l->clock_opacity, 20, 100);
     slider(1, "Stretch", l->clock_stretch, 100, 250);
@@ -198,7 +200,7 @@ static void pointer(const struct k86_event *ev)
             refresh();
             return;
         }
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < STYLES; i++)
         if (inside(style_rect(i), p.x, p.y)) {
             l->clock_style = i;
             save();

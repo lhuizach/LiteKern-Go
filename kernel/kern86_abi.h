@@ -199,12 +199,12 @@ struct k86_lock {
     int32_t on_wake;            /* lock when the screen saver ends */
     int32_t has_picture;        /* read only: it has a picture of its own to show */
     int32_t clock_font;         /* 0..K86_CLOCK_FONTS - 1 */
-    int32_t clock_style;        /* 0 one line, 1 stacked, 2 outline */
+    int32_t clock_style;        /* 0 one line, 1 stacked, 2 outline, 3 glass */
     int32_t clock_opacity;      /* 20-100, % */
     int32_t clock_stretch;      /* 100-250, % of its height */
     int32_t clock_x, clock_y;   /* its middle, % of the screen; clock_y -1: its usual place */
 };
-#define K86_CLOCK_FONTS     6
+#define K86_CLOCK_FONTS     7
 
 #define K86_USERS_MAX       8
 #define K86_USER_NAME       21          /* 20 characters, NUL included */

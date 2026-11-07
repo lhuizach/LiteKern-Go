@@ -31,8 +31,8 @@ struct lock_settings {
     char wallpaper[32];
     int clock24;                /* 1: 14:05; 0: 2:05 PM */
     int on_wake;                /* lock when the screen saver ends */
-    int clock_font;             /* K86_CLOCK_FONTS: Bold, Light, Thin, Condensed, Mono, Serif */
-    int clock_style;            /* 0 one line, 1 stacked, 2 outline */
+    int clock_font;             /* K86_CLOCK_FONTS: Bold, Light, Thin, Condensed, Mono, Serif, Slim */
+    int clock_style;            /* 0 one line, 1 stacked, 2 outline, 3 glass */
     int clock_opacity;          /* 20-100, % */
     int clock_stretch;          /* 100-250, % of its height */
     int clock_x, clock_y;       /* its middle, % of the screen; clock_y -1: where it goes by itself */
