@@ -27,6 +27,7 @@
 #include "kernel/settings.h"
 #include "kernel/timezones.h"
 #include "platform/platform.h"
+#include "kernel/timing.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -203,6 +204,39 @@ static void cpu_governor(const char *name)
     kprintf("machine: cpu policy %s%s\n", name, bad ? " refused" : "");
 }
 
+/* The lights behind the touch keys: on with a touch, off KEY_LIGHT_MS later. */
+#define KEY_LIGHT "/sys/class/leds/tm2-touchkey/brightness"
+#define KEY_LIGHT_MS 5000
+static int key_light = -1;              /* -1: not set yet */
+static uint32_t key_light_until;
+
+static void key_light_set(int on)
+{
+    if (!target || on == key_light)
+        return;
+    key_light = on;
+    FILE *f = fopen(KEY_LIGHT, "w");
+    if (!f) {
+        kprintf("machine: no key lights here\n");
+        return;
+    }
+    fputs(on ? "255" : "0", f);
+    fclose(f);
+}
+
+void plat_key_light_poke(void)
+{
+    key_light_until = uptime_ms() + KEY_LIGHT_MS;
+    if (plat_screen_on())
+        key_light_set(1);
+}
+
+void plat_key_light_tick(void)
+{
+    if (key_light == 1 && (int32_t)(uptime_ms() - key_light_until) >= 0)
+        key_light_set(0);
+}
+
 void machine_init(void)
 {
     target = getenv("LKX_TARGET") != 0;
@@ -214,6 +248,7 @@ void machine_init(void)
         kprintf("machine: cpu at %ld MHz, %ld at most (-1: no speed control)\n", cur < 0 ? -1 : cur / 1000,
                 top < 0 ? -1 : top / 1000);
     cpu_governor("performance");
+    plat_key_light_poke();
     find_backlight();
     if (backlight[0] && saved_brightness >= 0)
         write_brightness(saved_brightness);
@@ -305,6 +340,10 @@ void machine_screen(int on)
     if (on != plat_screen_on())
         cpu_governor(on ? "performance" : "schedutil");
     plat_screen_power(on);
+    if (on)
+        plat_key_light_poke();
+    else
+        key_light_set(0);
 }
 
 int machine_screen_on(void)

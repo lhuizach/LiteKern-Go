@@ -151,6 +151,7 @@ void idle_step(int busy)
     screensaver_poll();
     net_poll();
     kmsg_poll();
+    plat_key_light_tick();
     if (give_up_ms && uptime_ms() > give_up_ms) {
         kprintf("lkx-shell: --for ran out\n");
         plat_exit(1);

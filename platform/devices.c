@@ -138,6 +138,7 @@ void plat_key(uint16_t key, int pressed)
 {
     if (!key || (input_blocked() && key != KEY_PHONE_POWER))
         return;
+    plat_key_light_poke();
     if (khead - ktail == QUEUE) {
         ktail++;
         kdropped++;
@@ -149,6 +150,7 @@ void plat_pointer(int x, int y, uint8_t buttons)
 {
     if (input_blocked())
         return;
+    plat_key_light_poke();
     if (px < 0) {                   /* the desktop's pointer starts at the centre */
         px = fw / 2;
         py = fh / 2;

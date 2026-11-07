@@ -24,7 +24,7 @@ FAT_START   := 16384
 # Build-time defaults: make STYLE=light ACCENT=teal WALLPAPER=crossing SPLASH=logo
 STYLE     ?= dark
 ACCENT    ?= blue
-WALLPAPER ?= crossing
+WALLPAPER ?= veil
 SPLASH    ?= logo
 # The screen saver starts after this many seconds without input (0: never).
 SCREENSAVER ?= 300

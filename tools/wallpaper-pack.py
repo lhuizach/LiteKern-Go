@@ -26,7 +26,7 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lkx_png import read_rgba  # noqa: E402
 
-W, H = 1024, 600
+SIZES = ((1024, 600), (720, 1280))    # LiteKern X's, and the phone's portrait ones
 MAX_PACKED = 512 * 1024
 
 
@@ -102,11 +102,15 @@ def main():
         fail("usage: wallpaper-pack.py [--thumb] WALLPAPER.png OUT.lkxw")
     src, out = args
     w, h, px = read_rgba(src)
-    if (w, h) != (W, H):
-        fail(f"{src}: is {w}x{h}, must be {W}x{H} (docs/ASSET-PROMPTS.md §8)")
+    if (w, h) not in SIZES:
+        fail(f"{src}: is {w}x{h}, must be one of {SIZES} (docs/ASSET-PROMPTS.md §8)")
     if any(p[3] != 255 for row in px for p in row):
         fail(f"{src}: has transparency; wallpapers must be opaque")
     if thumb:                       # a 160x94 preview, packed the same way
+        if h > w:                   # portrait: the band low down, where the picture is
+            band = w * THUMB_H // THUMB_W
+            top = h * 11 // 20
+            px, h = px[top:top + band], band
         px = shrink(px, w, h, THUMB_W, THUMB_H)
         w, h = THUMB_W, THUMB_H
 

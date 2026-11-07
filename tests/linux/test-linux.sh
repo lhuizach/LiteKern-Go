@@ -103,7 +103,7 @@ check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the
     '^ramdisk: [0-9]+ files' \
     '^lkx: Files \(apps/files/files.lkx' \
     '^lkx: Blocksmith \(apps/blocksmith/blocksmith.lkx' \
-    '^wallpaper: crossing, ' \
+    '^wallpaper: veil, ' \
     '^desktop: ready$' \
     '^screen: 720x1280$' \
     '!^screen: corner '$PLAIN \

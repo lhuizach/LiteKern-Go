@@ -55,6 +55,9 @@ extern const struct backend backend_headless, backend_x11, backend_drm;
 /* The screen off or on (the Power key, kernel/machine.h). While it is off,
  * only the Power key and nothing from the touchscreen reaches the shell. */
 void plat_screen_power(int on);
+/* The touch keys' lights (platform/machine.c): on with a touch, off a few seconds later. */
+void plat_key_light_poke(void);
+void plat_key_light_tick(void);
 int plat_screen_on(void);
 /* A key went down (1) or up (0); `key` is a KEY_* code (kernel/input.h). */
 void plat_key(uint16_t key, int pressed);
