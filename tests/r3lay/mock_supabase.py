@@ -10,10 +10,12 @@ password "good" is alice. A message to bob gets a reply on the next read.
 import json
 import os
 import re
+import struct
 import sys
 import time
 import urllib.parse
 import uuid
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ALICE = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -24,8 +26,8 @@ KEY = "test-public-key"
 TOKEN = "access-1"
 
 profiles = [
-    {"id": ALICE, "username": "alice"},
-    {"id": BOB, "username": "bob"},
+    {"id": ALICE, "username": "alice", "bio": "Caf\u00e9 lover", "avatar_url": None},
+    {"id": BOB, "username": "bob", "avatar_url": "http://127.0.0.1:%s/avatar.png" % sys.argv[1]},
     {"id": CARA, "username": "Caroline"},
 ]
 
@@ -55,6 +57,20 @@ group_messages = [
 ]
 group_reads = []
 log = None
+
+
+def png_chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+def make_avatar():
+    """A small picture: red over blue."""
+    rows = b"".join(b"\0" + ((b"\xff\0\0" if y < 16 else b"\0\0\xff") * 32) for y in range(32))
+    return b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 32, 8, 2, 0, 0, 0)) + \
+        png_chunk(b"IDAT", zlib.compress(rows)) + png_chunk(b"IEND", b"")
+
+
+AVATAR = make_avatar()
 owed_replies = 0
 
 
@@ -122,6 +138,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         global owed_replies
         path, q = self.rest()
+        if path == "/avatar.png":               # public, like Supabase storage
+            data = AVATAR
+            record("avatar")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if not self.authorised():
             return self.reply(401, {"message": "JWT expired"})
         table = path.rsplit("/", 1)[1]
@@ -183,6 +208,11 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorised():
             return self.reply(401, {"message": "JWT expired"})
         data = self.body()
+        if path.endswith("/profiles"):
+            for r in match(profiles, q):
+                r.update(data)
+            record("profile", **data)
+            return self.reply(204, {})
         rows = match(messages, q)
         for r in rows:
             r.update(data)

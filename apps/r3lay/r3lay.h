@@ -3,6 +3,8 @@
 #ifndef R3LAY_H
 #define R3LAY_H
 
+#include <stdint.h>
+
 #define ID_LEN   37                     /* a uuid and its NUL */
 #define WHEN_LEN 36                     /* a timestamp as the server writes it */
 #define CONV_MAX 64
@@ -36,7 +38,11 @@ struct msg {
 
 struct person {
     char id[ID_LEN], name[40];
+    char avatar_url[260];
 };
+
+#define AVATAR_SIZE 176                 /* the biggest it's shown: a square, px */
+#define BIO_MAX 280
 
 extern struct conv convs[CONV_MAX];
 extern int nconvs, list_ready;          /* list_ready: it's been fetched at least once */
@@ -45,6 +51,8 @@ extern int nmsgs, chat_ready;
 extern struct person found[FOUND_MAX];
 extern int nfound;
 extern char me_id[ID_LEN], me_name[40];
+extern char me_bio[BIO_MAX];            /* as our font draws it */
+extern int notifications_on;
 extern int offline;                     /* the last request got no answer */
 
 /* api.c calls these (main.c). */
@@ -69,9 +77,15 @@ void api_find(const char *query);
 void api_tick(void);
 
 const char *api_name(const char *id);   /* a person's name, if known; else "" */
+const char *api_avatar_url(const char *id);
+/* A profile picture, AVATAR_SIZE square; NULL until it's arrived, or if there's none
+ * (avatar.c: the first ask fetches it). */
+const uint32_t *api_avatar(const char *id);
+void api_save_bio(const char *text);    /* as typed: our font's bytes */
+void api_set_notifications(int on);
 
-/* What our font can draw of UTF-8 text (kernel/text.h: ASCII and a few
- * symbols): accents come off, emoji are left out for now. */
+/* What our font can draw of UTF-8 text, as its bytes (kernel/text.h: ASCII and
+ * Latin-1): emoji are left out for now. */
 void show_text(const char *utf8, char *out, int room);
 /* A timestamp as "14:05" today, or "7 Nov". */
 void when_short(const char *when, char *out, int room);

@@ -5,7 +5,8 @@
  * Each style is one size and weight. Text is drawn with its line box's top
  * at y: the box is text_height() tall, and the glyphs are blended into the
  * surface by their coverage (straight alpha over whatever is there). Printable
- * ASCII, plus a few symbols as the bytes below; other bytes draw as '?'. */
+ * ASCII, a few symbols as the bytes below, and Latin-1 (0xA0-0xFF) as its own bytes,
+ * for accents; other bytes draw as '?'. Text here isn't UTF-8. */
 #ifndef LKX_TEXT_H
 #define LKX_TEXT_H
 

@@ -3,6 +3,8 @@
 static const struct text_glyph *glyph(const struct text_face *f, char c)
 {
     unsigned char u = (unsigned char)c;
+    if (u >= 0xa0)
+        return &f->glyphs[95 + TEXT_EXTRA + (u - 0xa0)];
     if (u >= 0x80 && u < 0x80 + TEXT_EXTRA)
         return &f->glyphs[95 + (u - 0x80)];
     return &f->glyphs[(u >= 32 && u <= 126 ? u : '?') - 32];

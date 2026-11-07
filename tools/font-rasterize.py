@@ -36,8 +36,11 @@ CHARS = [chr(c) for c in range(32, 127)]
 # 0x80, 0x81, ... (kernel/text.h's TEXT_MINUS etc.).
 EXTRA = ["−", "×", "÷", "…"]     # minus, times, divide, ellipsis
 CHARS += EXTRA
+# Then Latin-1, for accents: 0xA0-0xFF, reached in C as those same bytes.
+CHARS += [chr(c) for c in range(0xA0, 0x100)]
 CLOCK_FACE = ("clock", 180, 700)        # bold (the user asked, 2026-10-09); 180 px on the phone
 CLOCK_CHARS = set("0123456789: AMP")
+
 
 
 def face(path, size, weight):

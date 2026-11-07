@@ -16,6 +16,8 @@ void machine_init(void);
 void machine_status(struct k86_machine *out);
 /* 0 or -errno (-EINVAL out of range, -ENODEV none). Both are saved. */
 int machine_set_brightness(int percent);
+/* LiteKern Go: a short buzz on the phone's vibrator; nothing on a machine without one. */
+void machine_haptic(int ms);
 int machine_set_timezone(int zone);
 int machine_set_touchpad(int speed);
 /* The screen (the phone's Power key): off keeps everything as it is, on shows

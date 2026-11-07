@@ -399,6 +399,18 @@ check "the on-screen keyboard: up for a text field, Files above it, taps type, S
     '^osk: hidden$' \
     '!crashed|PANIC'
 
+# Holding a letter offers its accents: e (180,904), held, gives the first, e acute.
+path; open_app 0; go 146 1229; click; add sleep:1; go 180 904; add sleep:0.2 press:1 sleep:0.8 release sleep:0.5
+run $SHELL_BIN build-linux/test/osk.img "$P"
+check "the on-screen keyboard: a held letter offers its accents" \
+    '^osk: shown$' \
+    '^osk: accent e9$' \
+    '!crashed|PANIC'
+
+# Each finger on a touchscreen, by itself (platform/touch.c).
+out=$(bash tests/linux/test-touch.sh 2>&1)
+check "fast typing: a new finger ends the last key" '^PASS  a second finger' '!^FAIL'
+
 # The app switcher: Calculator, then Files; Recent apps shows both, Files
 # in the middle, Calculator's card to its left (50,620): a tap goes to it.
 # Again: Calculator's card (now in the middle, 360,620) swiped up closes it;

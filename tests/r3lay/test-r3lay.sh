@@ -98,6 +98,13 @@ begin; P+=" sleep:3"
 CONF_PORT=1 run
 check "no network: opens anyway" 'shell:r3lay: signed in' '!shell:crash|Segmentation'
 
+# Bob's picture arrives, and the bio saves, accents as UTF-8.
+begin; P+=" sleep:2"; tap 56 100; P+=" sleep:1"; tap 360 550; P+=" sleep:1"
+typ hi; P+=" sleep:0.5"; tap 680 100; P+=" sleep:1"
+run
+check "fetches a profile picture" 'mock:"what": "avatar"'
+check "saves the bio" 'shell:r3lay: bio saved' 'mock:"what": "profile".*"bio": "Caf.* loverhi"'
+
 # No r3lay.conf: it says so, and stays up.
 begin; P+=" sleep:3 press:1 release sleep:2"
 NO_CONF=/nonexistent run

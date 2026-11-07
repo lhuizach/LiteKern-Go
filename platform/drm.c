@@ -16,6 +16,7 @@
  * make sense of: one finger moves the pointer (faster when it moves fast), a
  * tap clicks (two fingers: right click, three: middle), two fingers moving
  * scroll, as the page follows them. */
+#include "platform/touch.h"
 #include "platform/platform.h"
 #include "kernel/input.h"
 #include "kernel/printk.h"
@@ -335,6 +336,8 @@ static void flush(void)
 static struct dev {
     int fd;
     int abs;                        /* a tablet: place the pointer */
+    int mt;                         /* a touchscreen with slots: follow the fingers (platform/touch.h) */
+    struct touch fingers_seen;
     int pad;                        /* a touchpad: moves, taps and scrolls (below) */
     struct input_absinfo ax, ay;
     /* The touchpad: what this report says, and the touch so far. */
@@ -393,6 +396,11 @@ static void add_device(const char *path)
     d->pad = touchpad;
     plat_touchpad_present |= touchpad;
     d->abs = tablet && !mouse && !touchpad;
+    d->mt = d->abs && BIT(abs, ABS_MT_SLOT) && BIT(abs, ABS_MT_POSITION_X);
+    if (d->mt) {
+        touch_init(&d->fingers_seen);
+        kprintf("input: %s: following each finger\n", *name ? name : path);
+    }
     if (mouse || touchpad || (tablet && BIT(keys, BTN_LEFT))) {
         real_pointer = 1;
         kprintf("input: %s counts as a pointer\n", name);
@@ -526,6 +534,16 @@ static int tool_fingers(int code)
     }
 }
 
+/* A finger's report (platform/touch.c), in the tablet's units. */
+static void finger(void *ctx, int x, int y, int down)
+{
+    struct dev *d = ctx;
+    px = scale(x, &d->ax, sw);
+    py = scale(y, &d->ay, sh);
+    buttons = down ? (uint8_t)(buttons | MOUSE_LEFT) : (uint8_t)(buttons & ~MOUSE_LEFT);
+    plat_pointer(px, py, buttons);
+}
+
 static void read_device(struct dev *d)
 {
     struct input_event evs[64];
@@ -538,7 +556,13 @@ static void read_device(struct dev *d)
         }
         for (int i = 0; i < n / (int)sizeof(evs[0]); i++) {
             struct input_event *e = &evs[i];
-            if (d->pad && e->type == EV_KEY && tool_fingers(e->code)) {
+            if (d->mt && e->type == EV_ABS) {
+                touch_abs(&d->fingers_seen, e->code, e->value);
+            } else if (d->mt && e->type == EV_SYN && e->code == SYN_REPORT) {
+                touch_sync(&d->fingers_seen, finger, d);
+            } else if (d->mt && e->type == EV_KEY) {
+                /* BTN_TOUCH: the fingers say it all */
+            } else if (d->pad && e->type == EV_KEY && tool_fingers(e->code)) {
                 if (e->value)
                     d->fingers = tool_fingers(e->code);
                 else if (d->fingers == tool_fingers(e->code))

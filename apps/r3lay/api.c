@@ -21,6 +21,7 @@
 #define CHAT_POLL_S 3
 #define LIST_POLL_S 8
 #define SESSION_FILE "r3lay.session"
+#define PREFS_FILE "r3lay.prefs"
 #define URL_MAX 3000
 #define RETRIES 5
 
@@ -31,6 +32,8 @@ int nmsgs, chat_ready;
 struct person found[FOUND_MAX];
 int nfound;
 char me_id[ID_LEN], me_name[40];
+char me_bio[BIO_MAX];
+int notifications_on = 1;
 int offline;
 
 static char base_url[200], api_key[1024];
@@ -61,8 +64,6 @@ static void copy(char *to, const char *from, size_t room)
 
 void show_text(const char *s, char *out, int room)
 {
-    /* U+00C0 .. U+00FF */
-    static const char latin[] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
     const unsigned char *p = (const unsigned char *)s;
     int n = 0;
     while (*p && n < room - 2) {
@@ -85,9 +86,12 @@ void show_text(const char *s, char *out, int room)
             out[n++] = ' ';
         else if (code >= 32 && code < 127)
             out[n++] = (char)code;
-        else if (code >= 0xc0 && code <= 0xff)
-            out[n++] = latin[code - 0xc0];
-        else if (code == 0xb7 || code == 0x2013 || code == 0x2014)
+        else if (code >= 0xa0 && code <= 0xff)
+            out[n++] = (char)code;                  /* our font's Latin-1 */
+        else if ((code == 0x153 || code == 0x152) && n < room - 3) {
+            out[n++] = code == 0x153 ? 'o' : 'O';
+            out[n++] = 'e';
+        } else if (code == 0x2013 || code == 0x2014)
             out[n++] = '-';
         else if (code == 0x2018 || code == 0x2019)
             out[n++] = '\'';
@@ -303,6 +307,7 @@ static void on_ignored(void *ctx, long status, char *body, size_t len)
 /* --- signing in --------------------------------------------------------------------- */
 
 static void start(void);
+static void prefs_load_now(void);
 
 static int take_tokens(char *body)
 {
@@ -385,6 +390,7 @@ int api_resume(void)
 {
     char path[K86_PATH_MAX], text[700];
     int vol = home_dir(path), n;
+    prefs_load_now();
     if (vol < 0 || (n = k86_read(vol, path, SESSION_FILE, text, sizeof(text) - 1)) <= 0)
         return 0;
     text[n] = 0;
@@ -419,19 +425,30 @@ const char *api_name(const char *id)
     return "";
 }
 
-static void name_add(const char *id, const char *name)
+const char *api_avatar_url(const char *id)
+{
+    for (int i = 0; i < nnames; i++)
+        if (!strcmp(names[i].id, id))
+            return names[i].avatar_url;
+    return "";
+}
+
+static void name_add(const char *id, const char *name, const char *url)
 {
     char shown[40];
+    struct person *p = 0;
     show_text(name, shown, sizeof(shown));
-    for (int i = 0; i < nnames; i++)
-        if (!strcmp(names[i].id, id)) {
-            strcpy(names[i].name, shown);
-            return;
-        }
-    if (nnames < (int)(sizeof(names) / sizeof(names[0]))) {
-        copy(names[nnames].id, id, ID_LEN);
-        strcpy(names[nnames].name, shown);
-        nnames++;
+    for (int i = 0; i < nnames && !p; i++)
+        if (!strcmp(names[i].id, id))
+            p = &names[i];
+    if (!p && nnames < (int)(sizeof(names) / sizeof(names[0]))) {
+        p = &names[nnames++];
+        copy(p->id, id, ID_LEN);
+    }
+    if (p) {
+        strcpy(p->name, shown);
+        if (url)
+            copy(p->avatar_url, url, sizeof(p->avatar_url));
     }
 }
 
@@ -440,7 +457,7 @@ static void take_names(char *body)
     struct json *j = json_parse(body);
     if (j && j->type == JSON_ARRAY)
         for (const struct json *r = j->first; r; r = r->next)
-            name_add(json_str(r, "id"), json_str(r, "username"));
+            name_add(json_str(r, "id"), json_str(r, "username"), json_str(r, "avatar_url"));
     json_free(j);
 }
 
@@ -457,7 +474,7 @@ static void on_names(void *ctx, long status, char *body, size_t len)
 static void fetch_names(const char *const *ids, int n)
 {
     char path[URL_MAX - 300];
-    int at = snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username&id=in.("), any = 0;
+    int at = snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username,avatar_url&id=in.("), any = 0;
     for (int i = 0; i < n && at + ID_LEN + 4 < (int)sizeof(path); i++) {
         if (api_name(ids[i])[0])
             continue;
@@ -526,7 +543,7 @@ static void list_done(void *ctx, long status, char *body, size_t len)
 static void list_names(void)
 {
     char path[URL_MAX - 300];
-    int at = snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username&id=in.("), any = 0;
+    int at = snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username,avatar_url&id=in.("), any = 0;
     for (int i = 0; i < nfresh; i++) {
         if (fresh[i].group || at + ID_LEN + 4 >= (int)sizeof(path))
             continue;
@@ -676,6 +693,8 @@ static void on_list_poll(void *ctx, long status, char *body, size_t len)
                 char text[100], title[60];
                 any = 1;
                 if (chat_open_now && !strcmp(chat.id, id))
+                    continue;
+                if (!notifications_on)
                     continue;
                 preview_of(r, text, sizeof(text));
                 copy(title, api_name(sender)[0] ? api_name(sender) : "R3lay", sizeof(title));
@@ -982,11 +1001,29 @@ static void post_msg(struct msg *m)
     free(quoted);
 }
 
+/* What the keyboard types is Latin-1 (kernel/text.h); the server's text is UTF-8. */
+static char *to_utf8(const char *latin)
+{
+    char *out = malloc(strlen(latin) * 2 + 1), *o = out;
+    if (!out)
+        return 0;
+    for (const unsigned char *p = (const unsigned char *)latin; *p; p++) {
+        if (*p < 0x80) {
+            *o++ = (char)*p;
+        } else {
+            *o++ = (char)(0xc0 | *p >> 6);
+            *o++ = (char)(0x80 | (*p & 63));
+        }
+    }
+    *o = 0;
+    return out;
+}
+
 void api_send(const char *text)
 {
     struct msg *m = msg_room();
-    m->raw = strdup(text);
-    m->shown = shown_copy(text);
+    m->raw = to_utf8(text);
+    m->shown = strdup(text);
     copy(m->sender, me_id, ID_LEN);
     new_uuid(m->ref);
     now_iso(m->when, WHEN_LEN);
@@ -1009,6 +1046,41 @@ static void retry_sends(void)
             post_msg(&msgs[i]);
 }
 
+/* --- my profile, and choices ---------------------------------------------------------- */
+
+void api_save_bio(const char *text)
+{
+    char *utf8 = to_utf8(text), path[160];
+    size_t room = strlen(text) * 12 + 32;
+    char *quoted = malloc(room), *body = malloc(room + 16);
+    if (utf8 && quoted && body && json_quote(utf8, quoted, room) >= 0) {
+        snprintf(body, room + 16, "{\"bio\":%s}", quoted);
+        snprintf(path, sizeof(path), "/rest/v1/profiles?id=eq.%s", me_id);
+        call("PATCH", path, 0, body, on_ignored, 0);
+        copy(me_bio, text, sizeof(me_bio));
+    }
+    free(utf8);
+    free(quoted);
+    free(body);
+}
+
+void api_set_notifications(int on)
+{
+    char path[K86_PATH_MAX], c = on ? '1' : '0';
+    int vol = home_dir(path);
+    notifications_on = on;
+    if (vol >= 0)
+        k86_write(vol, path, PREFS_FILE, &c, 1);
+}
+
+static void prefs_load_now(void)
+{
+    char path[K86_PATH_MAX], c = '1';
+    int vol = home_dir(path);
+    if (vol >= 0 && k86_read(vol, path, PREFS_FILE, &c, 1) == 1)
+        notifications_on = c != '0';
+}
+
 /* --- finding people ----------------------------------------------------------------- */
 
 static void on_found(void *ctx, long status, char *body, size_t len)
@@ -1026,7 +1098,7 @@ static void on_found(void *ctx, long status, char *body, size_t len)
                 continue;
             copy(found[nfound].id, id, ID_LEN);
             show_text(json_str(r, "username"), found[nfound].name, sizeof(found[nfound].name));
-            name_add(id, found[nfound].name);
+            name_add(id, json_str(r, "username"), json_str(r, "avatar_url"));
             nfound++;
         }
     json_free(j);
@@ -1050,7 +1122,7 @@ void api_find(const char *query)
         ui_changed();
         return;
     }
-    snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username&username=ilike.*%s*&order=username.asc&limit=20", q);
+    snprintf(path, sizeof(path), "/rest/v1/profiles?select=id,username,avatar_url&username=ilike.*%s*&order=username.asc&limit=20", q);
     call("GET", path, 0, 0, on_found, 0);
 }
 
@@ -1062,8 +1134,11 @@ static void on_me(void *ctx, long status, char *body, size_t len)
     (void)len;
     if (answered(status)) {
         struct json *j = json_parse(body);
-        if (j && j->first)
+        if (j && j->first) {
             show_text(json_str(j->first, "username"), me_name, sizeof(me_name));
+            show_text(json_str(j->first, "bio"), me_bio, sizeof(me_bio));
+            name_add(me_id, json_str(j->first, "username"), json_str(j->first, "avatar_url"));
+        }
         json_free(j);
         ui_changed();
     }
@@ -1074,7 +1149,7 @@ static void start(void)
 {
     char path[160];
     signed_in = 1;
-    snprintf(path, sizeof(path), "/rest/v1/profiles?select=username&id=eq.%s", me_id);
+    snprintf(path, sizeof(path), "/rest/v1/profiles?select=username,bio,avatar_url&id=eq.%s", me_id);
     call("GET", path, 0, 0, on_me, 0);
     call("POST", "/rest/v1/rpc/touch_login", 0, "{}", on_ignored, 0);
     api_list_load();

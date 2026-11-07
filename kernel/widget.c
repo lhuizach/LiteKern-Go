@@ -545,7 +545,7 @@ enum wg_entry_result wg_entry_key(struct wg_entry *e, const struct key_event *k)
         e->len--;
         break;
     default:
-        if (k->ascii < 0x20 || k->ascii > 0x7e || (k->mods & (MOD_CTRL | MOD_ALT)) ||
+        if (k->ascii < 0x20 || (k->ascii > 0x7e && k->ascii < 0xa0) || (k->mods & (MOD_CTRL | MOD_ALT)) ||
             e->len == WG_TEXT_MAX - 1)
             return WG_ENTRY_NONE;
         for (int i = e->len; i >= e->cursor; i--)

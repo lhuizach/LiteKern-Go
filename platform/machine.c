@@ -31,9 +31,11 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <linux/input.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -304,6 +306,47 @@ void machine_status(struct k86_machine *out)
     }
     if (d)
         closedir(d);
+}
+
+/* The vibrator: any input device with force feedback (the A5's pwm-vibrator). */
+void machine_haptic(int ms)
+{
+    static int fd = -2, effect = -1;    /* -2: not looked for yet */
+    if (fd == -2) {
+        fd = -1;
+        for (int n = 0; n < 32 && fd < 0; n++) {
+            char path[32];
+            unsigned long bits[FF_MAX / (8 * sizeof(long)) + 1] = { 0 };
+            snprintf(path, sizeof(path), "/dev/input/event%d", n);
+            int f = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+            if (f < 0)
+                continue;
+            if (ioctl(f, EVIOCGBIT(EV_FF, sizeof(bits)), bits) >= 0 &&
+                (bits[FF_RUMBLE / (8 * sizeof(long))] >> (FF_RUMBLE % (8 * sizeof(long))) & 1))
+                fd = f;
+            else
+                close(f);
+        }
+        kprintf(fd >= 0 ? "haptic: a vibrator\n" : "haptic: no vibrator here\n");
+    }
+    if (fd < 0)
+        return;
+    struct ff_effect e;
+    memset(&e, 0, sizeof(e));
+    e.type = FF_RUMBLE;
+    e.id = (short)effect;
+    e.replay.length = (unsigned short)ms;
+    e.u.rumble.strong_magnitude = 0xc000;
+    if (ioctl(fd, EVIOCSFF, &e) < 0)
+        return;
+    effect = e.id;
+    struct input_event play;
+    memset(&play, 0, sizeof(play));
+    play.type = EV_FF;
+    play.code = (unsigned short)e.id;
+    play.value = 1;
+    if (write(fd, &play, sizeof(play)) < 0)
+        return;
 }
 
 int machine_set_brightness(int percent)

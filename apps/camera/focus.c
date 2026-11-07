@@ -1,9 +1,8 @@
-/* Camera: the lens. The motor sits on its own 2-wire bus, at address 0x0c, and takes
- * two-byte commands in the style of a DW9714: the top 6 bits of a 10-bit position,
- * then the low 4 in the next byte's top half. (A third byte is refused, which is how
- * that was found: Samsung's OIS test code writes registers, on some other part.)
- * The sensor's streaming supplies keep it powered, so it only works while the camera
- * runs.
+/* Camera: the lens. The motor sits on its own 2-wire bus, at address 0x0c, and looks
+ * like an AK7345: a 9-bit position in the top of registers 0 and 1, and 0 in register 2
+ * for "active" (Samsung's msm_actuator.c writes those; Linux's ak7375.c has the same
+ * layout). One byte to a write: it refuses a third byte. The sensor's streaming
+ * supplies keep it powered, so it only works while the camera runs.
  *
  * Autofocus is two sweeps: the lens goes through its range and each stop is scored
  * by how much detail there is around the point asked for; then finer stops around
@@ -21,7 +20,7 @@
 #include <unistd.h>
 
 #define LENS_ADDR 0x0c
-#define POS_MAX 1023
+#define POS_MAX 511
 #define COARSE_STOPS 12
 #define FINE_STOPS 7
 #define SETTLE_FRAMES 2                 /* a frame or two before a move shows */
@@ -32,12 +31,18 @@ static int stop = -1, stops, wait_frames, start_pos, step_pos, best_pos, fine;
 static long best_score;
 static int at_x = CAM_W / 2, at_y = CAM_H / 2;
 
+static int lens_write(int reg, int value)
+{
+    uint8_t b[2] = { (uint8_t)reg, (uint8_t)value };
+    return write(bus, b, 2) == 2 ? 0 : -1;
+}
+
 void focus_move(int pos)
 {
     pos = pos < 0 ? 0 : pos > POS_MAX ? POS_MAX : pos;
     if (bus >= 0) {
-        uint8_t b[2] = { (uint8_t)(pos >> 4), (uint8_t)(pos << 4) };
-        if (write(bus, b, 2) != 2)
+        int v = pos << 7;
+        if (lens_write(0, v >> 8) || lens_write(1, v & 0xff) || lens_write(2, 0))
             k86_log("camera: focus motor didn't answer");
     }
 }

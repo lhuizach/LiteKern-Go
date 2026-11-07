@@ -1,6 +1,8 @@
 #include "kernel/osk.h"
 #include "kernel/keymap.h"
+#include "kernel/machine.h"
 #include "kernel/printk.h"
+#include "kernel/string.h"
 #include "kernel/screen.h"
 #include "kernel/text.h"
 #include "kernel/theme.h"
@@ -16,6 +18,9 @@
 #define REPEAT_MS 60
 #define DOUBLE_SHIFT_MS 350     /* Shift twice this quickly: caps lock */
 #define SLIDE_MS 180            /* up from the bottom edge, and back down */
+#define HAPTIC_MS 12            /* a light tap under each key */
+#define ACCENT_HOLD_MS 350      /* held this long, a letter offers its accents */
+#define ACCENT_W 84
 
 enum kind { K_CHAR, K_SHIFT, K_BACK, K_PAGE, K_SPACE, K_ENTER };
 
@@ -62,6 +67,15 @@ static int shift;               /* 0 off, 1 for the next letter, 2 caps lock */
 static uint32_t shift_ms;       /* when Shift was last tapped */
 static int held_row = -1, held_col = -1;    /* the key under the finger */
 static uint32_t held_ms, repeat_at;
+/* Holding a letter: its accented forms, as Latin-1 bytes (kernel/text.h). */
+static const struct { char letter; const char *forms; } accents[] = {
+    { 'e', "\xe9\xe8\xea\xeb" }, { 'a', "\xe0\xe2\xe4\xe1\xe6" }, { 'c', "\xe7" },
+    { 'i', "\xee\xef\xed" }, { 'o', "\xf4\xf6\xf3\xf2" }, { 'u', "\xf9\xfb\xfc\xfa" },
+    { 'n', "\xf1" }, { 'y', "\xff" }, { 's', "\xdf" },
+};
+static const char *alt_forms;   /* the choices showing; NULL none */
+static const struct key *alt_key;
+static int alt_pick;
 
 static struct gfx_surface *S(void) { return screen_surface(); }
 static const struct theme *T(void) { return theme_get(); }
@@ -146,6 +160,16 @@ static void send(uint16_t sc, int with_shift)
     }
 }
 
+/* A character the layout has no key for. */
+static void send_byte(uint16_t sc, uint8_t byte)
+{
+    struct key_event k = keymap_event(sc, 1);
+    k.ascii = byte;
+    shell_osk_key(&k);
+    k = keymap_event(sc, 0);
+    shell_osk_key(&k);
+}
+
 static int is_letter(const struct key *k)
 {
     return k->kind == K_CHAR && k->label[0] >= 'a' && k->label[0] <= 'z' && !k->label[1];
@@ -187,6 +211,35 @@ static void press(const struct key *k)
     }
 }
 
+/* Latin-1's capitals sit 0x20 below its small letters; these have none. */
+static uint8_t shifted(uint8_t b)
+{
+    return shift && b != 0xdf && b != 0xff ? (uint8_t)(b - 0x20) : b;
+}
+
+static struct gfx_rect alt_rect(void)
+{
+    struct gfx_rect kr = key_rect(held_row, held_col);
+    int n = (int)strlen(alt_forms), w = n * ACCENT_W;
+    int x = kr.x + kr.w / 2 - ACCENT_W / 2;     /* the first choice under the finger */
+    x = x < GAP ? GAP : x + w > S()->w - GAP ? S()->w - GAP - w : x;
+    return (struct gfx_rect){ x, kr.y - PREVIEW_H, w, PREVIEW_H - 8 };
+}
+
+static void alt_finish(int choose)
+{
+    if (choose) {
+        uint8_t b = shifted((uint8_t)alt_forms[alt_pick]);
+        send_byte(alt_key->sc, b);
+        kprintf("osk: accent %02x\n", b);
+        if (shift == 1)
+            shift = 0;
+    }
+    alt_forms = 0;
+    held_row = held_col = -1;
+    shell_damage((struct gfx_rect){ 0, top() - PREVIEW_H, S()->w, OSK_H + PREVIEW_H });
+}
+
 int osk_pointer(int x, int y, uint8_t buttons)
 {
     static uint8_t last;
@@ -195,6 +248,19 @@ int osk_pointer(int x, int y, uint8_t buttons)
     last = buttons;
     if (!shown)
         return 0;
+    if (alt_forms) {
+        struct gfx_rect a = alt_rect();
+        int n = (int)strlen(alt_forms), pick = (x - a.x) / ACCENT_W;
+        pick = x < a.x ? 0 : pick >= n ? n - 1 : pick;
+        if (pick != alt_pick) {
+            alt_pick = pick;
+            machine_haptic(HAPTIC_MS);
+            shell_damage(a);
+        }
+        if (up || !(buttons & MOUSE_LEFT))
+            alt_finish(1);
+        return 1;
+    }
     if (held_row < 0 && (y < top() || !down))
         return y >= top();              /* the keyboard's own area: nothing under it */
     int r, c;
@@ -203,6 +269,7 @@ int osk_pointer(int x, int y, uint8_t buttons)
     if (down) {
         if (!on)
             return 1;
+        machine_haptic(HAPTIC_MS);
         held_row = r;
         held_col = c;
         held_ms = uptime_ms();
@@ -259,6 +326,19 @@ void osk_tick(void)
             shell_flush();
         }
     }
+    if (shown && held_row >= 0 && !alt_forms && is_letter(&pages[page][held_row][held_col]) &&
+        uptime_ms() - held_ms >= ACCENT_HOLD_MS) {
+        const struct key *k = &pages[page][held_row][held_col];
+        for (unsigned i = 0; i < sizeof(accents) / sizeof(accents[0]); i++)
+            if (accents[i].letter == k->label[0]) {
+                alt_forms = accents[i].forms;
+                alt_key = k;
+                alt_pick = 0;
+                machine_haptic(HAPTIC_MS * 2);
+                shell_damage((struct gfx_rect){ 0, top() - PREVIEW_H, S()->w, OSK_H + PREVIEW_H });
+                shell_flush();
+            }
+    }
     if (!shown || held_row < 0 || pages[page][held_row][held_col].kind != K_BACK)
         return;
     uint32_t now = uptime_ms();
@@ -305,8 +385,19 @@ void osk_draw(struct gfx_surface *dst, int ox, int oy)
             text_draw(dst, kr.x + (kr.w - text_width(text, st)) / 2 - ox,
                       kr.y + (kr.h - text_height(st)) / 2 - oy, text, st, fg);
         }
-    /* The pressed letter, big, above the finger. */
-    if (held_row >= 0) {
+    if (alt_forms && held_row >= 0) {          /* its accents, instead */
+        struct gfx_rect a = alt_rect();
+        gfx_fill_round_rect(dst, a.x - ox, a.y - oy, a.w, a.h, t->radius * 2, t->dialog_bg);
+        for (int i = 0; alt_forms[i]; i++) {
+            char one[2] = { (char)shifted((uint8_t)alt_forms[i]), 0 };
+            int cx = a.x + i * ACCENT_W;
+            if (i == alt_pick)
+                gfx_fill_round_rect(dst, cx + 4 - ox, a.y + 4 - oy, ACCENT_W - 8, a.h - 8, t->radius * 2, t->accent_bg);
+            text_draw(dst, cx + (ACCENT_W - text_width(one, TEXT_HEADING)) / 2 - ox,
+                      a.y + (a.h - text_height(TEXT_HEADING)) / 2 - oy, one, TEXT_HEADING,
+                      i == alt_pick ? t->accent_fg : t->fg);
+        }
+    } else if (held_row >= 0) {                /* the pressed letter, big, above the finger */
         const struct key *k = &pages[page][held_row][held_col];
         if (k->kind == K_CHAR) {
             struct gfx_rect kr = key_rect(held_row, held_col);

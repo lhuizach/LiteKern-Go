@@ -33,10 +33,11 @@
 #define ADD_ID 1
 #define ME_ID 2
 #define BACK_ID 3
+#define SAVE_ID 4
 #define FIND_DELAY_MS 400
 #define GLIDE_MS 16
 
-enum page { P_NOT_SET_UP, P_WAIT, P_LOGIN, P_CHATS, P_CHAT, P_FIND, P_ME };
+enum page { P_NOT_SET_UP, P_WAIT, P_LOGIN, P_CHATS, P_CHAT, P_FIND, P_ME, P_BIO };
 
 static struct k86_window win;
 static struct gfx_surface canvas;
@@ -96,13 +97,20 @@ static void header(void)
     case P_CHAT:  snprintf(h.title, sizeof(h.title), "%s", open_conv.name); break;
     case P_FIND:  strcpy(h.title, "New chat"); break;
     case P_ME:    strcpy(h.title, "Me"); break;
+    case P_BIO:   strcpy(h.title, "Bio"); break;
     default:      strcpy(h.title, "R3lay"); break;
     }
-    if (page == P_CHAT || page == P_FIND || page == P_ME) {
+    if (page == P_CHAT || page == P_FIND || page == P_ME || page == P_BIO) {
         h.nbuttons = 1;
         h.buttons[0].side = 0;
         h.buttons[0].icon = 1;
         h.buttons[0].id = BACK_ID;
+        if (page == P_BIO) {
+            h.nbuttons = 2;
+            h.buttons[1].side = 1;
+            strcpy(h.buttons[1].label, "Save");
+            h.buttons[1].id = SAVE_ID;
+        }
     } else if (page == P_CHATS) {
         h.nbuttons = 2;
         h.buttons[0].side = 1;
@@ -124,8 +132,29 @@ static uint32_t avatar_colour(const char *name)
     return set[h % (sizeof(set) / sizeof(set[0]))];
 }
 
-static void avatar(int cx, int cy, int r, const char *name)
+/* Their picture in a circle, once it's here. */
+static int photo_avatar(int cx, int cy, int r, const char *id)
 {
+    const uint32_t *px = id && id[0] ? api_avatar(id) : 0;
+    if (!px)
+        return 0;
+    for (int y = -r; y < r; y++) {
+        int py = cy + y;
+        if (py < 0 || py >= canvas.h)
+            continue;
+        uint32_t *row = canvas.px + (size_t)py * (size_t)canvas.stride;
+        const uint32_t *src = px + (size_t)((y + r) * AVATAR_SIZE / (2 * r)) * AVATAR_SIZE;
+        for (int x = -r; x < r; x++)
+            if (x * x + y * y < r * r && cx + x >= 0 && cx + x < canvas.w)
+                row[cx + x] = src[(x + r) * AVATAR_SIZE / (2 * r)];
+    }
+    return 1;
+}
+
+static void avatar(int cx, int cy, int r, const char *id, const char *name)
+{
+    if (photo_avatar(cx, cy, r, id))
+        return;
     char letter[2] = { name[0] >= 'a' && name[0] <= 'z' ? (char)(name[0] - 32) : name[0], 0 };
     gfx_fill_circle(&canvas, cx, cy, r, avatar_colour(name));
     if (letter[0])
@@ -246,7 +275,7 @@ static void chats_draw(void)
         char when[16];
         if (y + ROW_H <= top || y >= bottom)
             continue;
-        avatar(SIDE + AVATAR_R, y + ROW_H / 2, AVATAR_R, c->name);
+        avatar(SIDE + AVATAR_R, y + ROW_H / 2, AVATAR_R, c->group ? 0 : c->id, c->name);
         when_short(c->when, when, sizeof(when));
         int tw = text_width(when, TEXT_SMALL), tx = SIDE + 2 * AVATAR_R + 24;
         text_draw(&canvas, right - tw, y + 28, when, TEXT_SMALL, c->unread ? t->accent : t->fg_dim);
@@ -504,7 +533,7 @@ static void find_draw(void)
         int y = top + i * ROW_H - scroll;
         if (y + ROW_H <= top || y >= canvas.h)
             continue;
-        avatar(SIDE + AVATAR_R, y + ROW_H / 2, AVATAR_R, found[i].name);
+        avatar(SIDE + AVATAR_R, y + ROW_H / 2, AVATAR_R, found[i].id, found[i].name);
         text_draw_fit(&canvas, SIDE + 2 * AVATAR_R + 24, y + (ROW_H - text_height(TEXT_BOLD)) / 2, found[i].name,
                       canvas.w - 2 * SIDE - 2 * AVATAR_R - 24, TEXT_BOLD, t->fg);
     }
@@ -524,13 +553,63 @@ static void open_found(int i)
 
 /* --- me ------------------------------------------------------------------------------ */
 
+static struct gfx_rect bio_rect(void)
+{
+    return (struct gfx_rect){ SIDE, 350, canvas.w - 2 * SIDE, 104 };
+}
+
+static struct gfx_rect note_rect(void)
+{
+    return (struct gfx_rect){ SIDE, 470, canvas.w - 2 * SIDE, 92 };
+}
+
+/* Writing a bio: the words wrapped, with a cursor at the end. */
+static char bio_draft[BIO_MAX];
+
+static void bio_draw(void)
+{
+    const struct theme *t = T();
+    int x = SIDE + 8, y = 32, room = canvas.w - 2 * x, lh = text_height(TEXT_BODY) + LINE_GAP, n = (int)strlen(bio_draft);
+    int start = 0, width = 0, cursor_x = x, cursor_y = y;
+    for (int i = 0; i <= n; i++) {
+        int w = i < n ? text_width_n(bio_draft + i, 1, TEXT_BODY) : 0;
+        if (i == n || width + w > room) {
+            text_draw_n(&canvas, x, y, bio_draft + start, i - start, TEXT_BODY, t->fg);
+            cursor_x = x + width;
+            cursor_y = y;
+            if (i == n)
+                break;
+            y += lh;
+            start = i;
+            width = 0;
+        }
+        width += w;
+    }
+    gfx_fill_rect(&canvas, cursor_x + 2, cursor_y + 2, 2, text_height(TEXT_BODY) - 4, t->accent);
+    if (!n)
+        text_draw(&canvas, x + 10, y, "Say something about yourself", TEXT_BODY, t->fg_dim);
+}
+
 static void me_draw(void)
 {
     const struct theme *t = T();
     const char *name = me_name[0] ? me_name : "";
-    avatar(canvas.w / 2, 200, 90, name);
-    wg_label_centred(&canvas, canvas.w / 2, 320, name, WG_TEXT_HEADING);
-    sign_out_btn.r = (struct gfx_rect){ 48, 440, canvas.w - 96, t->row_h };
+    struct gfx_rect bio = bio_rect(), note = note_rect();
+    avatar(canvas.w / 2, 170, 88, me_id, name);
+    wg_label_centred(&canvas, canvas.w / 2, 276, name, WG_TEXT_HEADING);
+
+    gfx_fill_round_rect(&canvas, bio.x, bio.y, bio.w, bio.h, t->radius * 2, t->button_bg);
+    text_draw(&canvas, bio.x + 24, bio.y + 12, "Bio", TEXT_SMALL, t->fg_dim);
+    text_draw_fit(&canvas, bio.x + 24, bio.y + 12 + text_height(TEXT_SMALL), me_bio[0] ? me_bio : "Tap to write one",
+                  bio.w - 48, TEXT_BODY, me_bio[0] ? t->fg : t->fg_dim);
+
+    gfx_fill_round_rect(&canvas, note.x, note.y, note.w, note.h, t->radius * 2, t->button_bg);
+    text_draw(&canvas, note.x + 24, note.y + (note.h - text_height(TEXT_BODY)) / 2, "Notifications", TEXT_BODY, t->fg);
+    int sw = 92, sh = 52, sx = note.x + note.w - sw - 24, sy = note.y + (note.h - sh) / 2;
+    gfx_fill_round_rect(&canvas, sx, sy, sw, sh, sh / 2, notifications_on ? t->accent_bg : t->button_active);
+    gfx_fill_circle(&canvas, notifications_on ? sx + sw - sh / 2 : sx + sh / 2, sy + sh / 2, sh / 2 - 6, 0xffffff);
+
+    sign_out_btn.r = (struct gfx_rect){ 48, note.y + note.h + 40, canvas.w - 96, t->row_h };
     sign_out_btn.label = "Sign out";
     sign_out_btn.style = WG_BUTTON_DESTRUCTIVE;
     sign_out_btn.under = t->window_bg;
@@ -551,6 +630,7 @@ static void draw(void)
     case P_CHAT:       chat_draw(); break;
     case P_FIND:       find_draw(); break;
     case P_ME:         me_draw(); break;
+    case P_BIO:        bio_draw(); break;
     }
     if (offline && (page == P_CHATS || page == P_CHAT) && (page == P_CHAT ? nmsgs : nconvs)) {
         gfx_fill_rect(&canvas, 0, 0, canvas.w, 44, t->destructive_bg);
@@ -669,10 +749,18 @@ static void pointer(const struct k86_event *ev)
         list_pointer(&p, ev->time_ms);
         break;
     case P_ME:
-        if (wg_button_pointer(&sign_out_btn, &p))
-            api_sign_out();
-        else
+        if (p.up && inside(bio_rect(), p.x, p.y)) {
+            snprintf(bio_draft, sizeof(bio_draft), "%s", me_bio);
+            show_page(P_BIO);
+        } else if (p.up && inside(note_rect(), p.x, p.y)) {
+            api_set_notifications(!notifications_on);
+            k86_logf("r3lay: notifications %s", notifications_on ? "on" : "off");
             draw();
+        } else if (wg_button_pointer(&sign_out_btn, &p)) {
+            api_sign_out();
+        } else {
+            draw();
+        }
         break;
     default:
         break;
@@ -681,6 +769,10 @@ static void pointer(const struct k86_event *ev)
 
 static void go_back(void)
 {
+    if (page == P_BIO) {
+        show_page(P_ME);
+        return;
+    }
     if (page == P_CHAT)
         api_chat_close();
     if (page == P_CHAT || page == P_FIND || page == P_ME) {
@@ -724,6 +816,16 @@ static void key(const struct key_event *k)
         if (wg_entry_key(&finder, k) == WG_ENTRY_CHANGED)
             find_due = k86_uptime_ms() + FIND_DELAY_MS;
         draw();
+    } else if (page == P_BIO) {
+        int n = (int)strlen(bio_draft);
+        if (k->key == KEY_BACKSPACE) {
+            if (n)
+                bio_draft[n - 1] = 0;
+        } else if (((k->ascii >= 32 && k->ascii < 127) || k->ascii >= 0xa0) && n < BIO_MAX - 1) {
+            bio_draft[n] = (char)k->ascii;
+            bio_draft[n + 1] = 0;
+        }
+        draw();
     } else if (page == P_CHAT && typing) {
         if (k->key == KEY_ENTER) {
             send_draft();
@@ -731,7 +833,7 @@ static void key(const struct key_event *k)
             if (draft_len)
                 draft[--draft_len] = 0;
             draw();
-        } else if (k->ascii >= 32 && k->ascii < 127 && draft_len < TEXT_MAX - 1) {
+        } else if (((k->ascii >= 32 && k->ascii < 127) || k->ascii >= 0xa0) && draft_len < TEXT_MAX - 1) {
             draft[draft_len++] = (char)k->ascii;
             draft[draft_len] = 0;
             draw();
@@ -799,8 +901,9 @@ int main(void)
     for (;;) {
         struct k86_event ev;
         int want_keys = (page == P_LOGIN && (email.focused || password.focused)) ||
-                        (page == P_FIND && finder.focused) || (page == P_CHAT && typing);
-        k86_back_wanted(page == P_CHAT || page == P_FIND || page == P_ME || (want_keys && page != P_LOGIN));
+                        (page == P_FIND && finder.focused) || (page == P_CHAT && typing) || page == P_BIO;
+        k86_back_wanted(page == P_CHAT || page == P_FIND || page == P_ME || page == P_BIO ||
+                        (want_keys && page != P_LOGIN));
         k86_keyboard_wanted(want_keys);
         timer_follow();
         if (k86_wait_event(&ev))
@@ -819,6 +922,10 @@ int main(void)
                 nfound = 0;
                 show_page(P_FIND);
             } else if (ev.id == ME_ID) {
+                show_page(P_ME);
+            } else if (ev.id == SAVE_ID) {
+                api_save_bio(bio_draft);
+                k86_log("r3lay: bio saved");
                 show_page(P_ME);
             }
             break;
