@@ -31,6 +31,11 @@ struct lock_settings {
     char wallpaper[32];
     int clock24;                /* 1: 14:05; 0: 2:05 PM */
     int on_wake;                /* lock when the screen saver ends */
+    int clock_font;             /* K86_CLOCK_FONTS: Bold, Light, Thin, Condensed, Mono, Serif */
+    int clock_style;            /* 0 one line, 1 stacked, 2 outline */
+    int clock_opacity;          /* 20-100, % */
+    int clock_stretch;          /* 100-250, % of its height */
+    int clock_x, clock_y;       /* its middle, % of the screen; clock_y -1: where it goes by itself */
 };
 
 void lockscreen_lock(void);
@@ -53,6 +58,8 @@ const struct lock_settings *lockscreen_settings(void);
 /* Change them (Settings, or settings.txt at boot). A wallpaper it can't
  * draw shows the desktop's instead. Doesn't save: the caller does. */
 void lockscreen_configure(const struct lock_settings *s);
+/* The lock screen as it'd look with these, shrunk to w x h (0x00RRGGBB). */
+int lockscreen_preview(const struct lock_settings *s, uint32_t *out, int w, int h);
 
 /* A picture of its own (0x00RRGGBB, w x h, rows `stride` apart), scaled to
  * fill the screen; its wallpaper becomes LOCK_PICTURE. 0 or -ENOMEM. */

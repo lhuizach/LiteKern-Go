@@ -231,6 +231,23 @@ static int apply(int top, int at_boot)
             lock.clock24 = strcmp(value, "12") != 0;
         } else if (!strcmp(line, "lock-on-wake")) {
             lock.on_wake = !strcmp(value, "yes");
+        } else if (!strcmp(line, "lock-clock-y")) {
+            uint32_t n;
+            lock.clock_y = number(value, &n) ? -1 : (int)n;
+        } else if (strlen(line) > 11 && !memcmp(line, "lock-clock-", 11)) {
+            uint32_t n;
+            if (!number(value, &n)) {
+                if (!strcmp(line, "lock-clock-font"))
+                    lock.clock_font = (int)n;
+                else if (!strcmp(line, "lock-clock-style"))
+                    lock.clock_style = (int)n;
+                else if (!strcmp(line, "lock-clock-opacity"))
+                    lock.clock_opacity = (int)n;
+                else if (!strcmp(line, "lock-clock-stretch"))
+                    lock.clock_stretch = (int)n;
+                else if (!strcmp(line, "lock-clock-x"))
+                    lock.clock_x = (int)n;
+            }
         }
         line = next;
     }
@@ -343,12 +360,20 @@ void settings_save(void)
     char text[TEXT_MAX];
     const char *wp = wallpaper_current();
     const struct lock_settings *lock = lockscreen_settings();
+    char clock_y[12];
+    if (lock->clock_y < 0)
+        memcpy(clock_y, "auto", 5);
+    else
+        ksnprintf(clock_y, sizeof(clock_y), "%d", lock->clock_y);
     ksnprintf(text, sizeof(text),
               "style %s\naccent %s\nwallpaper %s\nscreensaver %u\n"
-              "lock-wallpaper %s\nclock %s\nlock-on-wake %s\n",
+              "lock-wallpaper %s\nclock %s\nlock-on-wake %s\n"
+              "lock-clock-font %d\nlock-clock-style %d\nlock-clock-opacity %d\n"
+              "lock-clock-stretch %d\nlock-clock-x %d\nlock-clock-y %s\n",
               theme_is_light() ? "light" : "dark", theme_accent(theme_accent_index(), 0),
               wp[0] ? wp : "none", screensaver_timeout(), lock->wallpaper, lock->clock24 ? "24" : "12",
-              lock->on_wake ? "yes" : "no");
+              lock->on_wake ? "yes" : "no", lock->clock_font, lock->clock_style, lock->clock_opacity,
+              lock->clock_stretch, lock->clock_x, clock_y);
     int err = save_file(TEXT_FILE, text, (uint32_t)strlen(text));
     if (err && err != -ENODEV)
         kprintf("settings: couldn't save (%d)\n", err);

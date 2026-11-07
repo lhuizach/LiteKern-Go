@@ -1,5 +1,6 @@
 /* LiteKern X — the lock screen (see kernel/lockscreen.h). */
 #include "kernel/lockscreen.h"
+#include "kernel/kern86_abi.h"
 #include "kernel/cursor.h"
 #include "kernel/desktop.h"
 #include "kernel/driver.h"
@@ -78,7 +79,7 @@ static struct {
     int pad_held;                       /* the PIN pad's key under the finger, or -1 */
     uint32_t power_down_ms;             /* Power is held since (0: it isn't) */
     int power_held;
-} ls = { .set = { "desktop", 1, 0 }, .pad_held = -1 };
+} ls = { .set = { "desktop", 1, 0, 0, 0, 100, 100, 50, -1 }, .pad_held = -1 };
 
 /* H_PAD + k: the PIN pad's k-th key; H_AVATAR + i: the picker's i-th. */
 enum { H_NONE, H_RESTART, H_SHUTDOWN, H_PAD, H_AVATAR = H_PAD + PAD_KEYS };
@@ -88,8 +89,12 @@ static struct gfx_surface *S(void) { return screen_surface(); }
 /* --- the clock's face (fonts/clock.lkxf, tools/font2c.py --bin) --------------------------- */
 
 #define CLOCK_GLYPHS (95 + TEXT_EXTRA)
-static struct text_glyph clock_glyphs[CLOCK_GLYPHS];
-static struct text_face clock_face;
+static struct text_glyph clock_glyphs[K86_CLOCK_FONTS][CLOCK_GLYPHS];
+static struct text_face clock_faces[K86_CLOCK_FONTS];
+static const char *const clock_files[K86_CLOCK_FONTS] = {
+    "fonts/clock.lkxf", "fonts/clock-light.lkxf", "fonts/clock-thin.lkxf",
+    "fonts/clock-condensed.lkxf", "fonts/clock-mono.lkxf", "fonts/clock-serif.lkxf",
+};
 
 static uint32_t le(const uint8_t *p, int n)
 {
@@ -101,38 +106,44 @@ static uint32_t le(const uint8_t *p, int n)
 
 /* Read it from the ramdisk the first time; checked, so a damaged file only
  * means a smaller clock (the heading style). 0 or a negative error. */
-static int load_clock_face(void)
+static int load_clock_face(int n)
 {
-    if (clock_face.glyphs)
+    if (clock_faces[n].glyphs)
         return 0;
     const uint8_t *d;
     uint32_t size;
-    if (ramdisk_find("fonts/clock.lkxf", (const void **)&d, &size))
+    if (ramdisk_find(clock_files[n], (const void **)&d, &size))
         return -ENOENT;
     if (size < 12 || memcmp(d, "LKXF", 4) || le(d + 10, 2) != CLOCK_GLYPHS || size < 12 + 10u * CLOCK_GLYPHS)
         return -EINVAL;
     const uint8_t *t = d + 12, *cov = t + 10 * CLOCK_GLYPHS;
     uint32_t cov_len = size - (uint32_t)(cov - d);
     for (int i = 0; i < CLOCK_GLYPHS; i++, t += 10) {
-        struct text_glyph *g = &clock_glyphs[i];
+        struct text_glyph *g = &clock_glyphs[n][i];
         *g = (struct text_glyph){ t[0], t[1], (int8_t)t[2], (int8_t)t[3], (uint16_t)le(t + 4, 2), le(t + 6, 4) };
         if (g->off > cov_len || (uint32_t)g->w * g->h > cov_len - g->off)
             return -EINVAL;
     }
-    clock_face = (struct text_face){ "clock", (int)le(d + 4, 2), (int)le(d + 6, 2), (int)le(d + 8, 2),
-                                     clock_glyphs, cov };
+    clock_faces[n] = (struct text_face){ "clock", (int)le(d + 4, 2), (int)le(d + 6, 2), (int)le(d + 8, 2),
+                                         clock_glyphs[n], cov };
     return 0;
 }
 
 /* The clock's face, or the heading style's if it couldn't be read. */
 static const struct text_face *clock_font(void)
 {
-    return clock_face.glyphs ? &clock_face : &text_faces[TEXT_HEADING];
+    int n = ls.set.clock_font;
+    if (n < 0 || n >= K86_CLOCK_FONTS)
+        n = 0;
+    if (load_clock_face(n) && n)
+        n = 0;
+    if (!clock_faces[n].glyphs && load_clock_face(0))
+        return &text_faces[TEXT_HEADING];
+    return clock_faces[n].glyphs ? &clock_faces[n] : &clock_faces[0];
 }
 
 const struct text_face *lockscreen_clock_face(void)
 {
-    load_clock_face();
     return clock_font();
 }
 
@@ -244,11 +255,119 @@ static int clock_y(void)
     return S()->h * (ls.view == V_CLOCK ? 11 : 12) / 100;
 }
 
+/* The clock is drawn once into a mask, changed only when the minute or a choice does:
+ * its stretch and outline are too much to work out on every frame of a slide. */
+static struct {
+    char hm[8];
+    int font, style, stretch, top_gap;  /* top_gap: above the digits, in the font's line */
+    struct gfx_surface tmp;
+    uint8_t *raw, *mask;
+    int w, h;
+} clk = { .font = -1 };
+
+static void clock_mask(const char *hm)
+{
+    const struct lock_settings *c = &ls.set;
+    if (!clk.tmp.px && screen_buffer(&clk.tmp))
+        return;
+    if (!clk.raw) {
+        struct gfx_surface a = { 0 }, b = { 0 };
+        if (screen_buffer(&a) || screen_buffer(&b))
+            return;
+        clk.raw = (uint8_t *)a.px;
+        clk.mask = (uint8_t *)b.px;
+    }
+    if (clk.font == c->clock_font && clk.style == c->clock_style && clk.stretch == c->clock_stretch &&
+        !strcmp(clk.hm, hm))
+        return;
+    memcpy(clk.hm, hm, sizeof(clk.hm));
+    clk.font = c->clock_font;
+    clk.style = c->clock_style;
+    clk.stretch = c->clock_stretch;
+    struct gfx_surface *t = &clk.tmp;
+    const struct text_face *f = clock_font();
+    memset(t->px, 0, (size_t)t->w * (size_t)t->h * 4);
+    if (c->clock_style == 1) {                  /* stacked: the hours over the minutes */
+        char top[8], low[8];
+        int n = 0;
+        for (; hm[n] && hm[n] != ':' && n < 7; n++)
+            top[n] = hm[n];
+        top[n] = '\0';
+        memcpy(low, hm[n] ? hm + n + 1 : "", sizeof(low) - (size_t)n - 1);
+        text_draw_face(t, (t->w - text_width_face(top, f)) / 2, 0, top, f, WHITE);
+        text_draw_face(t, (t->w - text_width_face(low, f)) / 2, f->ascent * 82 / 100, low, f, WHITE);
+    } else {
+        text_draw_face(t, (t->w - text_width_face(hm, f)) / 2, 0, hm, f, WHITE);
+    }
+    /* Just the digits: what's lit, tight. */
+    int x0 = t->w, x1 = -1, y0 = t->h, y1 = -1;
+    for (int y = 0; y < t->h; y++)
+        for (int x = 0; x < t->w; x++)
+            if (t->px[y * t->stride + x] & 255) {
+                x0 = x < x0 ? x : x0;
+                x1 = x > x1 ? x : x1;
+                y0 = y < y0 ? y : y0;
+                y1 = y > y1 ? y : y1;
+            }
+    if (x1 < x0) {
+        clk.w = clk.h = 0;
+        return;
+    }
+    int w = x1 - x0 + 1, h = y1 - y0 + 1;
+    clk.top_gap = y0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            clk.raw[y * w + x] = (uint8_t)(t->px[(y + y0) * t->stride + x + x0] & 255);
+    if (c->clock_style == 2) {                  /* outline: only what's near an edge */
+        int r = f->ascent / 28 + 2;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int inner = x >= r && y >= r && x < w - r && y < h - r;
+                for (int k = 1; inner && k <= r; k++)
+                    inner = clk.raw[y * w + x - k] > 127 && clk.raw[y * w + x + k] > 127 &&
+                            clk.raw[(y - k) * w + x] > 127 && clk.raw[(y + k) * w + x] > 127;
+                clk.mask[y * w + x] = inner ? 0 : clk.raw[y * w + x];
+            }
+        memcpy(clk.raw, clk.mask, (size_t)w * (size_t)h);
+    }
+    int stretched = h * (c->clock_stretch < 100 ? 100 : c->clock_stretch) / 100;
+    stretched = stretched > t->h * 3 / 4 ? t->h * 3 / 4 : stretched;
+    for (int y = 0; y < stretched; y++) {
+        int at = y * (h - 1) * 256 / (stretched > 1 ? stretched - 1 : 1), row = at >> 8, frac = at & 255;
+        const uint8_t *a = clk.raw + (size_t)row * (size_t)w, *b = row + 1 < h ? a + w : a;
+        uint8_t *o = clk.mask + (size_t)y * (size_t)w;
+        for (int x = 0; x < w; x++)
+            o[x] = (uint8_t)((a[x] * (256 - frac) + b[x] * frac) >> 8);
+    }
+    clk.w = w;
+    clk.h = stretched;
+}
+
+/* Where the digits go, on the screen. */
+static void clock_place(int *x, int *y)
+{
+    const struct lock_settings *c = &ls.set;
+    int sw = S()->w, sh = S()->h;
+    int cx = sw * (c->clock_x < 0 || c->clock_x > 100 ? 50 : c->clock_x) / 100;
+    int top = c->clock_y < 0 ? clock_y() + clk.top_gap : sh * c->clock_y / 100 - clk.h / 2;
+    int left = cx - clk.w / 2;
+    left = left < 8 ? 8 : left + clk.w > sw - 8 ? sw - 8 - clk.w : left;
+    int under = text_height(TEXT_BOLD) + 12;    /* the date */
+    top = top < 60 ? 60 : top + clk.h + under > sh - 80 ? sh - 80 - under - clk.h : top;
+    *x = left;
+    *y = top;
+}
+
 static struct gfx_rect clock_rect(void)
 {
-    const struct text_face *f = clock_font();
-    int h = text_height(TEXT_BOLD) + 12 + f->ascent + f->descent;
-    return (struct gfx_rect){ 0, clock_y(), S()->w, h };
+    char hm[8], ampm[4];
+    int x = 0, y = clock_y();
+    if (ls.shown.year) {
+        time_text(&ls.shown, hm, ampm);
+        clock_mask(hm);
+        clock_place(&x, &y);
+    }
+    return (struct gfx_rect){ 0, y, S()->w, clk.h + 12 + text_height(TEXT_BOLD) };
 }
 
 /* The PIN's dots, the title over them and the message under them (in the
@@ -339,12 +458,26 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
     time_text(&ls.shown, hm, ampm);
     date_text(&ls.shown, date);
     /* The time, big, in the middle, and the date under it, as on Phosh. */
-    const struct text_face *f = clock_font();
-    int y = clock_y(), tw = text_width_face(hm, f);
-    text_draw_face(s, (S()->w - tw) / 2 - ox, y - oy, hm, f, WHITE);
+    clock_mask(hm);
+    int left, top, alpha = ls.set.clock_opacity * 255 / 100;
+    clock_place(&left, &top);
+    for (int y = 0; y < clk.h; y++) {
+        int dy = top + y - oy;
+        if (dy < 0 || dy >= s->h)
+            continue;
+        uint32_t *row = s->px + (size_t)dy * (size_t)s->stride;
+        const uint8_t *m = clk.mask + (size_t)y * (size_t)clk.w;
+        for (int x = 0; x < clk.w; x++) {
+            int dx = left + x - ox;
+            if (m[x] && dx >= 0 && dx < s->w)
+                row[dx] = gfx_mix(WHITE, row[dx], (uint32_t)(m[x] * alpha / 255));
+        }
+    }
     if (ampm[0])
-        text_draw(s, (S()->w + tw) / 2 + 12 - ox, y + f->ascent - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
-    centred(s, ox, oy, y + f->ascent + f->descent + 12, date, TEXT_BOLD, WHITE);
+        text_draw(s, left + clk.w + 12 - ox, top + clk.h - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
+    int dw = text_width(date, TEXT_BOLD), dx = left + clk.w / 2 - dw / 2;
+    dx = dx < 8 ? 8 : dx + dw > S()->w - 8 ? S()->w - 8 - dw : dx;
+    text_draw(s, dx - ox, top + clk.h + 12 - oy, date, TEXT_BOLD, WHITE);
 }
 
 /* The PIN pad: the time small at the top, "Enter PIN", a dot for each digit
@@ -385,6 +518,9 @@ static void draw_notes(struct gfx_surface *s, int ox, int oy)
 {
     struct gfx_rect c = clock_rect();
     int n = desktop_note_count(), y = c.y + c.h + 36, x = 48, w = S()->w - 96;
+    int cards = (n < NOTES_SHOWN ? n : NOTES_SHOWN) * (NOTE_H + 12);
+    if (y + cards > S()->h - 120 && c.y - cards - 24 > 60)  /* the clock's low: above it */
+        y = c.y - cards - 24;
     for (int i = 0; i < n && i < NOTES_SHOWN; i++, y += NOTE_H + 12) {
         gfx_blend_round_rect(s, x - ox, y - oy, w, NOTE_H, 24, WHITE, 40);
         desktop_note_icon(i, s, x + 20 - ox, y + (NOTE_H - NOTE_ICON) / 2 - oy, NOTE_ICON);
@@ -547,7 +683,7 @@ static int start(int animate_from_desktop)
         kprintf("lock: out of memory; not locked\n");
         return -1;
     }
-    int fe = load_clock_face();
+    int fe = load_clock_face(0);
     if (fe)
         kprintf("lock: the clock's font couldn't be read (%d); a smaller clock\n", fe);
     /* The curtain needs the desktop as it is, and the finished lock screen. */
@@ -950,12 +1086,53 @@ const struct lock_settings *lockscreen_settings(void)
     return &ls.set;
 }
 
+static void clock_choices(const struct lock_settings *s)
+{
+    ls.set.clock_font = s->clock_font >= 0 && s->clock_font < K86_CLOCK_FONTS ? s->clock_font : 0;
+    ls.set.clock_style = s->clock_style >= 0 && s->clock_style <= 2 ? s->clock_style : 0;
+    ls.set.clock_opacity = s->clock_opacity < 20 || s->clock_opacity > 100 ? 100 : s->clock_opacity;
+    ls.set.clock_stretch = s->clock_stretch < 100 || s->clock_stretch > 250 ? 100 : s->clock_stretch;
+    ls.set.clock_x = s->clock_x < 0 || s->clock_x > 100 ? 50 : s->clock_x;
+    ls.set.clock_y = s->clock_y < 0 || s->clock_y > 100 ? -1 : s->clock_y;
+}
+
+int lockscreen_preview(const struct lock_settings *s, uint32_t *out, int w, int h)
+{
+    static struct gfx_surface shot;
+    static char drawn[32];
+    if (!shot.px && screen_buffer(&shot))
+        return -ENOMEM;
+    if (!ls.bg.px && screen_buffer(&ls.bg))
+        return -ENOMEM;
+    struct lock_settings keep = ls.set;
+    if (!ls.active && strcmp(drawn, s->wallpaper)) {    /* only once: this takes a while */
+        memcpy(ls.set.wallpaper, s->wallpaper, sizeof(ls.set.wallpaper));
+        make_background();
+        memcpy(drawn, s->wallpaper, sizeof(drawn));
+    }
+    clock_choices(s);
+    struct rtc_time was = ls.shown;
+    if (!ls.shown.year && read_time(&ls.shown))
+        ls.shown = (struct rtc_time){ .year = 2026, .month = 11, .day = 7, .hour = 12, .minute = 34 };
+    memcpy(shot.px, ls.bg.px, (size_t)shot.w * (size_t)shot.h * 4);
+    draw_clock(&shot, 0, 0);
+    for (int y = 0; y < h; y++) {
+        const uint32_t *row = shot.px + (size_t)(y * shot.h / h) * (size_t)shot.stride;
+        for (int x = 0; x < w; x++)
+            out[y * w + x] = row[x * shot.w / w];
+    }
+    ls.shown = was;
+    ls.set = keep;
+    return 0;
+}
+
 void lockscreen_configure(const struct lock_settings *s)
 {
     /* The name isn't checked here (at boot the ramdisk isn't read yet):
      * make_background() shows the desktop's for one it can't draw. */
     ls.set.clock24 = !!s->clock24;
     ls.set.on_wake = !!s->on_wake;
+    clock_choices(s);
     int n = 0;
     for (; s->wallpaper[n] && n < (int)sizeof(ls.set.wallpaper) - 1; n++)
         ls.set.wallpaper[n] = s->wallpaper[n];

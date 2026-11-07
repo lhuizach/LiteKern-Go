@@ -40,6 +40,8 @@ WALLPAPER_PNGS   := $(wildcard assets/wallpapers/*.png)
 WALLPAPER_LKXW   := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.lkxw,$(WALLPAPER_PNGS))
 WALLPAPER_THUMBS := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%.thumb.lkxw,$(WALLPAPER_PNGS))
 
+CLOCK_FONTS := light thin condensed mono serif
+
 # Apps: each folder in apps/ holds kerns.json and C sources. Their programs are
 # built by platform/Makefile; the ramdisk carries the manifests, which is how
 # lkx-shell knows the apps. EXTRA_APPS adds app folders from elsewhere (the
@@ -48,7 +50,8 @@ EXTRA_APPS   ?=
 APP_PATHS    := $(wildcard apps/*) $(EXTRA_APPS)
 RAMDISK_ARGS := $(foreach p,$(APP_PATHS),apps/$(notdir $(p))/kerns.json=$(p)/kerns.json) \
                 $(foreach w,$(WALLPAPER_LKXW) $(WALLPAPER_THUMBS),wallpapers/$(notdir $(w))=$(w)) \
-                fonts/clock.lkxf=$(BUILD)/gen/fonts/clock.lkxf
+                fonts/clock.lkxf=$(BUILD)/gen/fonts/clock.lkxf \
+                $(foreach f,$(CLOCK_FONTS),fonts/clock-$(f).lkxf=$(BUILD)/gen/fonts/clock-$(f).lkxf)
 
 GENERATED := $(BUILD)/gen/defaults.h $(BUILD)/gen/cursors.c $(BUILD)/gen/uifont.c \
              $(BUILD)/gen/splash.c $(BUILD)/gen/icons.c
@@ -81,6 +84,11 @@ $(BUILD)/gen/fonts/clock.lkxf: assets/fonts/clock-font.json assets/fonts/clock-f
 	@mkdir -p $(dir $@)
 	python3 tools/font2c.py --bin $< $@
 
+# The clock's other faces (Settings offers them).
+$(BUILD)/gen/fonts/clock-%.lkxf: assets/fonts/clock-%.json assets/fonts/clock-%.png tools/font2c.py tools/lkx_png.py
+	@mkdir -p $(dir $@)
+	python3 tools/font2c.py --bin $< $@
+
 # The boot splash's logo (assets/logo.png, 256x256: tools/make-logo.py).
 $(BUILD)/gen/splash.c: assets/splash.json assets/logo.png assets/tux.png tools/icons2c.py tools/lkx_png.py
 	@mkdir -p $(dir $@)
@@ -101,6 +109,7 @@ $(BUILD)/gen/wallpapers/%.lkxw: assets/wallpapers/%.png tools/wallpaper-pack.py 
 # --- the disk image ---------------------------------------------------------
 
 $(BUILD)/gen/ramdisk.bin: $(WALLPAPER_LKXW) $(WALLPAPER_THUMBS) $(BUILD)/gen/fonts/clock.lkxf \
+                          $(foreach f,$(CLOCK_FONTS),$(BUILD)/gen/fonts/clock-$(f).lkxf) \
                           $(foreach p,$(APP_PATHS),$(p)/kerns.json) tools/mkramdisk.py
 	@mkdir -p $(dir $@)
 	python3 tools/mkramdisk.py $@ $(RAMDISK_ARGS)

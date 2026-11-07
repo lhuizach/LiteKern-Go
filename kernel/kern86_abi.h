@@ -198,7 +198,13 @@ struct k86_lock {
     int32_t clock24;            /* 1: 14:05; 0: 2:05 PM */
     int32_t on_wake;            /* lock when the screen saver ends */
     int32_t has_picture;        /* read only: it has a picture of its own to show */
+    int32_t clock_font;         /* 0..K86_CLOCK_FONTS - 1 */
+    int32_t clock_style;        /* 0 one line, 1 stacked, 2 outline */
+    int32_t clock_opacity;      /* 20-100, % */
+    int32_t clock_stretch;      /* 100-250, % of its height */
+    int32_t clock_x, clock_y;   /* its middle, % of the screen; clock_y -1: its usual place */
 };
+#define K86_CLOCK_FONTS     6
 
 #define K86_USERS_MAX       8
 #define K86_USER_NAME       21          /* 20 characters, NUL included */
@@ -284,6 +290,9 @@ struct k86_dirent {
 /* LiteKern Go: ebx: an app's name. It opens, or comes to the front, once the
  * call has returned. -ENOENT if there's no such app. */
 #define SYS_APP_OPEN        45
+/* LiteKern Go: ebx: const struct k86_lock *, ecx: uint32_t * out, edx: w, esi: h: the
+ * lock screen as it would look with those choices (nothing is changed). */
+#define SYS_LOCK_PREVIEW    46
 #define K86_TASKS_MAX       16
 #define K86_TASK_FRONT      1   /* flags: its window is the one in front */
 #define K86_TASK_SELF       2   /* ... it's the one asking */

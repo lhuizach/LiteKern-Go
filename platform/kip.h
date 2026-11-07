@@ -119,6 +119,7 @@ static const struct kip_call kip_calls[] = {
     [SYS_TASK_STOP]       = { { V } },
     [SYS_TASK_ICON]       = { { V, OUT(K86_ICON * K86_ICON * 4) } },
     [SYS_APP_OPEN]        = { { S } },
+    [SYS_LOCK_PREVIEW]    = { { IN(sizeof(struct k86_lock)), { KIP_OUT, 3, 4, 4 }, V, V } },
 };
 #define KIP_CALLS (sizeof(kip_calls) / sizeof(kip_calls[0]))
 

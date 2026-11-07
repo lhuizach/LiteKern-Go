@@ -207,6 +207,11 @@ static inline int k86_lock_settings(struct k86_lock *l, int set)
     return k86_call(SYS_LOCK_SETTINGS, (uintptr_t)l, (uintptr_t)set, 0, 0);
 }
 
+static inline int k86_lock_preview(const struct k86_lock *l, uint32_t *out, int w, int h)
+{
+    return k86_call(SYS_LOCK_PREVIEW, (uintptr_t)l, (uintptr_t)out, (uintptr_t)w, (uintptr_t)h);
+}
+
 /* Replace a file's contents with len bytes (creating it if needed). */
 static inline int k86_write(int vol, const char *dir, const char *name, const void *buf, uint32_t len)
 {

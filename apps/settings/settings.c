@@ -22,6 +22,7 @@
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
 #include "apps/settings/network.h"
+#include "apps/settings/clockedit.h"
 #include "apps/settings/pin.h"
 #include "apps/settings/system.h"
 
@@ -117,7 +118,7 @@ static const char *const saver_label[] = { "Off", "1 min", "2 min", "5 min", "10
 #define NSAVER 6
 
 /* Things to tap: kind + index, and where they are (in the page, before scrolling). */
-enum kind { K_STYLE, K_ACCENT, K_WALLPAPER, K_NONE_WALLPAPER, K_SAVER, K_PREVIEW, K_LOCK_NOW, K_CLOCK24,
+enum kind { K_STYLE, K_ACCENT, K_WALLPAPER, K_NONE_WALLPAPER, K_SAVER, K_PREVIEW, K_LOCK_NOW, K_CLOCK_EDIT, K_CLOCK24,
             K_ON_WAKE, K_LOCK_DESKTOP, K_LOCK_PICTURE, K_PIN_SET, K_PIN_CHANGE, K_PIN_REMOVE };
 struct spot {
     enum kind kind;
@@ -221,6 +222,8 @@ static void layout(void)
             add_spot(K_PIN_SET, 0, (struct gfx_rect){ MARGIN, y, w, bs });
         }
         y += bs + SECTION_GAP;
+        add_spot(K_CLOCK_EDIT, 0, (struct gfx_rect){ MARGIN, y, w, bs });
+        y += bs + 16;
         add_spot(K_CLOCK24, 0, (struct gfx_rect){ MARGIN, y, w, t->row_h });
         y += t->row_h;
         add_spot(K_ON_WAKE, 0, (struct gfx_rect){ MARGIN, y, w, t->row_h });
@@ -415,6 +418,9 @@ static void spots_draw(void)
             break;
         case K_PIN_REMOVE:
             pill(r, "Remove PIN", 0, lit, 2);
+            break;
+        case K_CLOCK_EDIT:
+            pill(r, "Customise the clock", 0, lit, 0);
             break;
         case K_CLOCK24:
             draw_switch(r, "24-hour clock", lock.clock24, lit);
@@ -624,6 +630,9 @@ static void choose(const struct spot *s)
         lock_msg[0] = '\0';
         pin_start(&canvas, s->kind == K_PIN_SET ? PIN_SET : s->kind == K_PIN_CHANGE ? PIN_CHANGE : PIN_REMOVE,
                   has_pin(), users.current, pin_done, spots_draw);
+        return;
+    case K_CLOCK_EDIT:
+        clockedit_open(&canvas, &lock);
         return;
     case K_CLOCK24:
     case K_ON_WAKE:
@@ -836,6 +845,24 @@ int main(void)
 
     for (;;) {
         struct k86_event ev;
+        if (clockedit_active()) {
+            k86_back_wanted(1);
+            k86_keyboard_wanted(0);
+            if (k86_wait_event(&ev))
+                return 1;
+            if (ev.type == K86_EVENT_CLOSE)
+                return 0;
+            if (ev.type == K86_EVENT_RESIZE) {
+                canvas.w = ev.x;
+                canvas.h = ev.y;
+            }
+            if (clockedit_event(&ev)) {             /* it's done */
+                k86_lock_settings(&lock, 0);
+                header();
+                draw();
+            }
+            continue;
+        }
         k86_back_wanted(page != P_HOME || busy());     /* the phone's Back: back to the list */
         k86_keyboard_wanted(pin_active() ? K86_KEYBOARD_NUMBERS : busy());
         timer_follow();

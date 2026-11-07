@@ -358,6 +358,16 @@ static int wallpaper_image_user(uintptr_t px, uintptr_t w, uintptr_t h, uintptr_
     return 0;
 }
 
+static void lock_clock_in(struct lock_settings *s, const struct k86_lock *k)
+{
+    s->clock_font = k->clock_font;
+    s->clock_style = k->clock_style;
+    s->clock_opacity = k->clock_opacity;
+    s->clock_stretch = k->clock_stretch;
+    s->clock_x = k->clock_x;
+    s->clock_y = k->clock_y;
+}
+
 static int lock_settings(uintptr_t u, uintptr_t set)
 {
     if (user_check(u, sizeof(struct k86_lock), !set))
@@ -369,6 +379,7 @@ static int lock_settings(uintptr_t u, uintptr_t set)
         s.wallpaper[sizeof(s.wallpaper) - 1] = '\0';
         s.clock24 = k->clock24 != 0;
         s.on_wake = k->on_wake != 0;
+        lock_clock_in(&s, k);
         lockscreen_configure(&s);
         const struct lock_settings *now = lockscreen_settings();
         kprintf("appearance: lock screen: wallpaper %s, %s-hour clock, lock on wake %s\n", now->wallpaper,
@@ -382,7 +393,26 @@ static int lock_settings(uintptr_t u, uintptr_t set)
     k->clock24 = now->clock24;
     k->on_wake = now->on_wake;
     k->has_picture = lockscreen_has_picture();
+    k->clock_font = now->clock_font;
+    k->clock_style = now->clock_style;
+    k->clock_opacity = now->clock_opacity;
+    k->clock_stretch = now->clock_stretch;
+    k->clock_x = now->clock_x;
+    k->clock_y = now->clock_y;
     return 0;
+}
+
+static int lock_preview(uintptr_t u, uintptr_t out, uintptr_t w, uintptr_t h)
+{
+    if (w < 1 || h < 1 || w > 2048 || h > 2048 || user_check(u, sizeof(struct k86_lock), 0) ||
+        user_check(out, (uint32_t)(w * h * 4), 1))
+        return -EFAULT;
+    const struct k86_lock *k = (const struct k86_lock *)u;
+    struct lock_settings s = *lockscreen_settings();
+    memcpy(s.wallpaper, k->wallpaper, sizeof(s.wallpaper));
+    s.wallpaper[sizeof(s.wallpaper) - 1] = '\0';
+    lock_clock_in(&s, k);
+    return lockscreen_preview(&s, (uint32_t *)out, (int)w, (int)h);
 }
 
 /* --- users (kernel/users.h) ----------------------------------------------------------------- */
@@ -638,6 +668,7 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
         if (user_check(a2, K86_ICON * K86_ICON * 4, 1))
             return -EFAULT;
         return lkx_task_icon((int32_t)a1, (uint32_t *)a2);
+    case SYS_LOCK_PREVIEW:   return lock_preview(a1, a2, a3, a4);
     case SYS_APP_OPEN: {
         char name[64];
         int err = user_string(name, a1, sizeof(name));

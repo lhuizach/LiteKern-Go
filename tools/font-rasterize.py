@@ -3,6 +3,8 @@
 
 Usage: python tools/font-rasterize.py FONT.ttf assets/fonts
        python tools/font-rasterize.py --clock FONT.ttf assets/fonts
+       python tools/font-rasterize.py --clock=NAME:WEIGHT[:WIDTH] FONT.ttf assets/fonts
+                (another of the clock's faces, clock-NAME.*: Settings offers them)
 
 Needs Pillow (FreeType), so it's run by hand, not by the build: the output
 (ui-font.png, a grayscale atlas, and ui-font.json, its metrics) is
@@ -43,7 +45,7 @@ CLOCK_CHARS = set("0123456789: AMP")
 
 
 
-def face(path, size, weight):
+def face(path, size, weight, width=None):
     f = ImageFont.truetype(path, size)
     try:
         axes = f.get_variation_axes()
@@ -51,7 +53,9 @@ def face(path, size, weight):
         for a in axes:
             name = a.get("name", b"")
             name = name.decode() if isinstance(name, bytes) else name
-            values.append(weight if name.lower().startswith("weight") else a.get("default", 100))
+            low = name.lower()
+            values.append(weight if low.startswith("weight") else
+                          width if width and low.startswith("width") else a.get("default", 100))
         f.set_variation_by_axes(values)
     except Exception:
         pass                    # not a variable font: use it as it is
@@ -59,21 +63,27 @@ def face(path, size, weight):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--clock"]
-    clock = "--clock" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--clock")]
+    named = [a[8:].split(":") for a in sys.argv[1:] if a.startswith("--clock=")]
+    clock = bool(named) or "--clock" in sys.argv
+    clock_face = CLOCK_FACE
+    width = None
+    if named:
+        clock_face = (named[0][0], CLOCK_FACE[1], int(named[0][1]))
+        width = int(named[0][2]) if len(named[0]) > 2 else None
     if len(args) != 2:
         sys.exit("usage: font-rasterize.py [--clock] FONT.ttf OUT_DIR")
     path, out = args
-    base = "clock-font" if clock else "ui-font"
+    base = f"clock-{named[0][0]}" if named else "clock-font" if clock else "ui-font"
     os.makedirs(out, exist_ok=True)
     meta = {"version": 1, "source": os.path.basename(path), "extra": EXTRA, "faces": []}
     rows = []                   # (face index, char, mask)
-    for name, size, weight in [CLOCK_FACE] if clock else FACES:
-        f = face(path, size, weight)
+    for name, size, weight in [clock_face] if clock else FACES:
+        f = face(path, size, weight, width)
         ascent, descent = f.getmetrics()
         info = {"name": name, "size": size, "weight": weight, "ascent": ascent,
                 "descent": descent, "glyphs": []}
-        for ch in CHARS:
+        for ch in CHARS[:99] if clock else CHARS:     # the clock's: no Latin-1
             if clock and ch not in CLOCK_CHARS:
                 info["glyphs"].append({"c": ord(ch), "w": 0, "h": 0, "xoff": 0, "yoff": 0, "adv64": 0})
                 rows.append((len(meta["faces"]), ch, None))
