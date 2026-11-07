@@ -194,7 +194,7 @@ This decides Camera, brightness, vibration and alarms in UI-PLAN.md.
 
 ## Phase 8 — v1: hardware basics in the GUI
 
-- [ ] Wi-Fi: scan, join, remember networks, from Settings
+- [x] Wi-Fi: scan, join, from Settings (remembering needs a real flash: the RAM boot forgets)
 - [ ] Battery and charging in the status bar
 - [ ] Brightness (if the driver works)
 - [ ] Sleep: screen off with Power, wake with Power/Home

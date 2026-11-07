@@ -6,9 +6,9 @@ Worked out from the web app inside `r3lay-1.4.0.apk` (a Capacitor wrapper around
 
 ## Where it stands
 
-Built in `apps/r3lay/`: sign in, stay signed in, sign out, chats and groups, reading, polling for new messages, sending, read ticks, finding a person, notifications while it runs. Tested against a fake server (`tests/r3lay/test-r3lay.sh`). Against the real project only a made-up login has been tried, which proves HTTPS, the URL and the key.
+Built in `apps/r3lay/`: sign in, stay signed in, sign out, chats and groups, reading, polling for new messages, sending, read ticks, finding a person, notifications while it runs. Tested against a fake server (`tests/r3lay/test-r3lay.sh`), and confirmed on the phone over Wi-Fi with a real account on 7 Nov 2026 (`go14`): sign-in, real chats, sending and replies.
 
-Not done yet: a real account, accented text (accents come off, emoji are left out), profile pictures, settings and profile editing, Realtime. On the phone it needs Wi-Fi first, and the phone's clock must be right for HTTPS.
+Not done yet: accented text (accents come off, emoji are left out), profile pictures, settings and profile editing, Realtime.
 
 Setup: copy `apps/r3lay/r3lay.conf.example` to `apps/r3lay/r3lay.conf` (git-ignored) and fill it in. `linux/build.sh` puts it next to the program.
 

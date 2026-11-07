@@ -70,6 +70,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## Status
 
+- Our system runs on the phone from RAM (`fastboot boot`, `go14`, 7 Nov 2026): GUI, touch, Wi-Fi and the R3lay app all confirmed, so proposed v1 works, though only from RAM: a restart goes back to Nura and forgets Wi-Fi and sign-ins.
 - Phone: lk2nd flashed to BOOT (Heimdall), then Nura Phosh v26.06 to userdata (fastboot), and Nura boots. Both from the Fedora VM. Android does not boot until Samsung's boot.img (`~/phone/stock/boot.img` in Fedora) is flashed back. KNOX probably tripped. Nothing else flashed. Reactivation lock was off; no accounts.
 - Downloaded and scanned: Heimdall 1.4.0 (win32), Android platform-tools, `lk2nd-msm8916.img` (418 KB), Nura v26.06 samsung-a5 Phosh images (boot and rootfs, extracted), Frija 2.0.26142.10.
 - Downloaded but waiting on admin to install: Zadig 2.9 (USB driver), Visual C++ 2012 x86 (Heimdall), .NET 8 Desktop Runtime x86 (Frija).
