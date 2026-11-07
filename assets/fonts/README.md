@@ -17,4 +17,4 @@ python tools/font-rasterize.py --clock "path/to/UbuntuSans[wdth,wght].ttf" asset
 ```
 In WSL the font is at `/usr/share/fonts/truetype/ubuntu/`.
 
-`clock-light`, `clock-thin`, `clock-condensed` and `clock-mono` are more of the lock screen clock's faces, from Ubuntu Sans and Ubuntu Sans Mono (`--clock=NAME:WEIGHT[:WIDTH]`). `clock-serif` is **DejaVu Serif Bold**, under the DejaVu fonts licence (a Bitstream Vera derivative, free to use and redistribute): see `LICENCE-dejavu.txt`.
+The `clock-hd-*` faces are the lock screen clock's, at 320 px so a stretched clock stays sharp, from Ubuntu Sans and Ubuntu Sans Mono (`--clock=NAME:WEIGHT[:WIDTH[:SIZE]]`). `clock-hd-serif` is **DejaVu Serif Bold**, under the DejaVu fonts licence (a Bitstream Vera derivative, free to use and redistribute): see `LICENCE-dejavu.txt`.

@@ -3,8 +3,10 @@
 
 Usage: python tools/font-rasterize.py FONT.ttf assets/fonts
        python tools/font-rasterize.py --clock FONT.ttf assets/fonts
-       python tools/font-rasterize.py --clock=NAME:WEIGHT[:WIDTH] FONT.ttf assets/fonts
-                (another of the clock's faces, clock-NAME.*: Settings offers them)
+       python tools/font-rasterize.py --clock=NAME:WEIGHT[:WIDTH[:SIZE]] FONT.ttf assets/fonts
+                (one of the lock screen clock's faces, clock-NAME.*: Settings offers them.
+                 WIDTH 0: the font's own; SIZE: px, 180 unless given; 255 px is the most a
+                 glyph can be, so about 330 at most)
 
 Needs Pillow (FreeType), so it's run by hand, not by the build: the output
 (ui-font.png, a grayscale atlas, and ui-font.json, its metrics) is
@@ -69,8 +71,9 @@ def main():
     clock_face = CLOCK_FACE
     width = None
     if named:
-        clock_face = (named[0][0], CLOCK_FACE[1], int(named[0][1]))
-        width = int(named[0][2]) if len(named[0]) > 2 else None
+        size = int(named[0][3]) if len(named[0]) > 3 else CLOCK_FACE[1]
+        clock_face = (named[0][0], size, int(named[0][1]))
+        width = int(named[0][2]) if len(named[0]) > 2 and int(named[0][2]) else None
     if len(args) != 2:
         sys.exit("usage: font-rasterize.py [--clock] FONT.ttf OUT_DIR")
     path, out = args
@@ -84,7 +87,7 @@ def main():
         info = {"name": name, "size": size, "weight": weight, "ascent": ascent,
                 "descent": descent, "glyphs": []}
         for ch in CHARS[:99] if clock else CHARS:     # the clock's: no Latin-1
-            if clock and ch not in CLOCK_CHARS:
+            if clock and ch not in (CLOCK_CHARS - set("AMP") if named else CLOCK_CHARS):
                 info["glyphs"].append({"c": ord(ch), "w": 0, "h": 0, "xoff": 0, "yoff": 0, "adv64": 0})
                 rows.append((len(meta["faces"]), ch, None))
                 continue
@@ -96,6 +99,13 @@ def main():
             info["glyphs"].append({"c": ord(ch), "w": w, "h": h, "xoff": xoff, "yoff": yoff,
                                    "adv64": round(f.getlength(ch) * 64)})
             rows.append((len(meta["faces"]), ch, img))
+        if named:                       # the lock screen's: no empty space above the digits,
+            drawn = [g["yoff"] for g in info["glyphs"] if g["w"] and g["h"]]   # so offsets fit a byte
+            top = min(drawn) if drawn else 0
+            for g in info["glyphs"]:
+                if g["w"] and g["h"]:
+                    g["yoff"] -= top
+            info["ascent"] -= top
         meta["faces"].append(info)
 
     # Pack glyphs in rows, 512 px wide.

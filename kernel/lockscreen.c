@@ -89,12 +89,16 @@ static struct gfx_surface *S(void) { return screen_surface(); }
 /* --- the clock's face (fonts/clock.lkxf, tools/font2c.py --bin) --------------------------- */
 
 #define CLOCK_GLYPHS (95 + TEXT_EXTRA)
-static struct text_glyph clock_glyphs[K86_CLOCK_FONTS][CLOCK_GLYPHS];
-static struct text_face clock_faces[K86_CLOCK_FONTS];
-static const char *const clock_files[K86_CLOCK_FONTS] = {
-    "fonts/clock.lkxf", "fonts/clock-light.lkxf", "fonts/clock-thin.lkxf",
-    "fonts/clock-condensed.lkxf", "fonts/clock-mono.lkxf", "fonts/clock-serif.lkxf",
-    "fonts/clock-slim.lkxf",
+/* The lock screen's faces are big (320 px) and shrunk when drawn: a stretched clock
+ * stays sharp. The last, fonts/clock.lkxf at 180 px, is the home screen's. */
+#define HOME_FACE K86_CLOCK_FONTS
+#define CLOCK_PX 180                    /* how big the clock is at 100% */
+static struct text_glyph clock_glyphs[K86_CLOCK_FONTS + 1][CLOCK_GLYPHS];
+static struct text_face clock_faces[K86_CLOCK_FONTS + 1];
+static const char *const clock_files[K86_CLOCK_FONTS + 1] = {
+    "fonts/clock-hd-bold.lkxf", "fonts/clock-hd-light.lkxf", "fonts/clock-hd-thin.lkxf",
+    "fonts/clock-hd-condensed.lkxf", "fonts/clock-hd-mono.lkxf", "fonts/clock-hd-serif.lkxf",
+    "fonts/clock-hd-slim.lkxf", "fonts/clock.lkxf",
 };
 
 static uint32_t le(const uint8_t *p, int n)
@@ -145,7 +149,9 @@ static const struct text_face *clock_font(void)
 
 const struct text_face *lockscreen_clock_face(void)
 {
-    return clock_font();
+    if (load_clock_face(HOME_FACE))
+        return &text_faces[TEXT_HEADING];
+    return &clock_faces[HOME_FACE];
 }
 
 static int inside(struct gfx_rect r, int x, int y)
@@ -261,13 +267,72 @@ static int clock_y(void)
 
 /* The clock is drawn once into a mask, changed only when the minute or a choice does:
  * its stretch and outline are too much to work out on every frame of a slide. */
+#define BIG_W 1280                      /* where the big digits are drawn */
+#define BIG_H 800
 static struct {
     char hm[8];
     int font, style, stretch, top_gap;  /* top_gap: above the digits, in the font's line */
-    struct gfx_surface tmp;
-    uint8_t *raw, *mask, *edge, *work;  /* edge: the glass style's rim */
+    struct gfx_surface tmp;             /* BIG_W x BIG_H */
+    uint8_t *raw, *mask, *edge, *work;  /* raw, work: BIG_W x BIG_H; edge: the glass style's rim */
     int w, h;
 } clk = { .font = -1 };
+
+/* src (w x h) to dst (nw x h): each column the average of the ones it covers. */
+static void shrink_cols(const uint8_t *src, int w, int h, uint8_t *dst, int nw)
+{
+    for (int x = 0; x < nw; x++) {
+        int a = x * w / nw, b = (x + 1) * w / nw;
+        b = b > a ? b : a + 1;
+        for (int y = 0; y < h; y++) {
+            const uint8_t *r = src + (size_t)y * (size_t)w;
+            int sum = 0;
+            for (int i = a; i < b; i++)
+                sum += r[i];
+            dst[(size_t)y * (size_t)nw + x] = (uint8_t)(sum / (b - a));
+        }
+    }
+}
+
+/* src (w x h) to dst (w x nh): averaged where it shrinks, blended where it grows. */
+static void scale_rows(const uint8_t *src, int w, int h, uint8_t *dst, int nh)
+{
+    for (int y = 0; y < nh; y++) {
+        uint8_t *o = dst + (size_t)y * (size_t)w;
+        if (nh <= h) {
+            int a = y * h / nh, b = (y + 1) * h / nh;
+            b = b > a ? b : a + 1;
+            for (int x = 0; x < w; x++) {
+                int sum = 0;
+                for (int i = a; i < b; i++)
+                    sum += src[(size_t)i * (size_t)w + x];
+                o[x] = (uint8_t)(sum / (b - a));
+            }
+        } else {
+            int at = y * (h - 1) * 256 / (nh > 1 ? nh - 1 : 1), row = at >> 8, frac = at & 255;
+            const uint8_t *p = src + (size_t)row * (size_t)w, *q = row + 1 < h ? p + w : p;
+            for (int x = 0; x < w; x++)
+                o[x] = (uint8_t)((p[x] * (256 - frac) + q[x] * frac) >> 8);
+        }
+    }
+}
+
+/* Of mask (w x h) into out: only what's within r of an edge. */
+static void edges(const uint8_t *mask, int w, int h, int r, uint8_t *out)
+{
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int inner = x >= r && y >= r && x < w - r && y < h - r;
+            for (int k = 1; inner && k <= r; k++)
+                inner = mask[y * w + x - k] > 127 && mask[y * w + x + k] > 127 &&
+                        mask[(y - k) * w + x] > 127 && mask[(y + k) * w + x] > 127;
+            out[y * w + x] = inner ? 0 : mask[y * w + x];
+        }
+}
+
+static void *big_buffer(uint32_t bytes)
+{
+    return (void *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+}
 
 /* Glass: the wallpaper behind the digits, blurred, kept until the clock, its place or
  * the background changes. So it's blurred once a minute at most, and each frame of a
@@ -341,16 +406,18 @@ static int glass_make(int left, int top)
 static void clock_mask(const char *hm)
 {
     const struct lock_settings *c = &ls.set;
-    if (!clk.tmp.px && screen_buffer(&clk.tmp))
-        return;
     if (!clk.raw) {
-        struct gfx_surface a = { 0 }, b = { 0 }, e = { 0 }, k = { 0 };
-        if (screen_buffer(&a) || screen_buffer(&b) || screen_buffer(&e) || screen_buffer(&k))
+        struct gfx_surface b = { 0 }, e = { 0 };
+        uint32_t *t = big_buffer(BIG_W * BIG_H * 4);
+        clk.raw = big_buffer(BIG_W * BIG_H);
+        clk.work = big_buffer(BIG_W * BIG_H);
+        if (!t || !clk.raw || !clk.work || screen_buffer(&b) || screen_buffer(&e)) {
+            clk.raw = 0;
             return;
-        clk.raw = (uint8_t *)a.px;
+        }
+        clk.tmp = (struct gfx_surface){ t, BIG_W, BIG_H, BIG_W };
         clk.mask = (uint8_t *)b.px;
         clk.edge = (uint8_t *)e.px;
-        clk.work = (uint8_t *)k.px;
     }
     if (clk.font == c->clock_font && clk.style == c->clock_style && clk.stretch == c->clock_stretch &&
         !strcmp(clk.hm, hm))
@@ -371,7 +438,8 @@ static void clock_mask(const char *hm)
         top[n] = '\0';
         memcpy(low, hm[n] ? hm + n + 1 : "", sizeof(low) - (size_t)n - 1);
         text_draw_face(t, (t->w - text_width_face(top, f)) / 2, 0, top, f, WHITE);
-        text_draw_face(t, (t->w - text_width_face(low, f)) / 2, f->ascent * 82 / 100, low, f, WHITE);
+        const struct text_glyph *zero = &f->glyphs['0' - 32];  /* a line: a digit and a gap */
+        text_draw_face(t, (t->w - text_width_face(low, f)) / 2, zero->yoff + zero->h + f->size / 12, low, f, WHITE);
     } else {
         text_draw_face(t, (t->w - text_width_face(hm, f)) / 2, 0, hm, f, WHITE);
     }
@@ -390,50 +458,27 @@ static void clock_mask(const char *hm)
         return;
     }
     int w = x1 - x0 + 1, h = y1 - y0 + 1;
-    clk.top_gap = y0;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
             clk.raw[y * w + x] = (uint8_t)(t->px[(y + y0) * t->stride + x + x0] & 255);
+    /* Down to the clock's size, then up by the stretch: from a big face, both stay sharp. */
+    int size = f->size > 0 ? f->size : CLOCK_PX;
+    int nw = w * CLOCK_PX / size, nh = h * CLOCK_PX / size;
+    int stretch = c->clock_stretch < 100 ? 100 : c->clock_stretch;
+    nw = nw < 1 ? 1 : nw > S()->w ? S()->w : nw;
+    nh = nh * stretch / 100;
+    nh = nh < 1 ? 1 : nh > S()->h * 3 / 4 ? S()->h * 3 / 4 : nh;
+    clk.top_gap = y0 * CLOCK_PX / size;
+    shrink_cols(clk.raw, w, h, clk.work, nw);
+    scale_rows(clk.work, nw, h, clk.mask, nh);
     if (c->clock_style == 2) {                  /* outline: only what's near an edge */
-        int r = f->ascent / 28 + 2;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                int inner = x >= r && y >= r && x < w - r && y < h - r;
-                for (int k = 1; inner && k <= r; k++)
-                    inner = clk.raw[y * w + x - k] > 127 && clk.raw[y * w + x + k] > 127 &&
-                            clk.raw[(y - k) * w + x] > 127 && clk.raw[(y + k) * w + x] > 127;
-                clk.mask[y * w + x] = inner ? 0 : clk.raw[y * w + x];
-            }
-        memcpy(clk.raw, clk.mask, (size_t)w * (size_t)h);
+        edges(clk.mask, nw, nh, CLOCK_PX / 30 + 2, clk.work);
+        memcpy(clk.mask, clk.work, (size_t)nw * (size_t)nh);
+    } else if (c->clock_style == 3) {           /* glass: a hairline rim */
+        edges(clk.mask, nw, nh, 2, clk.edge);
     }
-    if (c->clock_style == 3) {                  /* glass: its rim, where it meets the edge */
-        int r = 2;                              /* a hairline: thin digits have little inside */
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                int inner = x >= r && y >= r && x < w - r && y < h - r;
-                for (int k = 1; inner && k <= r; k++)
-                    inner = clk.raw[y * w + x - k] > 127 && clk.raw[y * w + x + k] > 127 &&
-                            clk.raw[(y - k) * w + x] > 127 && clk.raw[(y + k) * w + x] > 127;
-                clk.work[y * w + x] = inner ? 0 : clk.raw[y * w + x];
-            }
-    }
-    int stretched = h * (c->clock_stretch < 100 ? 100 : c->clock_stretch) / 100;
-    stretched = stretched > t->h * 3 / 4 ? t->h * 3 / 4 : stretched;
-    for (int y = 0; y < stretched; y++) {
-        int at = y * (h - 1) * 256 / (stretched > 1 ? stretched - 1 : 1), row = at >> 8, frac = at & 255;
-        const uint8_t *a = clk.raw + (size_t)row * (size_t)w, *b = row + 1 < h ? a + w : a;
-        uint8_t *o = clk.mask + (size_t)y * (size_t)w;
-        for (int x = 0; x < w; x++)
-            o[x] = (uint8_t)((a[x] * (256 - frac) + b[x] * frac) >> 8);
-        if (c->clock_style == 3) {
-            const uint8_t *ea = clk.work + (size_t)row * (size_t)w, *eb = row + 1 < h ? ea + w : ea;
-            uint8_t *eo = clk.edge + (size_t)y * (size_t)w;
-            for (int x = 0; x < w; x++)
-                eo[x] = (uint8_t)((ea[x] * (256 - frac) + eb[x] * frac) >> 8);
-        }
-    }
-    clk.w = w;
-    clk.h = stretched;
+    clk.w = nw;
+    clk.h = nh;
 }
 
 /* Where the digits go, on the screen. */
