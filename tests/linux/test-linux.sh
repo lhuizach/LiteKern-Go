@@ -493,7 +493,12 @@ check "Settings' choices are kept across a restart" \
 cp build/litekernx.img build-linux/test/pin.img
 path; open_app 2; go 360 392; click; add sleep:1; go 360 420; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
 add phone_power sleep:1.5 press:1; go 360 300; go 360 200; go 360 100; add release sleep:1 1 2 3 4 ret sleep:2
+add phone_home sleep:0.8; tap_app 5; add sleep:1.5
 run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
+check "after a PIN is set, the home folder exists for the apps (Gallery, Camera)" \
+    '^settings: made User.s home folder$' \
+    '^user: gallery: 0 pictures$' \
+    '!crashed|PANIC'
 check "Settings sets a PIN; the lock screen then asks for it" \
     '^user: settings: page lock$' \
     '^user: settings: lock PIN set$' \

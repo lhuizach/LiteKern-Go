@@ -416,15 +416,24 @@ void settings_save_lock_picture(void)
 
 /* --- users: their folders ------------------------------------------------------------------- */
 
-/* The user's home folder, /Users/<name>, with Documents and Pictures in it. */
+/* The user's home folder, /Users/<name>, with Documents and Pictures in it. Made when
+ * they log in, and again whenever an app asks where it is (settings_home): setting a PIN
+ * on the one account, while it's logged in, turns accounts on, and with them this folder,
+ * and nobody logs in then. Without it Gallery saw nothing and Camera couldn't save. */
 static void make_home(const char *name)
 {
     struct fat_volume *v = boot_volume();
     uint32_t homes, home, d;
-    if (!v || subdir(v, fat_root(v), HOMES, 1, &homes) || subdir(v, homes, name, 1, &home))
+    struct fat_entry e;
+    if (!v || subdir(v, fat_root(v), HOMES, 1, &homes))
+        return;
+    int fresh = fat_find(v, homes, name, &e) == -ENOENT;
+    if (subdir(v, homes, name, 1, &home))
         return;
     subdir(v, home, "Documents", 1, &d);
     subdir(v, home, "Pictures", 1, &d);
+    if (fresh)
+        kprintf("settings: made %s's home folder\n", name);
 }
 
 int settings_save_screenshot(const char *name, const void *data, uint32_t len)
@@ -480,6 +489,7 @@ int settings_home(char *out, int size)
             out[0] = '/', out[1] = '\0';
         return 0;
     }
+    make_home(u->name);                     /* there for whatever asked */
     memcpy(out, "/" HOMES "/", 7);
     memcpy(out + 7, u->name, strlen(u->name) + 1);
     return 0;
