@@ -70,7 +70,11 @@ struct mouse_event {
     uint8_t buttons;    /* MOUSE_* held after this packet */
     int8_t wheel;       /* scroll notches: > 0 down (the page moves up), < 0 up. The
                          * Linux build: a mouse's wheel, two fingers on the touchpad */
-    uint8_t reserved[2];
+    uint8_t has_pos;    /* the Linux build: x and y are where the pointer is after this packet.
+                         * Adding up the dx and dy of every packet gets there too, but one
+                         * packet missed or dropped and it's wrong until the next restart */
+    uint8_t reserved;
+    int16_t x, y;
 };
 
 struct key_event {

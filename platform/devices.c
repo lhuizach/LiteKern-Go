@@ -158,7 +158,8 @@ void plat_pointer(int x, int y, uint8_t buttons)
     int dx = x - px, dy = y - py;
     if (!dx && !dy && buttons == held)
         return;
-    /* PS/2 packets carry at most 255 either way; the desktop adds them up. */
+    /* PS/2 packets carry at most 255 either way; each says where the pointer is after it. */
+    int cx = px, cy = py;
     while (dx || dy || buttons != held) {
         int sx = dx > 255 ? 255 : dx < -255 ? -255 : dx;
         int sy = dy > 255 ? 255 : dy < -255 ? -255 : dy;
@@ -167,8 +168,11 @@ void plat_pointer(int x, int y, uint8_t buttons)
             mtail++;
             mdropped++;
         }
+        cx += sx;
+        cy += sy;
         moves[mhead++ % QUEUE] = (struct mouse_event){ .dx = (int16_t)sx, .dy = (int16_t)sy,
-                                                       .buttons = last ? buttons : held };
+                                                       .buttons = last ? buttons : held, .has_pos = 1,
+                                                       .x = (int16_t)cx, .y = (int16_t)cy };
         dx -= sx;
         dy -= sy;
         if (last)
@@ -188,7 +192,8 @@ void plat_wheel(int notches)
             mtail++;
             mdropped++;
         }
-        moves[mhead++ % QUEUE] = (struct mouse_event){ .buttons = held, .wheel = (int8_t)n };
+        moves[mhead++ % QUEUE] = (struct mouse_event){ .buttons = held, .wheel = (int8_t)n, .has_pos = px >= 0,
+                                                       .x = (int16_t)px, .y = (int16_t)py };
         notches -= n;
     }
 }

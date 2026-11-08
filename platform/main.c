@@ -109,17 +109,32 @@ static struct {
     int swallow;                /* unlocked by a touch that's still down: the desktop doesn't get it */
 } in;
 
+/* The pointer after a packet: where it says (Linux), or the last place plus its steps. */
+static void move_to(const struct mouse_event *m)
+{
+    if (m->has_pos) {
+        in.x = m->x;
+        in.y = m->y;
+    } else {
+        in.x += m->dx;
+        in.y += m->dy;
+    }
+    in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
+    in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
+}
+
 static void locked_input(const struct key_event *keys, int nk, const struct mouse_event *moves, int nm)
 {
     for (int i = 0; i < nk; i++) {
         log_key(&keys[i]);
         lockscreen_key(&keys[i]);
     }
-    for (int i = 0; i < nm && lockscreen_active(); i++) {
-        in.x += moves[i].dx;
-        in.y += moves[i].dy;
-        in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
-        in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
+    for (int i = 0; i < nm; i++) {
+        move_to(&moves[i]);
+        if (!lockscreen_active()) {         /* unlocked part way: the rest of the batch is for the desktop */
+            in.buttons = moves[i].buttons;
+            continue;
+        }
         if (i + 1 < nm && moves[i + 1].buttons == moves[i].buttons && moves[i].buttons == in.buttons)
             continue;
         cursor_move_to(in.x, in.y);
@@ -184,21 +199,17 @@ void idle_step(int busy)
         desktop_handle_events();
     }
     if (nm > 0) {
-        int x = in.x, y = in.y;
+        int sx = in.x, sy = in.y;               /* in.x and in.y move as the packets are used below */
         for (int i = 0; i < nm / (int)sizeof(moves[0]); i++) {
-            x += moves[i].dx;
-            y += moves[i].dy;
-            x = x < 0 ? 0 : x >= in.w ? in.w - 1 : x;
-            y = y < 0 ? 0 : y >= in.h ? in.h - 1 : y;
+            move_to(&moves[i]);
         }
-        cursor_move_to(x, y);
+        cursor_move_to(in.x, in.y);
+        in.x = sx;
+        in.y = sy;
     }
     int npkt = nm / (int)sizeof(moves[0]);
     for (int i = 0; i < npkt; i++) {
-        in.x += moves[i].dx;
-        in.y += moves[i].dy;
-        in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
-        in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
+        move_to(&moves[i]);
         if (in.swallow) {
             if (!(moves[i].buttons & MOUSE_LEFT))
                 in.swallow = 0;             /* lifted: the next touch is the desktop's */
