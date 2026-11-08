@@ -106,6 +106,7 @@ static struct {
     int w, h, x, y, moved;
     uint8_t buttons;
     uint32_t last_log;
+    int swallow;                /* unlocked by a touch that's still down: the desktop doesn't get it */
 } in;
 
 static void locked_input(const struct key_event *keys, int nk, const struct mouse_event *moves, int nm)
@@ -166,6 +167,10 @@ void idle_step(int busy)
         return;
     if (lockscreen_active()) {
         locked_input(keys, nk > 0 ? nk / (int)sizeof(keys[0]) : 0, moves, nm > 0 ? nm / (int)sizeof(moves[0]) : 0);
+        /* The last PIN digit unlocks on touch-down: the finger's still on the glass, and the
+         * desktop would take what's left of it for a tap on whatever icon is there. */
+        if (!lockscreen_active() && (in.buttons & MOUSE_LEFT))
+            in.swallow = 1;
         return;
     }
     for (int i = 0; i < nk / (int)sizeof(keys[0]); i++) {
@@ -194,6 +199,13 @@ void idle_step(int busy)
         in.y += moves[i].dy;
         in.x = in.x < 0 ? 0 : in.x >= in.w ? in.w - 1 : in.x;
         in.y = in.y < 0 ? 0 : in.y >= in.h ? in.h - 1 : in.y;
+        if (in.swallow) {
+            if (!(moves[i].buttons & MOUSE_LEFT))
+                in.swallow = 0;             /* lifted: the next touch is the desktop's */
+            in.buttons = moves[i].buttons;
+            in.moved = 0;
+            continue;
+        }
         if (i + 1 < npkt && moves[i + 1].buttons == moves[i].buttons && moves[i].buttons == in.buttons &&
             !moves[i].wheel) {
             in.moved |= moves[i].dx || moves[i].dy;

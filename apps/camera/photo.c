@@ -15,7 +15,7 @@
 #include <string.h>
 
 #define SHADING 230                     /* the brightening at the corners, 8.8 */
-#define SATURATION 345                  /* 8.8: 1.35 */
+#define SATURATION 282                  /* 8.8: 1.10, on top of the matrix */
 #define CELL_W (CAM_W / 2)
 #define CELL_H (CAM_H / 2)
 
@@ -47,9 +47,15 @@ static inline int clamp10(int v)
     return v < 0 ? 0 : v > 1023 ? 1023 : v;
 }
 
-/* Saturation, then to 8 bits. r, g, b: 10-bit linear, white balanced. */
-static inline void finish(int r, int g, int b, uint8_t *out)
+/* Colour matrix (8.8, each row adds up to 256 so greys stay grey): the sensor's red, green
+ * and blue filters overlap, which makes colours dull; this pulls them apart. A generic
+ * matrix, not measured for this sensor. Then saturation, then to 8 bits.
+ * r, g, b: 10-bit linear, white balanced. */
+static inline void finish(int r0, int g0, int b0, uint8_t *out)
 {
+    int r = (359 * r0 - 77 * g0 - 26 * b0) >> 8;
+    int g = (-51 * r0 + 358 * g0 - 51 * b0) >> 8;
+    int b = (-13 * r0 - 90 * g0 + 359 * b0) >> 8;
     int l = (77 * r + 151 * g + 28 * b) >> 8;
     out[0] = gamma8[clamp10(l + ((r - l) * SATURATION >> 8))];
     out[1] = gamma8[clamp10(l + ((g - l) * SATURATION >> 8))];
@@ -170,9 +176,19 @@ static uint32_t adler_of(const uint8_t *p, size_t n)
     return b << 16 | a;
 }
 
-/* All 10 bits at every pixel, with each pixel's two missing colours from its
- * neighbours; turned upright into rows of 3-byte pixels, each row after a PNG
- * filter byte. */
+/* All 10 bits at every pixel. Green is found first, by looking along the edge rather
+ * than across it (Hamilton-Adams: whichever of the row or the column changes less, with
+ * a correction from the pixel's own colour); then red and blue are filled in from how far
+ * they sit from green at the nearest red and blue pixels, which keeps edges from
+ * getting coloured fringes. Turned upright into rows of 3-byte pixels, each row after a
+ * PNG filter byte. */
+/* A pixel off the edge reads from the other side of the edge, which keeps its colour
+ * (the mirror lands on a pixel of the same parity). */
+static inline int mir(int v, int n)
+{
+    return v < 0 ? -v : v >= n ? 2 * (n - 1) - v : v;
+}
+
 static void develop(const uint8_t *frame, int red, int blue, uint8_t *out, int row_bytes)
 {
     uint16_t *raw = malloc(sizeof(uint16_t) * CAM_W * CAM_H);
@@ -190,36 +206,61 @@ static void develop(const uint8_t *frame, int red, int blue, uint8_t *out, int r
             }
         }
     }
+    int16_t *gp = malloc(sizeof(int16_t) * CAM_W * CAM_H);
+    if (!gp) {
+        free(raw);
+        return;
+    }
+#define RAW(xx, yy) ((int)raw[mir(yy, CAM_H) * CAM_W + mir(xx, CAM_W)])
+#define GRN(xx, yy) ((int)gp[mir(yy, CAM_H) * CAM_W + mir(xx, CAM_W)])
     for (int y = 0; y < CAM_H; y++) {
-        int up = y ? y - 1 : 1, down = y + 1 < CAM_H ? y + 1 : y - 1;
-        const uint16_t *a = raw + up * CAM_W, *m = raw + y * CAM_W, *z = raw + down * CAM_W;
         for (int x = 0; x < CAM_W; x++) {
-            int l = x ? x - 1 : 1, t = x + 1 < CAM_W ? x + 1 : x - 1, r, g, b;
-            int cross = (a[x] + z[x] + m[l] + m[t]) >> 2, corners = (a[l] + a[t] + z[l] + z[t]) >> 2;
-            if (y & 1) {
-                if (x & 1) {                    /* blue */
-                    r = corners;
-                    g = cross;
-                    b = m[x];
-                } else {                        /* green, among blue */
-                    r = (a[x] + z[x]) >> 1;
-                    g = m[x];
-                    b = (m[l] + m[t]) >> 1;
-                }
-            } else if (x & 1) {                 /* green, among red */
-                r = (m[l] + m[t]) >> 1;
-                g = m[x];
-                b = (a[x] + z[x]) >> 1;
-            } else {                            /* red */
-                r = m[x];
-                g = cross;
-                b = corners;
+            int v = RAW(x, y);
+            if ((x ^ y) & 1) {                  /* a green pixel already */
+                gp[y * CAM_W + x] = (int16_t)v;
+                continue;
             }
-            int s = shade_at(x - CAM_W / 2, y - CAM_H / 2, CAM_W / 2, CAM_H / 2);
-            uint8_t *px = out + (size_t)x * (size_t)row_bytes + 1 + (size_t)(CAM_H - 1 - y) * 3;
-            finish(((r * s) >> 8) * red >> 8, (g * s) >> 8, ((b * s) >> 8) * blue >> 8, px);
+            int gl = RAW(x - 1, y), gr = RAW(x + 1, y), gu = RAW(x, y - 1), gd = RAW(x, y + 1);
+            int dh = abs(gl - gr) + abs(2 * v - RAW(x - 2, y) - RAW(x + 2, y));
+            int dv = abs(gu - gd) + abs(2 * v - RAW(x, y - 2) - RAW(x, y + 2));
+            int g;
+            if (dh < dv)
+                g = (gl + gr) / 2 + (2 * v - RAW(x - 2, y) - RAW(x + 2, y)) / 4;
+            else if (dv < dh)
+                g = (gu + gd) / 2 + (2 * v - RAW(x, y - 2) - RAW(x, y + 2)) / 4;
+            else
+                g = (gl + gr + gu + gd) / 4 + (4 * v - RAW(x - 2, y) - RAW(x + 2, y) - RAW(x, y - 2) - RAW(x, y + 2)) / 8;
+            gp[y * CAM_W + x] = (int16_t)(g < 0 ? 0 : g > 1023 ? 1023 : g);
         }
     }
+    for (int y = 0; y < CAM_H; y++) {
+        for (int x = 0; x < CAM_W; x++) {
+            int g = GRN(x, y), r, b;
+            if (!(y & 1) && !(x & 1)) {         /* red: blue from the four corners */
+                r = RAW(x, y);
+                b = g + ((RAW(x - 1, y - 1) - GRN(x - 1, y - 1) + RAW(x + 1, y - 1) - GRN(x + 1, y - 1) +
+                          RAW(x - 1, y + 1) - GRN(x - 1, y + 1) + RAW(x + 1, y + 1) - GRN(x + 1, y + 1)) >> 2);
+            } else if ((y & 1) && (x & 1)) {    /* blue: red from the four corners */
+                b = RAW(x, y);
+                r = g + ((RAW(x - 1, y - 1) - GRN(x - 1, y - 1) + RAW(x + 1, y - 1) - GRN(x + 1, y - 1) +
+                          RAW(x - 1, y + 1) - GRN(x - 1, y + 1) + RAW(x + 1, y + 1) - GRN(x + 1, y + 1)) >> 2);
+            } else if (!(y & 1)) {              /* green in a red row: red beside, blue above and below */
+                r = g + ((RAW(x - 1, y) - GRN(x - 1, y) + RAW(x + 1, y) - GRN(x + 1, y)) >> 1);
+                b = g + ((RAW(x, y - 1) - GRN(x, y - 1) + RAW(x, y + 1) - GRN(x, y + 1)) >> 1);
+            } else {                            /* green in a blue row */
+                b = g + ((RAW(x - 1, y) - GRN(x - 1, y) + RAW(x + 1, y) - GRN(x + 1, y)) >> 1);
+                r = g + ((RAW(x, y - 1) - GRN(x, y - 1) + RAW(x, y + 1) - GRN(x, y + 1)) >> 1);
+            }
+            r = r < 0 ? 0 : r;
+            b = b < 0 ? 0 : b;
+            int sh = shade_at(x - CAM_W / 2, y - CAM_H / 2, CAM_W / 2, CAM_H / 2);
+            uint8_t *px = out + (size_t)x * (size_t)row_bytes + 1 + (size_t)(CAM_H - 1 - y) * 3;
+            finish(((r * sh) >> 8) * red >> 8, (g * sh) >> 8, ((b * sh) >> 8) * blue >> 8, px);
+        }
+    }
+#undef RAW
+#undef GRN
+    free(gp);
     free(raw);
 }
 
