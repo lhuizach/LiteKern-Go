@@ -320,6 +320,8 @@ static void pill(struct gfx_rect r, const char *label, int selected, int lit, in
 
 static void spots_draw(void)
 {
+    if (!bright_held)
+        k86_machine(&machine);            /* the brightness may have been changed in the control centre */
     const struct theme *t = theme_get();
     static const char *const styles[] = { "Dark", "Light" };
     gfx_fill_rect(&canvas, 0, 0, canvas.w, canvas.h, t->window_bg);

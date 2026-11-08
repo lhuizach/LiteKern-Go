@@ -2717,6 +2717,19 @@ static void tile_tap(int i)
     damage_all();
 }
 
+/* The brightness goes to the screen's panel as commands that interrupt the picture for a
+ * moment (the msm display driver's way with commands while video runs: the maintainers know
+ * of it, and it's worse while the screen is redrawing). So the slider follows the finger at
+ * once, and the panel hears the value once, when the finger lifts. */
+static int qs_bright_want, qs_bright_sent = -1;
+
+static void bright_flush(void)
+{
+    if (qs_bright_want != qs_bright_sent && machine_set_brightness(qs_bright_want) == 0)
+        qs_bright_sent = qs_bright_want;
+    machine_status(&machine_shown);         /* what the screen really is */
+}
+
 /* A slider dragged: from its value when the finger landed, by how far it's moved. */
 static void slider_drag(int y)
 {
@@ -2725,8 +2738,9 @@ static void slider_drag(int y)
     if (qs_sl == 1) {
         volume = p;
         damage_all();
-    } else if (machine_set_brightness(p) == 0) {
-        machine_status(&machine_shown);
+    } else {
+        qs_bright_want = p;
+        machine_shown.brightness = p;       /* the slider follows the finger */
         damage_all();
     }
 }
@@ -3057,6 +3071,8 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
             qs_finger = QF_SLIDER;
             qs_sl = 0;
             qs_sl_from = machine_shown.brightness;
+            qs_bright_sent = -1;
+            qs_bright_want = machine_shown.brightness;
         } else if (inside(qs_slider_rect(1), x, y)) {
             qs_finger = QF_SLIDER;
             qs_sl = 1;
@@ -3097,6 +3113,10 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
             slider_drag(y);
         } else {
             qs_finger = QF_NONE;
+            if (qs_sl == 0) {
+                bright_flush();
+                damage_all();
+            }
             if (qs_sl == 1)
                 kprintf("qs: volume %d%%\n", volume);
         }
