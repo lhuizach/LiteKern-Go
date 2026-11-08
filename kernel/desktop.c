@@ -1670,6 +1670,30 @@ static void restore_window(struct wm_window *w)
     shell_flush();
 }
 
+/* An app chosen in Recent apps comes up out of the middle of the screen, whichever
+ * icon it was opened from. */
+static void open_from_centre(struct wm_window *w)
+{
+    struct gfx_rect to = wm_rect(w);
+    int fw = S()->w * 2 / 5, fh = S()->h * 2 / 5;
+    struct gfx_rect from = { (S()->w - fw) / 2, (S()->h - fh) / 2, fw, fh };
+    struct ghost g = { w, { 0 }, from, to, 60, 255, 30, wm_is_maximised(w) ? 0 : WM_RADIUS };
+    int snapped = snapshot(0, w, &g.snap), minimised = wm_is_minimised(w);
+    if (minimised)
+        kprintf("desktop: restore %s\n", name_of(w));
+    wm_set_hidden(w, 1);
+    if (minimised) {
+        wm_set_minimised(w, 0);         /* in front and focused */
+        dock_layout(0);
+    } else {
+        wm_focus(w);
+    }
+    if (snapped)
+        anim_run(&g, 1, 12, 240, EASE_OUT, "open", name_of(w));
+    wm_set_hidden(w, 0);
+    shell_flush();
+}
+
 void shell_window_minimise(struct wm_window *w)
 {
     minimise_windows(&w, 1);
@@ -1761,12 +1785,35 @@ static void launch(int i, struct gfx_rect from)
 }
 
 /* The window goes, fading out. */
+/* Apps closed from Recent apps: no closing animation of their own (the card said it). */
+static struct wm_window *quiet_win[WM_MAX];
+
+static void quiet_add(struct wm_window *w)
+{
+    for (int k = 0; k < WM_MAX; k++)
+        if (!quiet_win[k]) {
+            quiet_win[k] = w;
+            return;
+        }
+}
+
+static int quiet_take(struct wm_window *w)
+{
+    for (int k = 0; k < WM_MAX; k++)
+        if (quiet_win[k] == w) {
+            quiet_win[k] = 0;
+            return 1;
+        }
+    return 0;
+}
+
 static void close_window(struct wm_window *w)
 {
     const struct app *a = wm_owner(w);
     if (a)
         kprintf("desktop: close %s\n", a->name);
-    anim_close(w);
+    if (!quiet_take(w))
+        anim_close(w);
     if (a)
         app_win[app_index(a)] = 0;
     wm_destroy(w);
@@ -2053,6 +2100,13 @@ static void track_peek(int x, int y)
 static int sw_n;
 static struct wm_window *sw_win[WM_MAX];        /* oldest first */
 static struct gfx_surface sw_snap[WM_MAX];
+/* What drawing a card needs, kept apart from its window: Close all lets the apps go
+ * while the cards are still flying up. */
+static const struct app *sw_app[WM_MAX];
+static char sw_label[WM_MAX][40];
+static uint32_t *sw_img[WM_MAX];                /* each card as a picture, ready to copy: made on opening */
+static int sw_img_ok[WM_MAX];
+static int sw_up;                               /* Close all: the cards rise as it fades away */
 static int sw_scroll;                           /* px: 0 has the last card in the middle */
 static int sw_x0, sw_y0, sw_scroll0, sw_card = -1, sw_mode, sw_lift;
 enum { SWM_NONE, SWM_PRESS, SWM_SCROLL, SWM_LIFT };
@@ -2081,6 +2135,78 @@ static struct gfx_rect sw_clear_rect(void)
     return (struct gfx_rect){ S()->w / 2 - 120, S()->h - 120, 240, 72 };
 }
 
+/* The strip the cards slide in: all that changes while they scroll. */
+static void sw_damage_cards(void)
+{
+    int y = T()->topbar_h + SW_LABEL_H + (S()->h - T()->topbar_h - SW_LABEL_H - 160 - sw_card_h()) / 2;
+    if (screen_ready())
+        shell_damage((struct gfx_rect){ 0, y - SW_LABEL_H - SW_RIM, S()->w, sw_card_h() + SW_LABEL_H + 2 * SW_RIM });
+}
+
+static int sw_isqrt(int v)
+{
+    int r = 0;
+    while ((r + 1) * (r + 1) <= v)
+        r++;
+    return r;
+}
+
+/* A card's picture, made once as the switcher opens: the app scaled to the card (each
+ * pixel the average of four of its own), the corners rounded, and a thin light rim round
+ * it so a dark app stands out from what's behind. Then drawing a card while it scrolls is
+ * one copy, not a scale of the whole app: that was what made scrolling 25 frames a second. */
+static void sw_make_img(int k)
+{
+    int cw = sw_card_w(), ch = sw_card_h(), iw = cw + 2 * SW_RIM, ih = ch + 2 * SW_RIM, R = SW_RADIUS;
+    const struct gfx_surface *sn = &sw_snap[k];
+    static int xmap[1024];
+    sw_img_ok[k] = 0;
+    if (cw > 1000 || sn->w < 2 || sn->h < 2)
+        return;
+    if (!sw_img[k]) {
+        uint32_t bytes = (uint32_t)(iw * ih * 4);
+        sw_img[k] = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    }
+    if (!sw_img[k])
+        return;
+    for (int x = 0; x < cw; x++)
+        xmap[x] = x * sn->w / cw;
+    for (int iy = 0; iy < ih; iy++) {
+        uint32_t *row = sw_img[k] + (size_t)iy * (size_t)iw;
+        int dy = iy < SW_RIM + R ? SW_RIM + R - iy : iy >= ih - SW_RIM - R ? iy - (ih - SW_RIM - R - 1) : 0;
+        int xi0 = SW_RIM, xi1 = iw - SW_RIM, xo0 = 0, xo1 = iw;
+        if (dy > 0) {                       /* a row of a corner: where the curve is */
+            int ro = sw_isqrt((R + SW_RIM) * (R + SW_RIM) - dy * dy);
+            xo0 = SW_RIM + R - ro;
+            xo1 = iw - SW_RIM - R + ro;
+            if (dy <= R) {
+                int ri = sw_isqrt(R * R - dy * dy);
+                xi0 = SW_RIM + R - ri;
+                xi1 = iw - SW_RIM - R + ri;
+            } else {
+                xi0 = xi1 = iw / 2;         /* above the card: just the rim */
+            }
+        }
+        int sy = (iy - SW_RIM) * sn->h / ch;
+        sy = sy < 0 ? 0 : sy >= sn->h ? sn->h - 1 : sy;
+        const uint32_t *p0 = sn->px + (size_t)sy * (size_t)sn->stride;
+        const uint32_t *p1 = sy + 1 < sn->h ? p0 + sn->stride : p0;
+        for (int x = 0; x < iw; x++) {
+            if (x >= xi0 && x < xi1) {
+                int xs = xmap[x - SW_RIM < 0 ? 0 : x - SW_RIM >= cw ? cw - 1 : x - SW_RIM];
+                int xs1 = xs + 1 < sn->w ? xs + 1 : xs;
+                row[x] = 0xff000000u | (((p0[xs] & 0xfcfcfcu) >> 2) + ((p0[xs1] & 0xfcfcfcu) >> 2) +
+                         ((p1[xs] & 0xfcfcfcu) >> 2) + ((p1[xs1] & 0xfcfcfcu) >> 2));
+            } else if (x >= xo0 && x < xo1) {
+                row[x] = ((uint32_t)SW_RIM_ALPHA << 24) | 0xffffffu;
+            } else {
+                row[x] = 0;
+            }
+        }
+    }
+    sw_img_ok[k] = 1;
+}
+
 static void sw_set(int open)
 {
     if (sw_open == open)
@@ -2094,9 +2220,18 @@ static void sw_set(int open)
     fx_start(&swv, open);               /* it fades in, or out over what's under it */
     if (open) {
         sw_n = 0;
+        sw_up = 0;
         for (int i = 0; i < wm_count() && sw_n < WM_MAX; i++)
-            if (snapshot(sw_n, wm_at(i), &sw_snap[sw_n]))
-                sw_win[sw_n++] = wm_at(i);
+            if (snapshot(sw_n, wm_at(i), &sw_snap[sw_n])) {
+                const char *name = name_of(wm_at(i));
+                size_t len = strlen(name) < sizeof(sw_label[0]) - 1 ? strlen(name) : sizeof(sw_label[0]) - 1;
+                sw_win[sw_n] = wm_at(i);
+                sw_app[sw_n] = wm_owner(wm_at(i));
+                memcpy(sw_label[sw_n], name, len);
+                sw_label[sw_n][len] = '\0';
+                sw_make_img(sw_n);
+                sw_n++;
+            }
         sw_scroll = 0;
         wm_pointer_gone();
         kprintf("switcher: open, %d app%s\n", sw_n, sw_n == 1 ? "" : "s");
@@ -2111,6 +2246,8 @@ static void sw_set(int open)
 /* An app went away (closed here, or it ended by itself). */
 static void sw_forget(struct wm_window *w)
 {
+    if (sw_up)                          /* Close all: the cards stay until they've flown */
+        return;
     for (int i = 0; i < sw_n; i++)
         if (sw_win[i] == w) {
             for (int k = i; k < sw_n - 1; k++) {
@@ -2133,8 +2270,24 @@ static void sw_close_app(int i)
 {
     struct wm_window *w = sw_win[i];
     kprintf("switcher: close %s\n", name_of(w));
+    wm_set_hidden(w, 1);                /* out of the picture behind the cards, with no ceremony */
+    quiet_add(w);
     sw_forget(w);
     wm_request_close(w);
+}
+
+/* Close all: every app goes at once, and the cards rise and fade together. */
+static void sw_close_all(void)
+{
+    kprintf("switcher: close all\n");
+    for (int i = 0; i < sw_n; i++) {
+        wm_set_hidden(sw_win[i], 1);
+        quiet_add(sw_win[i]);
+        wm_request_close(sw_win[i]);
+    }
+    backdrop_take(0);                   /* what's behind them now: the home screen */
+    sw_up = 1;
+    sw_set(0);
 }
 
 static void sw_go(int i)
@@ -2145,17 +2298,14 @@ static void sw_go(int i)
     spring_snap(&swv);                  /* gone at once: the picture behind it is out of date */
     sw_alpha = 0;
     shell_flush();
-    if (wm_is_minimised(w))
-        restore_window(w);
-    else
-        wm_focus(w);
-    shell_flush();
+    open_from_centre(w);                /* it comes up out of the middle, not out of its icon */
 }
 
 static void draw_switcher(void)
 {
     const struct theme *t = T();
-    int al = sw_alpha, lift = (255 - al) * 160 / 255;      /* fading in, the cards rise into place */
+    int al = sw_alpha, lift = sw_up ? -(255 - al) * 900 / 255 : (255 - al) * 160 / 255;
+    /* fading in, the cards rise into place; fading out for Close all, they rise away */
     gfx_darken(VS, VX(0), VY(0), S()->w, S()->h, (uint32_t)(190 * al / 255));
     if (!sw_n) {
         const char *none = "No recent apps";
@@ -2166,15 +2316,20 @@ static void draw_switcher(void)
     for (int i = 0; i < sw_n; i++) {
         struct gfx_rect r = sw_card_rect(i);
         r.y += lift;
-        if (!visible((struct gfx_rect){ r.x, r.y - SW_LABEL_H, r.w, r.h + SW_LABEL_H }))
+        if (!visible((struct gfx_rect){ r.x - SW_RIM, r.y - SW_LABEL_H, r.w + 2 * SW_RIM, r.h + SW_LABEL_H + 2 * SW_RIM }))
             continue;
-        const struct app *a = wm_owner(sw_win[i]);
-        if (a)
-            draw_icon(a, (struct gfx_rect){ r.x, r.y - SW_LABEL_H + 8, 44, 44 }, (uint32_t)al);
+        if (sw_app[i])
+            draw_icon(sw_app[i], (struct gfx_rect){ r.x, r.y - SW_LABEL_H + 8, 44, 44 }, (uint32_t)al);
         if (al > 160)
             text_draw_fit(VS, VX(r.x + 56), VY(r.y - SW_LABEL_H + 8 + (44 - text_height(TEXT_BOLD)) / 2),
-                          name_of(sw_win[i]), r.w - 56, TEXT_BOLD, SHELL_FG);
-        /* A thin light rim, so a dark app stands out from what's behind it. */
+                          sw_label[i], r.w - 56, TEXT_BOLD, SHELL_FG);
+        if (al >= 255 && sw_img_ok[i]) {
+            /* Settled, or being scrolled: the ready-made picture, one copy. */
+            gfx_blit_alpha(VS, VX(r.x - SW_RIM), VY(r.y - SW_RIM), sw_img[i], r.w + 2 * SW_RIM, r.h + 2 * SW_RIM,
+                           r.w + 2 * SW_RIM);
+            continue;
+        }
+        /* Fading: a thin light rim, then the app scaled at the fade's alpha. */
         gfx_blend_round_rect(VS, VX(r.x - SW_RIM), VY(r.y - SW_RIM), r.w + 2 * SW_RIM, r.h + 2 * SW_RIM,
                              SW_RADIUS + SW_RIM, 0xffffff, (uint32_t)(SW_RIM_ALPHA * al / 255));
         gfx_blit_scaled(VS, (struct gfx_rect){ VX(r.x), VY(r.y), r.w, r.h }, &sw_snap[i],
@@ -2183,7 +2338,7 @@ static void draw_switcher(void)
     if (al > 160)
         text_draw(VS, VX(48), VY(t->topbar_h + 24 + lift / 4), "Recent apps", TEXT_HEADING, SHELL_FG);
     struct gfx_rect c = sw_clear_rect();
-    c.y += lift;
+    c.y += lift < 0 ? 0 : lift;
     gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, c.h / 2, t->button_bg, (uint32_t)al);
     if (al > 160)
         text_draw(VS, VX(c.x + (c.w - text_width("Close all", TEXT_BOLD)) / 2),
@@ -2250,7 +2405,7 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
             sw_last_x = x;
             sw_last_ms = now;
         }
-        damage_all();
+        sw_damage_cards();              /* only the strip the cards move in */
     } else if (sw_mode == SWM_LIFT) {
         sw_lift = dy < 0 ? dy : 0;
         damage_all();
@@ -2278,10 +2433,7 @@ static void sw_pointer(int x, int y, uint8_t buttons, int down)
     if (card >= 0) {
         sw_go(card);
     } else if (sw_n && inside(sw_clear_rect(), x, y)) {
-        kprintf("switcher: close all\n");
-        while (sw_n)
-            sw_close_app(sw_n - 1);
-        sw_set(0);
+        sw_close_all();
     } else {
         sw_set(0);                      /* a tap on nothing: back where it was */
     }
@@ -3380,7 +3532,7 @@ static void fx_tick(void)
     }
     if (was_gliding && sw_open && sw_mode == SWM_NONE) {
         sw_scroll = sw_glide.x / 256;
-        damage_all();
+        sw_damage_cards();
     }
     sw_alpha = fx_alpha(&swv);
     menu_alpha = fx_alpha(&menuv);

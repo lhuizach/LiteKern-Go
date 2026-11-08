@@ -48,6 +48,18 @@ static int version_y, name_y;           /* where they are in the page, for taps 
 
 static const struct theme *T(void) { return theme_get(); }
 
+/* The four pixels round a point, blended by how near it is to each (wx, wy: 0..255). */
+static uint32_t bilinear(uint32_t p00, uint32_t p01, uint32_t p10, uint32_t p11, int wx, int wy)
+{
+    uint32_t out = 0;
+    for (int b = 0; b < 24; b += 8) {
+        int a = (int)(p00 >> b & 255), c = (int)(p01 >> b & 255), d = (int)(p10 >> b & 255), e = (int)(p11 >> b & 255);
+        int top = a * (256 - wx) + c * wx, bot = d * (256 - wx) + e * wx;
+        out |= (uint32_t)((top * (256 - wy) + bot * wy) >> 16) << b;
+    }
+    return out;
+}
+
 static int read_text(const char *path, char *out, int room)
 {
     FILE *f = fopen(path, "r");
@@ -194,9 +206,13 @@ static void draw_phone(int x, int y)
             if (sy + j < 0 || sy + j >= cv->h)
                 continue;           /* scrolled off */
             uint32_t *row = cv->px + (size_t)(sy + j) * (size_t)cv->stride + sx;
-            const uint32_t *src = thumb + (size_t)(j * THUMB_H / sh) * THUMB_W + left;
-            for (int i = 0; i < sw; i++)
-                row[i] = gfx_mix(0, src[i * crop / sw], 70);    /* dimmed, as the lock screen is */
+            int fy = j * (THUMB_H - 1) * 256 / (sh > 1 ? sh - 1 : 1), y0 = fy >> 8, wy = fy & 255;
+            const uint32_t *ta = thumb + (size_t)y0 * THUMB_W, *tb = y0 + 1 < THUMB_H ? ta + THUMB_W : ta;
+            for (int i = 0; i < sw; i++) {
+                int fx = left * 256 + i * (crop - 1) * 256 / (sw > 1 ? sw - 1 : 1), x0 = fx >> 8, wx = fx & 255;
+                int x1 = x0 + 1 < THUMB_W ? x0 + 1 : x0;
+                row[i] = gfx_mix(0, bilinear(ta[x0], ta[x1], tb[x0], tb[x1], wx, wy), 70);   /* dimmed, as the lock screen is */
+            }
         }
     }
     if (k86_time(&now) == 0)

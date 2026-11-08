@@ -68,6 +68,8 @@ static struct {
     struct lock_settings set;
     enum view view;
     int login;                          /* nobody's logged in: unlocking logs `who` in */
+    int ok, ok_dots;                    /* a right PIN: dots gone green so far; how many dots there were */
+    int reveal;                         /* unlocked by PIN: the screen opens out from the dots */
     int who;                            /* the prompt's user */
     int pick;                           /* the picker's selection */
     char pw[PASSWORD_MAX];
@@ -651,9 +653,12 @@ static void draw_prompt(struct gfx_surface *s, int ox, int oy)
     }
     int waiting = (int32_t)(ls.wait_until - uptime_ms()) > 0;
     centred(s, ox, oy, S()->h * 17 / 100, waiting ? "Wait a moment" TEXT_ELLIPSIS : "Enter PIN", TEXT_HEADING, WHITE);
-    int n = ls.pwlen > 16 ? 16 : ls.pwlen, w = n * 40 - 16, x = (S()->w - w) / 2 + ls.shake;
-    for (int i = 0; i < n; i++)
-        gfx_fill_circle(s, x + 12 + i * 40 - ox, dots_cy() - oy, 12, WHITE);
+    int shown = ls.ok ? ls.ok_dots : ls.pwlen;
+    int n = shown > 16 ? 16 : shown, w = n * 40 - 16, x = (S()->w - w) / 2 + ls.shake;
+    for (int i = 0; i < n; i++) {
+        int green = ls.ok && i < ls.ok;
+        gfx_fill_circle(s, x + 12 + i * 40 - ox, dots_cy() - oy, green ? 15 : 12, green ? 0x57e389u : WHITE);
+    }
     int y = dots_cy() + 40;
     if (ls.message)
         centred(s, ox, oy, y, ls.message, TEXT_BODY, BAD);
@@ -776,6 +781,11 @@ static int ease_in(int t)                   /* slow, then fast: lifting off */
     return (int)((int64_t)t * t / 1024 * t / 1024);
 }
 
+static int ease_io(int t)                   /* smooth at both ends */
+{
+    return (int)((int64_t)t * t / 1024 * (3 * 1024 - 2 * t) / 1024);
+}
+
 /* One frame: the lock screen's bottom `vis` rows at the top, then the
  * desktop with the shadow on it. Shows rows 0..`dirty`. */
 static void curtain(int vis, int dirty)
@@ -817,6 +827,115 @@ static void slide(int locking)
     }
     kprintf("anim: %s, %d frames, %u ms, slowest frame %u ms\n", locking ? "lock" : "unlock", frames,
             uptime_ms() - t0, worst);
+}
+
+/* A right PIN: the dots turn green one after another, a little bigger, quick enough
+ * that it's feedback and not a wait. */
+static void pin_success(void)
+{
+    int n = ls.pwlen > 16 ? 16 : ls.pwlen;
+    if (ls.view != V_PROMPT || n < 1)
+        return;
+    ls.ok_dots = n;
+    uint32_t gap = (uint32_t)(160 / n) * ANIM_SLOW;
+    for (int i = 1; i <= n; i++) {
+        ls.ok = i;
+        draw_rect(middle_rect());
+        uint32_t f0 = uptime_ms();
+        while (uptime_ms() - f0 < gap)
+            cpu_relax();
+    }
+    ls.reveal = 1;
+}
+
+static int isqrt_i(int64_t v)
+{
+    if (v <= 0)
+        return 0;
+    int64_t x = v, y = (x + 1) / 2;
+    while (y < x) {
+        x = y;
+        y = (x + v / x) / 2;
+    }
+    return (int)x;
+}
+
+static void span_copy(uint32_t *row, const uint32_t *src, int a, int b, int w)
+{
+    a = a < 0 ? 0 : a;
+    b = b > w ? w : b;
+    if (a < b)
+        memcpy(row + a, src + a, (size_t)(b - a) * 4);
+}
+
+static void span_rim(uint32_t *row, const uint32_t *src, int a, int b, int w)
+{
+    a = a < 0 ? 0 : a;
+    b = b > w ? w : b;
+    for (int x = a; x < b; x++)
+        row[x] = gfx_mix(WHITE, src[x], 190);
+}
+
+#define RIM 5
+#define REVEAL_MS 380
+
+/* One frame of the reveal: the desktop inside a ring spreading from (cx, cy) with the
+ * lock screen outside it. Only what the ring has crossed since the last frame (rp) is
+ * drawn, so it costs about what the curtain does. */
+static void reveal_frame(int cx, int cy, int r, int rp)
+{
+    struct gfx_surface *s = S();
+    int w = s->w, h = s->h;
+    int y0 = cy - r - RIM, y1 = cy + r + RIM + 1;
+    y0 = y0 < 0 ? 0 : y0;
+    y1 = y1 > h ? h : y1;
+    for (int y = y0; y < y1; y++) {
+        int64_t dy2 = (int64_t)(y - cy) * (y - cy);
+        int hin = (int64_t)r * r > dy2 ? isqrt_i((int64_t)r * r - dy2) : 0;
+        int hout = isqrt_i((int64_t)(r + RIM) * (r + RIM) - dy2);
+        int pin = rp >= 0 && (int64_t)rp * rp > dy2 ? isqrt_i((int64_t)rp * rp - dy2) : 0;
+        uint32_t *row = s->px + (size_t)y * (size_t)s->stride;
+        const uint32_t *und = ls.under.px + (size_t)y * (size_t)ls.under.stride;
+        const uint32_t *frm = ls.frame.px + (size_t)y * (size_t)ls.frame.stride;
+        span_copy(row, und, cx - hin, cx - pin, w);
+        span_copy(row, und, cx + pin, cx + hin, w);
+        span_rim(row, frm, cx - hout, cx - hin, w);
+        span_rim(row, frm, cx + hin, cx + hout, w);
+    }
+    screen_damage(0, y0, w, y1 - y0);
+    screen_present();
+}
+
+/* Unlocked with a PIN: the desktop opens out from the dots like a ripple. */
+static void reveal(void)
+{
+    struct gfx_surface *s = S();
+    int cx = s->w / 2, cy = dots_cy(), dx = cx > s->w - cx ? cx : s->w - cx, dyy = cy > s->h - cy ? cy : s->h - cy;
+    int rmax = isqrt_i((int64_t)dx * dx + (int64_t)dyy * dyy) + 2, last = -1, frames = 0;
+    /* The back buffer holds the desktop, drawn quietly; the display still shows the lock
+     * screen. A frame redraws only part of each row, so the rest must be the lock screen too. */
+    gfx_blit(s, 0, 0, &ls.frame, 0, 0, s->w, s->h);
+    uint32_t t0 = uptime_ms(), ms = REVEAL_MS * ANIM_SLOW, worst = 0;
+    for (;;) {
+        uint32_t f0 = uptime_ms(), el = f0 - t0;
+        int t = el >= ms ? 1024 : (int)(el * 1024 / ms);
+        int r = t >= 1024 ? rmax : rmax * ease_io(t) / 1024;
+        if (r == last && t < 1024) {        /* nothing new to show yet */
+            cpu_relax();
+            continue;
+        }
+        reveal_frame(cx, cy, r, last);
+        last = r;
+        frames++;
+        uint32_t took = uptime_ms() - f0;
+        if (took > worst)
+            worst = took;
+        if (t >= 1024)
+            break;
+        if (took > MAX_FRAME_MS)
+            t0 -= ms;                       /* too slow here: the last frame next */
+    }
+    kprintf("anim: unlock, %d frames, %u ms, slowest frame %u ms\n", frames, uptime_ms() - t0, worst);
 }
 
 /* A wrong password: the prompt shakes its head. */
@@ -921,9 +1040,13 @@ static void unlock(void)
         draw_into(&ls.frame, 0, 0);         /* the lock screen as it was */
         desktop_render_quiet();             /* the desktop, drawn but not shown yet */
         gfx_blit(&ls.under, 0, 0, S(), 0, 0, S()->w, S()->h);
-        slide(0);
+        if (ls.reveal)
+            reveal();
+        else
+            slide(0);
     }
     ls.lift = ls.swiping = 0;
+    ls.reveal = ls.ok = 0;
     desktop_cover(0);                       /* the desktop draws itself again */
 }
 
@@ -978,6 +1101,7 @@ static void try_password(void)
     ls.pw[ls.pwlen] = '\0';
     if (users_check(ls.who, ls.pw)) {
         ls.fails = 0;
+        pin_success();
         unlock();
         return;
     }
