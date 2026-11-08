@@ -128,14 +128,15 @@ diff -urN a/drivers/misc/Makefile b/drivers/misc/Makefile
 +obj-m				+= imx135.o
 diff -urN a/drivers/misc/imx135-modes.h b/drivers/misc/imx135-modes.h
 --- a/drivers/misc/imx135-modes.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/drivers/misc/imx135-modes.h	2026-11-07 17:47:49.826830550 +0000
-@@ -0,0 +1,169 @@
++++ b/drivers/misc/imx135-modes.h	2026-11-08 15:54:56.687017979 +0000
+@@ -0,0 +1,500 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/* From NVIDIA Tegra imx135.c, Copyright (c) 2013, NVIDIA CORPORATION. */
 +struct imx135_reg { u16 addr; u16 val; };
 +#define IMX135_TABLE_WAIT_MS 0
 +#define IMX135_TABLE_END 1
 +#define IMX135_WAIT_MS 3
++
 +static const struct imx135_reg mode_1280x720[] = {
 +	/* software reset */
 +	{0x0103, 0x01},
@@ -299,14 +300,345 @@ diff -urN a/drivers/misc/imx135-modes.h b/drivers/misc/imx135-modes.h
 +	{IMX135_TABLE_WAIT_MS, IMX135_WAIT_MS},
 +	{IMX135_TABLE_END, 0x00}
 +};
++
++static const struct imx135_reg mode_2080x1170[] = {
++
++	/* software reset */
++	{0x0103, 0x01},
++	/* global settings */
++	{0x0101, 0x00},
++	{0x0105, 0x01},
++	{0x0110, 0x00},
++	{0x0220, 0x01},
++	{0x3302, 0x11},
++	{0x3833, 0x20},
++	{0x3893, 0x00},
++	{0x3906, 0x08},
++	{0x3907, 0x01},
++	{0x391B, 0x01},
++	{0x3C09, 0x01},
++	{0x600A, 0x00},
++	{0x3008, 0xB0},
++	{0x320A, 0x01},
++	{0x320D, 0x10},
++	{0x3216, 0x2E},
++	{0x322C, 0x02},
++	{0x3409, 0x0C},
++	{0x340C, 0x2D},
++	{0x3411, 0x39},
++	{0x3414, 0x1E},
++	{0x3427, 0x04},
++	{0x3480, 0x1E},
++	{0x3484, 0x1E},
++	{0x3488, 0x1E},
++	{0x348C, 0x1E},
++	{0x3490, 0x1E},
++	{0x3494, 0x1E},
++	{0x3511, 0x8F},
++	{0x364F, 0x2D},
++
++	/* Clock Setting */
++	{0x011E, 0x18},
++	{0x011F, 0x00},
++	{0x0301, 0x05},
++	{0x0303, 0x01},
++	{0x0305, 0x0C},
++	{0x0309, 0x05},
++	{0x030B, 0x02},
++	{0x030C, 0x01},
++	{0x030D, 0xC2},
++	{0x030E, 0x01},
++	{0x3A06, 0x12},
++
++	/* Mode Settings */
++	{0x0108, 0x03},
++	{0x0112, 0x0A},
++	{0x0113, 0x0A},
++	{0x0381, 0x01},
++	{0x0383, 0x01},
++	{0x0385, 0x01},
++	{0x0387, 0x01},
++	{0x0390, 0x01},
++	{0x0391, 0x22},
++	{0x0392, 0x00},
++	{0x0401, 0x00},
++	{0x0404, 0x00},
++	{0x0405, 0x10},
++	{0x4082, 0x00},
++	{0x4083, 0x00},
++	{0x7006, 0x04},
++
++	/* Optinal/Function settings */
++	{0x0700, 0x00},
++	{0x3A63, 0x00},
++	{0x4100, 0xF8},
++	{0x4203, 0xFF},
++	{0x4344, 0x00},
++	{0x441C, 0x01},
++
++	/* Size Setting */
++	{0x0340, 0x0C},
++	{0x0341, 0xD0},
++	{0x0342, 0x14},
++	{0x0343, 0x00},
++	{0x0344, 0x00},
++	{0x0345, 0x18},
++	{0x0346, 0x01},
++	{0x0347, 0x88},
++	{0x0348, 0x10},
++	{0x0349, 0x57},
++	{0x034A, 0x0A},
++	{0x034B, 0xAB},
++	{0x034C, 0x08},
++	{0x034D, 0x20},
++	{0x034E, 0x04},
++	{0x034F, 0x92},
++	{0x0350, 0x00},
++	{0x0351, 0x00},
++	{0x0352, 0x00},
++	{0x0353, 0x00},
++	{0x0354, 0x08},
++	{0x0355, 0x20},
++	{0x0356, 0x04},
++	{0x0357, 0x92},
++	{0x301D, 0x30},
++	{0x3310, 0x08},
++	{0x3311, 0x20},
++	{0x3312, 0x04},
++	{0x3313, 0x92},
++	{0x331C, 0x00},
++	{0x331D, 0xD2},
++	{0x4084, 0x08},
++	{0x4085, 0x20},
++	{0x4086, 0x04},
++	{0x4087, 0x92},
++	{0x4400, 0x00},
++
++	/* Global Timing Setting */
++	{0x0830, 0x67},
++	{0x0831, 0x27},
++	{0x0832, 0x47},
++	{0x0833, 0x27},
++	{0x0834, 0x27},
++	{0x0835, 0x1F},
++	{0x0836, 0x87},
++	{0x0837, 0x2F},
++	{0x0839, 0x1F},
++	{0x083A, 0x17},
++	{0x083B, 0x02},
++
++	/* Integration Time Setting */
++	{0x0202, 0x0A},
++	{0x0203, 0x3C},
++
++	/* Gain Setting */
++	{0x0205, 0x00},
++	{0x020E, 0x01},
++	{0x020F, 0x00},
++	{0x0210, 0x01},
++	{0x0211, 0x00},
++	{0x0212, 0x01},
++	{0x0213, 0x00},
++	{0x0214, 0x01},
++	{0x0215, 0x00},
++
++	/* HDR Setting */
++	{0x0230, 0x00},
++	{0x0231, 0x00},
++	{0x0233, 0x00},
++	{0x0234, 0x00},
++	{0x0235, 0x40},
++	{0x0238, 0x01},
++	{0x0239, 0x04},
++	{0x023B, 0x00},
++	{0x023C, 0x01},
++	{0x33B0, 0x04},
++	{0x33B1, 0x00},
++	{0x33B3, 0x00},
++	{0x33B4, 0x01},
++	{0x3800, 0x00},
++
++	{0x3A43, 0x01},
++	/* stream on */
++	{0x0100, 0x01},
++
++	{IMX135_TABLE_WAIT_MS, IMX135_WAIT_MS},
++	{IMX135_TABLE_END, 0x00}
++};
++
++static const struct imx135_reg mode_4160x2340[] = {
++
++	/* software reset */
++	{0x0103, 0x01},
++	/* global settings */
++	{0x0101, 0x00},
++	{0x0105, 0x01},
++	{0x0110, 0x00},
++	{0x0220, 0x01},
++	{0x3302, 0x11},
++	{0x3833, 0x20},
++	{0x3893, 0x00},
++	{0x3906, 0x08},
++	{0x3907, 0x01},
++	{0x391B, 0x01},
++	{0x3C09, 0x01},
++	{0x600A, 0x00},
++	{0x3008, 0xB0},
++	{0x320A, 0x01},
++	{0x320D, 0x10},
++	{0x3216, 0x2E},
++	{0x322C, 0x02},
++	{0x3409, 0x0C},
++	{0x340C, 0x2D},
++	{0x3411, 0x39},
++	{0x3414, 0x1E},
++	{0x3427, 0x04},
++	{0x3480, 0x1E},
++	{0x3484, 0x1E},
++	{0x3488, 0x1E},
++	{0x348C, 0x1E},
++	{0x3490, 0x1E},
++	{0x3494, 0x1E},
++	{0x3511, 0x8F},
++	{0x364F, 0x2D},
++
++	/* Clock Setting */
++	{0x011E, 0x18},
++	{0x011F, 0x00},
++	{0x0301, 0x05},
++	{0x0303, 0x01},
++	{0x0305, 0x0C},
++	{0x0309, 0x05},
++	{0x030B, 0x02},
++	{0x030C, 0x01},
++	{0x030D, 0xC2},
++	{0x030E, 0x01},
++	{0x3A06, 0x12},
++
++	/* Mode Settings */
++	{0x0108, 0x03},
++	{0x0112, 0x0A},
++	{0x0113, 0x0A},
++	{0x0381, 0x01},
++	{0x0383, 0x01},
++	{0x0385, 0x01},
++	{0x0387, 0x01},
++	{0x0390, 0x00},
++	{0x0391, 0x11},
++	{0x0392, 0x00},
++	{0x0401, 0x00},
++	{0x0404, 0x00},
++	{0x0405, 0x10},
++	{0x4082, 0x01},
++	{0x4083, 0x01},
++	{0x7006, 0x04},
++
++	/* Optinal/Function settings */
++	{0x0700, 0x00},
++	{0x3A63, 0x00},
++	{0x4100, 0xF8},
++	{0x4203, 0xFF},
++	{0x4344, 0x00},
++	{0x441C, 0x01},
++
++	/* Size Setting */
++	{0x0340, 0x0C},
++	{0x0341, 0xD0},
++	{0x0342, 0x26},
++	{0x0343, 0x00},
++	{0x0344, 0x00},
++	{0x0345, 0x18},
++	{0x0346, 0x01},
++	{0x0347, 0x88},
++	{0x0348, 0x10},
++	{0x0349, 0x57},
++	{0x034A, 0x0A},
++	{0x034B, 0xAB},
++	{0x034C, 0x10},
++	{0x034D, 0x40},
++	{0x034E, 0x09},
++	{0x034F, 0x24},
++	{0x0350, 0x00},
++	{0x0351, 0x00},
++	{0x0352, 0x00},
++	{0x0353, 0x00},
++	{0x0354, 0x10},
++	{0x0355, 0x40},
++	{0x0356, 0x09},
++	{0x0357, 0x24},
++	{0x301D, 0x30},
++	{0x3310, 0x10},
++	{0x3311, 0x40},
++	{0x3312, 0x09},
++	{0x3313, 0x24},
++	{0x331C, 0x01},
++	{0x331D, 0x68},
++	{0x4084, 0x00},
++	{0x4085, 0x00},
++	{0x4086, 0x00},
++	{0x4087, 0x00},
++	{0x4400, 0x00},
++
++	/* Global Timing Setting */
++	{0x0830, 0x67},
++	{0x0831, 0x27},
++	{0x0832, 0x47},
++	{0x0833, 0x27},
++	{0x0834, 0x27},
++	{0x0835, 0x1F},
++	{0x0836, 0x87},
++	{0x0837, 0x2F},
++	{0x0839, 0x1F},
++	{0x083A, 0x17},
++	{0x083B, 0x02},
++
++	/* Integration Time Setting */
++	{0x0202, 0x0A},
++	{0x0203, 0x3C},
++
++	/* Gain Setting */
++	{0x0205, 0x00},
++	{0x020E, 0x01},
++	{0x020F, 0x00},
++	{0x0210, 0x01},
++	{0x0211, 0x00},
++	{0x0212, 0x01},
++	{0x0213, 0x00},
++	{0x0214, 0x01},
++	{0x0215, 0x00},
++
++	/* HDR Setting */
++	{0x0230, 0x00},
++	{0x0231, 0x00},
++	{0x0233, 0x00},
++	{0x0234, 0x00},
++	{0x0235, 0x40},
++	{0x0238, 0x01},
++	{0x0239, 0x04},
++	{0x023B, 0x00},
++	{0x023C, 0x01},
++	{0x33B0, 0x04},
++	{0x33B1, 0x00},
++	{0x33B3, 0x00},
++	{0x33B4, 0x01},
++	{0x3800, 0x00},
++
++	{0x3A43, 0x01},
++	/* stream on */
++	{0x0100, 0x01},
++
++	{IMX135_TABLE_WAIT_MS, IMX135_WAIT_MS},
++	{IMX135_TABLE_END, 0x00}
++};
 diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 --- a/drivers/misc/imx135.c	1970-01-01 01:00:00.000000000 +0100
-+++ b/drivers/misc/imx135.c	2026-11-07 19:46:45.771999411 +0000
-@@ -0,0 +1,358 @@
++++ b/drivers/misc/imx135.c	2026-11-08 15:54:56.683403139 +0000
+@@ -0,0 +1,401 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * LiteKern Go: the Sony IMX135, the Galaxy A5 (2015)'s rear camera, as a V4L2
-+ * sensor for Qualcomm's CAMSS. 1280x720, RAW10, four lanes; nothing else yet.
++ * sensor for Qualcomm's CAMSS. RAW10 on four lanes, in three sizes: 1280x720 for the live
++ * picture, and 2080x1170 and 4160x2340 for photos (chosen by setting the format).
 + *
 + * The register table (imx135-modes.h) is NVIDIA's, from their GPL Tegra driver
 + * (Copyright (c) 2013, NVIDIA CORPORATION). Pins and supplies are from Samsung's
@@ -327,12 +659,10 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +
 +/* The nearest the clock controller gets to 24 MHz: asking for that gives 66.67. */
 +#define MCLK_HZ		23880000
-+#define WIDTH		1280
-+#define HEIGHT		720
 +/* CSI-2 is double data rate: about 448 Mb/s on each of 4 lanes. */
 +#define LINK_FREQ	223875000
 +#define MBUS_CODE	MEDIA_BUS_FMT_SRGGB10_1X10
-+#define EXPOSURE_MAX	2620		/* lines, at this frame length */
++#define EXPOSURE_MAX	3270		/* lines: the most of any mode */
 +#define GAIN_MAX	224		/* 8x: gain = 256 / (256 - code) */
 +
 +/*
@@ -350,7 +680,21 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +module_param(test_pattern, int, 0644);
 +MODULE_PARM_DESC(test_pattern, "0 the camera, 2 colour bars");
 +
++/* The sizes. Exposure is in lines, and a line is longer in the bigger modes (the data of a
++ * longer line has to fit through the four lanes), so the largest exposure differs. */
++struct imx135_mode {
++	const struct imx135_reg *regs;
++	u16 width, height, exposure_max;
++};
++
++static const struct imx135_mode modes[] = {
++	{ mode_1280x720, 1280, 720, 2620 },
++	{ mode_2080x1170, 2080, 1170, 3270 },
++	{ mode_4160x2340, 4160, 2340, 3270 },
++};
++
 +struct imx135 {
++	const struct imx135_mode *mode;
 +	struct i2c_client *client;
 +	struct v4l2_subdev sd;
 +	struct media_pad pad;
@@ -440,7 +784,7 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +
 +static int write_mode(struct imx135 *s)
 +{
-+	for (const struct imx135_reg *r = mode_1280x720; r->addr != IMX135_TABLE_END; r++) {
++	for (const struct imx135_reg *r = s->mode->regs; r->addr != IMX135_TABLE_END; r++) {
 +		int err;
 +
 +		if (r->addr == IMX135_TABLE_WAIT_MS) {
@@ -452,8 +796,10 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +			write8(s, 0x030d, pll & 0xff);
 +			write8(s, 0x0600, 0);
 +			write8(s, 0x0601, test_pattern);
-+			write8(s, 0x0202, s->exposure->val >> 8);
-+			write8(s, 0x0203, s->exposure->val & 0xff);
++			int e = min_t(int, s->exposure->val, s->mode->exposure_max);
++
++			write8(s, 0x0202, e >> 8);
++			write8(s, 0x0203, e & 0xff);
 +			write8(s, 0x0205, s->gain->val);
 +		}
 +		err = write8(s, r->addr, r->val);
@@ -497,11 +843,14 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +	if (!s->on)
 +		return 0;			/* it goes in with the mode */
 +	switch (ctrl->id) {
-+	case V4L2_CID_EXPOSURE:
++	case V4L2_CID_EXPOSURE: {
++		int e = min_t(int, ctrl->val, s->mode->exposure_max);
++
 +		write8(s, 0x0104, 1);		/* both bytes together */
-+		write8(s, 0x0202, ctrl->val >> 8);
-+		write8(s, 0x0203, ctrl->val & 0xff);
++		write8(s, 0x0202, e >> 8);
++		write8(s, 0x0203, e & 0xff);
 +		return write8(s, 0x0104, 0);
++	}
 +	case V4L2_CID_ANALOGUE_GAIN:
 +		return write8(s, 0x0205, ctrl->val);
 +	}
@@ -514,20 +863,44 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +
 +static const s64 link_freqs[] = { LINK_FREQ };
 +
-+static void fill(struct v4l2_mbus_framefmt *f)
++static void fill(struct v4l2_mbus_framefmt *f, const struct imx135_mode *m)
 +{
 +	memset(f, 0, sizeof(*f));
-+	f->width = WIDTH;
-+	f->height = HEIGHT;
++	f->width = m->width;
++	f->height = m->height;
 +	f->code = MBUS_CODE;
 +	f->field = V4L2_FIELD_NONE;
 +	f->colorspace = V4L2_COLORSPACE_RAW;
 +}
 +
-+static int imx135_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
-+		      struct v4l2_subdev_format *fmt)
++static int imx135_get_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			  struct v4l2_subdev_format *fmt)
 +{
-+	fill(&fmt->format);
++	struct imx135 *s = container_of(sd, struct imx135, sd);
++
++	fill(&fmt->format, s->mode);
++	return 0;
++}
++
++/* The mode of that size, or the nearest bigger one (the biggest if it's bigger than all). */
++static int imx135_set_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			  struct v4l2_subdev_format *fmt)
++{
++	struct imx135 *s = container_of(sd, struct imx135, sd);
++	const struct imx135_mode *m = &modes[ARRAY_SIZE(modes) - 1];
++	int i;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && s->on)
++		return -EBUSY;
++	for (i = 0; i < ARRAY_SIZE(modes); i++) {
++		if (modes[i].width >= fmt->format.width && modes[i].height >= fmt->format.height) {
++			m = &modes[i];
++			break;
++		}
++	}
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
++		s->mode = m;
++	fill(&fmt->format, m);
 +	return 0;
 +}
 +
@@ -543,10 +916,10 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +static int imx135_enum_size(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
 +			    struct v4l2_subdev_frame_size_enum *fse)
 +{
-+	if (fse->index || fse->code != MBUS_CODE)
++	if (fse->index >= ARRAY_SIZE(modes) || fse->code != MBUS_CODE)
 +		return -EINVAL;
-+	fse->min_width = fse->max_width = WIDTH;
-+	fse->min_height = fse->max_height = HEIGHT;
++	fse->min_width = fse->max_width = modes[fse->index].width;
++	fse->min_height = fse->max_height = modes[fse->index].height;
 +	return 0;
 +}
 +
@@ -557,8 +930,8 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +static const struct v4l2_subdev_pad_ops pad_ops = {
 +	.enum_mbus_code = imx135_enum_code,
 +	.enum_frame_size = imx135_enum_size,
-+	.get_fmt = imx135_fmt,
-+	.set_fmt = imx135_fmt,
++	.get_fmt = imx135_get_fmt,
++	.set_fmt = imx135_set_fmt,
 +};
 +
 +static const struct v4l2_subdev_ops subdev_ops = {
@@ -582,6 +955,7 @@ diff -urN a/drivers/misc/imx135.c b/drivers/misc/imx135.c
 +	if (!s)
 +		return -ENOMEM;
 +	s->client = client;
++	s->mode = &modes[0];
 +	if ((err = get_supply(dev, &s->vio, "vio")) || (err = get_supply(dev, &s->vaf, "vaf")) ||
 +	    (err = get_supply(dev, &s->vdig, "vdig")) || (err = get_supply(dev, &s->vana, "vana")))
 +		return err;

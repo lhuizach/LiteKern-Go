@@ -320,12 +320,12 @@ static uint32_t adler_of(const uint8_t *p, size_t n)
     return b << 16 | a;
 }
 
-/* All 10 bits at every pixel. Green is found first, by looking along the edge rather
- * than across it (Hamilton-Adams: whichever of the row or the column changes less, with
- * a correction from the pixel's own colour); then red and blue are filled in from how far
- * they sit from green at the nearest red and blue pixels, which keeps edges from
- * getting coloured fringes. Turned upright into rows of 3-byte pixels, each row after a
- * PNG filter byte. */
+/* All 10 bits at every pixel, of a frame of any size. Green is found first, by looking along
+ * the edge rather than across it (Hamilton-Adams: whichever of the row or the column
+ * changes less, with a correction from the pixel's own colour); then red and blue are filled
+ * in from how far they sit from green at the nearest red and blue pixels, which keeps edges
+ * from getting coloured fringes. Turned upright into rows of 3-byte pixels, each row after a
+ * PNG filter byte. Three passes, each on all four cores, a quarter of the rows apiece. */
 /* A pixel off the edge reads from the other side of the edge, which keeps its colour
  * (the mirror lands on a pixel of the same parity). */
 static inline int mir(int v, int n)
@@ -333,16 +333,25 @@ static inline int mir(int v, int n)
     return v < 0 ? -v : v >= n ? 2 * (n - 1) - v : v;
 }
 
-static void develop(const uint8_t *frame, int red, int blue, uint8_t *out, int row_bytes)
+static struct {
+    const uint8_t *frame;
+    int w, h, stride, red, blue, row_bytes;
+    uint16_t *raw;
+    int16_t *gp;
+    int *fx2;                           /* the lens shading's x part, per column */
+    uint8_t *out;
+} dv;
+
+#define RAW(xx, yy) ((int)dv.raw[mir(yy, dv.h) * dv.w + mir(xx, dv.w)])
+#define GRN(xx, yy) ((int)dv.gp[mir(yy, dv.h) * dv.w + mir(xx, dv.w)])
+
+static void *dev_unpack(void *arg)
 {
-    uint16_t *raw = malloc(sizeof(uint16_t) * CAM_W * CAM_H);
-    int stride = cam_stride();
-    if (!raw)
-        return;
-    for (int y = 0; y < CAM_H; y++) {
-        const uint8_t *p = frame + (size_t)y * (size_t)stride;
-        uint16_t *r = raw + y * CAM_W;
-        for (int x = 0; x < CAM_W; x += 4, p += 5) {
+    int part = (int)(intptr_t)arg, y0 = dv.h * part / THREADS, y1 = dv.h * (part + 1) / THREADS;
+    for (int y = y0; y < y1; y++) {
+        const uint8_t *p = dv.frame + (size_t)y * (size_t)dv.stride;
+        uint16_t *r = dv.raw + (size_t)y * (size_t)dv.w;
+        for (int x = 0; x < dv.w; x += 4, p += 5) {
             int low = p[4];
             for (int k = 0; k < 4; k++) {
                 int v = (p[k] << 2 | (low >> (k * 2) & 3)) - CAM_BLACK;
@@ -350,35 +359,41 @@ static void develop(const uint8_t *frame, int red, int blue, uint8_t *out, int r
             }
         }
     }
-    int16_t *gp = malloc(sizeof(int16_t) * CAM_W * CAM_H);
-    if (!gp) {
-        free(raw);
-        return;
-    }
-#define RAW(xx, yy) ((int)raw[mir(yy, CAM_H) * CAM_W + mir(xx, CAM_W)])
-#define GRN(xx, yy) ((int)gp[mir(yy, CAM_H) * CAM_W + mir(xx, CAM_W)])
-    for (int y = 0; y < CAM_H; y++) {
-        for (int x = 0; x < CAM_W; x++) {
+    return 0;
+}
+
+static void *dev_green(void *arg)
+{
+    int part = (int)(intptr_t)arg, y0 = dv.h * part / THREADS, y1 = dv.h * (part + 1) / THREADS;
+    for (int y = y0; y < y1; y++) {
+        for (int x = 0; x < dv.w; x++) {
             int v = RAW(x, y);
             if ((x ^ y) & 1) {                  /* a green pixel already */
-                gp[y * CAM_W + x] = (int16_t)v;
+                dv.gp[(size_t)y * (size_t)dv.w + x] = (int16_t)v;
                 continue;
             }
             int gl = RAW(x - 1, y), gr = RAW(x + 1, y), gu = RAW(x, y - 1), gd = RAW(x, y + 1);
             int dh = abs(gl - gr) + abs(2 * v - RAW(x - 2, y) - RAW(x + 2, y));
-            int dv = abs(gu - gd) + abs(2 * v - RAW(x, y - 2) - RAW(x, y + 2));
+            int dvv = abs(gu - gd) + abs(2 * v - RAW(x, y - 2) - RAW(x, y + 2));
             int g;
-            if (dh < dv)
+            if (dh < dvv)
                 g = (gl + gr) / 2 + (2 * v - RAW(x - 2, y) - RAW(x + 2, y)) / 4;
-            else if (dv < dh)
+            else if (dvv < dh)
                 g = (gu + gd) / 2 + (2 * v - RAW(x, y - 2) - RAW(x, y + 2)) / 4;
             else
                 g = (gl + gr + gu + gd) / 4 + (4 * v - RAW(x - 2, y) - RAW(x + 2, y) - RAW(x, y - 2) - RAW(x, y + 2)) / 8;
-            gp[y * CAM_W + x] = (int16_t)(g < 0 ? 0 : g > 1023 ? 1023 : g);
+            dv.gp[(size_t)y * (size_t)dv.w + x] = (int16_t)(g < 0 ? 0 : g > 1023 ? 1023 : g);
         }
     }
-    for (int y = 0; y < CAM_H; y++) {
-        for (int x = 0; x < CAM_W; x++) {
+    return 0;
+}
+
+static void *dev_colour(void *arg)
+{
+    int part = (int)(intptr_t)arg, y0 = dv.h * part / THREADS, y1 = dv.h * (part + 1) / THREADS;
+    for (int y = y0; y < y1; y++) {
+        int fy = (y - dv.h / 2) * 256 / (dv.h / 2), fy2 = fy * fy;
+        for (int x = 0; x < dv.w; x++) {
             int g = GRN(x, y), r, b;
             if (!(y & 1) && !(x & 1)) {         /* red: blue from the four corners */
                 r = RAW(x, y);
@@ -397,15 +412,46 @@ static void develop(const uint8_t *frame, int red, int blue, uint8_t *out, int r
             }
             r = r < 0 ? 0 : r;
             b = b < 0 ? 0 : b;
-            int sh = shade_at(x - CAM_W / 2, y - CAM_H / 2, CAM_W / 2, CAM_H / 2);
-            uint8_t *px = out + (size_t)x * (size_t)row_bytes + 1 + (size_t)(CAM_H - 1 - y) * 3;
-            finish(((r * sh) >> 8) * red >> 8, (g * sh) >> 8, ((b * sh) >> 8) * blue >> 8, px);
+            int sh = 256 + ((((dv.fx2[x] + fy2) >> 9) * SHADING) >> 8);
+            uint8_t *px = dv.out + (size_t)x * (size_t)dv.row_bytes + 1 + (size_t)(dv.h - 1 - y) * 3;
+            finish(((r * sh) >> 8) * dv.red >> 8, (g * sh) >> 8, ((b * sh) >> 8) * dv.blue >> 8, px);
         }
     }
+    return 0;
+}
 #undef RAW
 #undef GRN
-    free(gp);
-    free(raw);
+
+static int develop(const uint8_t *frame, int w, int h, int stride, int red, int blue, uint8_t *out, int row_bytes)
+{
+    dv.frame = frame;
+    dv.w = w;
+    dv.h = h;
+    dv.stride = stride;
+    dv.red = red;
+    dv.blue = blue;
+    dv.out = out;
+    dv.row_bytes = row_bytes;
+    dv.raw = malloc(sizeof(uint16_t) * (size_t)w * (size_t)h);
+    dv.gp = malloc(sizeof(int16_t) * (size_t)w * (size_t)h);
+    dv.fx2 = malloc(sizeof(int) * (size_t)w);
+    if (!dv.raw || !dv.gp || !dv.fx2) {
+        free(dv.raw);
+        free(dv.gp);
+        free(dv.fx2);
+        return -1;
+    }
+    for (int x = 0; x < w; x++) {
+        int fx = (x - w / 2) * 256 / (w / 2);
+        dv.fx2[x] = fx * fx;
+    }
+    on_all_cores(dev_unpack);
+    on_all_cores(dev_green);
+    on_all_cores(dev_colour);
+    free(dv.raw);
+    free(dv.gp);
+    free(dv.fx2);
+    return 0;
 }
 
 static int folder(char *dir)
@@ -423,11 +469,11 @@ static int folder(char *dir)
 
 #define THUMB_FILE "last-photo.thumb"
 
-/* From the developed picture: its middle, shrunk to THUMB x THUMB. */
-static void thumb_save(const uint8_t *rows, int row, int vol, const char *dir)
+/* From the developed picture (pw wide, ph tall): its middle square, shrunk to THUMB x THUMB. */
+static void thumb_save(const uint8_t *rows, int row, int pw, int ph, int vol, const char *dir)
 {
     static uint32_t t[THUMB * THUMB];
-    int side = CAM_H, top = (CAM_W - side) / 2;
+    int side = pw, top = (ph - side) / 2;
     for (int y = 0; y < THUMB; y++)
         for (int x = 0; x < THUMB; x++) {
             const uint8_t *p = rows + (size_t)(top + y * side / THUMB) * (size_t)row + 1 + (size_t)(x * side / THUMB) * 3;
@@ -443,10 +489,10 @@ int photo_thumb(uint32_t *out)
     return vol >= 0 && k86_read(vol, dir, THUMB_FILE, out, THUMB * THUMB * 4) == THUMB * THUMB * 4;
 }
 
-int photo_save(const uint8_t *frame, int red, int blue, char *name)
+int photo_save(const uint8_t *frame, int fw, int fh, int fstride, int red, int blue, char *name)
 {
     static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
-    int w = CAM_H, h = CAM_W, row = w * 3 + 1, err = -1;
+    int w = fh, h = fw, row = w * 3 + 1, err = -1;      /* turned a quarter: the sensor's rows are the picture's columns */
     size_t raw_len = (size_t)row * (size_t)h, room = raw_len + raw_len / 64 + 2048;
     uint8_t *rows = calloc(raw_len, 1), *png = malloc(room), *work = malloc(DEFLATE_WORK);
     char dir[K86_PATH_MAX];
@@ -454,11 +500,12 @@ int photo_save(const uint8_t *frame, int red, int blue, char *name)
     gamma_init();
     if (!rows || !png || !work)
         goto out;
-    develop(frame, red, blue, rows, row);
+    if (develop(frame, fw, fh, fstride, red, blue, rows, row))
+        goto out;
     int vol = folder(dir);
     if (vol < 0)
         goto out;
-    thumb_save(rows, row, vol, dir);
+    thumb_save(rows, row, w, h, vol, dir);
     /* PNG's "up" filter: each row as the change from the one above squeezes far better. */
     for (int y = h - 1; y > 0; y--) {
         uint8_t *now = rows + (size_t)y * (size_t)row, *above = now - row;

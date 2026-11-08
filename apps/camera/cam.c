@@ -9,7 +9,9 @@
 #include <linux/v4l2-subdev.h>
 #include <linux/videodev2.h>
 #include <poll.h>
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -60,7 +62,7 @@ static int open_node(const struct media_entity_desc *e)
     return open(dev, O_RDWR | O_NONBLOCK);
 }
 
-static int set_fmt(const char *name, unsigned pad)
+static int set_fmt(const char *name, unsigned pad, int w, int h)
 {
     struct media_entity_desc e;
     struct v4l2_subdev_format f;
@@ -72,8 +74,8 @@ static int set_fmt(const char *name, unsigned pad)
     memset(&f, 0, sizeof(f));
     f.which = V4L2_SUBDEV_FORMAT_ACTIVE;
     f.pad = pad;
-    f.format.width = CAM_W;
-    f.format.height = CAM_H;
+    f.format.width = w;
+    f.format.height = h;
     f.format.code = CODE;
     f.format.field = V4L2_FIELD_NONE;
     int err = ioctl(fd, VIDIOC_SUBDEV_S_FMT, &f);
@@ -104,16 +106,24 @@ static void set_ctrl(uint32_t id, int value)
     ioctl(sensor, VIDIOC_S_CTRL, &c);
 }
 
-static int pipeline(void)
+/* The size every stage works at; the sensor picks the mode of that size. */
+static int set_sizes(int w, int h)
 {
     static const char *const nodes[] = { "msm_csiphy0", "msm_csid0", "msm_ispif0", "msm_vfe0_rdi0" };
-    struct media_entity_desc e;
-    if (link_pads("msm_csiphy0", 1, "msm_csid0", 0) || link_pads("msm_csid0", 1, "msm_ispif0", 0) ||
-        link_pads("msm_ispif0", 1, "msm_vfe0_rdi0", 0) || set_fmt("imx135", 0))
+    if (set_fmt("imx135", 0, w, h))
         return -1;
     for (unsigned i = 0; i < 4; i++)
-        if (set_fmt(nodes[i], 0) || set_fmt(nodes[i], 1))
+        if (set_fmt(nodes[i], 0, w, h) || set_fmt(nodes[i], 1, w, h))
             return -1;
+    return 0;
+}
+
+static int pipeline(void)
+{
+    struct media_entity_desc e;
+    if (link_pads("msm_csiphy0", 1, "msm_csid0", 0) || link_pads("msm_csid0", 1, "msm_ispif0", 0) ||
+        link_pads("msm_ispif0", 1, "msm_vfe0_rdi0", 0) || set_sizes(CAM_W, CAM_H))
+        return -1;
     if (find("imx135", &e) || (sensor = open_node(&e)) < 0)
         return -1;
     if (find("msm_vfe0_video0", &e) || (video = open_node(&e)) < 0)
@@ -121,40 +131,32 @@ static int pipeline(void)
     return 0;
 }
 
-int cam_open(void)
+/* The video node's format and buffers for a size; 0, or -1. */
+static int buffers_up(int w, int h, unsigned want)
 {
-    for (int i = 0; i < 4 && media < 0; i++) {
-        char path[32];
-        struct media_entity_desc e;
-        snprintf(path, sizeof(path), "/dev/media%d", i);
-        media = open(path, O_RDWR);
-        if (media >= 0 && find("imx135", &e)) {
-            close(media);
-            media = -1;
-        }
-    }
-    if (media < 0 || pipeline())
-        return -1;
-
     struct v4l2_format f;
     memset(&f, 0, sizeof(f));
     f.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    f.fmt.pix_mp.width = CAM_W;
-    f.fmt.pix_mp.height = CAM_H;
+    f.fmt.pix_mp.width = (uint32_t)w;
+    f.fmt.pix_mp.height = (uint32_t)h;
     f.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_SRGGB10P;
     f.fmt.pix_mp.field = V4L2_FIELD_NONE;
     f.fmt.pix_mp.num_planes = 1;
-    if (ioctl(video, VIDIOC_S_FMT, &f))
+    if (ioctl(video, VIDIOC_S_FMT, &f)) {
+        k86_logf("camera: %dx%d: S_FMT failed, errno %d", (uint32_t)w, (uint32_t)h, errno);
         return -1;
+    }
     stride = (int)f.fmt.pix_mp.plane_fmt[0].bytesperline;
 
     struct v4l2_requestbuffers req;
     memset(&req, 0, sizeof(req));
-    req.count = BUFS;
+    req.count = want;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     req.memory = V4L2_MEMORY_MMAP;
-    if (ioctl(video, VIDIOC_REQBUFS, &req) || req.count > BUFS)
+    if (ioctl(video, VIDIOC_REQBUFS, &req) || req.count > BUFS || !req.count) {
+        k86_logf("camera: %dx%d: REQBUFS failed, errno %d, count %d", (uint32_t)w, (uint32_t)h, errno, (int)req.count);
         return -1;
+    }
     nbufs = req.count;
     for (unsigned i = 0; i < nbufs; i++) {
         struct v4l2_buffer b;
@@ -173,19 +175,62 @@ int cam_open(void)
         if (mem[i] == MAP_FAILED || ioctl(video, VIDIOC_QBUF, &b))
             return -1;
     }
-    set_ctrl(V4L2_CID_EXPOSURE, exposure);
-    set_ctrl(V4L2_CID_ANALOGUE_GAIN, gain_code);
+    return 0;
+}
+
+/* Stops the stream and gives the buffers back. */
+static void buffers_down(void)
+{
     int type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    return ioctl(video, VIDIOC_STREAMON, &type);
+    struct v4l2_requestbuffers req;
+    ioctl(video, VIDIOC_STREAMOFF, &type);
+    for (unsigned i = 0; i < nbufs; i++)
+        munmap(mem[i], mem_len[i]);
+    nbufs = 0;
+    memset(&req, 0, sizeof(req));
+    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    req.memory = V4L2_MEMORY_MMAP;
+    ioctl(video, VIDIOC_REQBUFS, &req);          /* count 0: free them */
+}
+
+static int stream_up(int w, int h, unsigned want, int exp, int gain)
+{
+    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    if (set_sizes(w, h)) {
+        k86_logf("camera: %dx%d: the pipeline wouldn't take the size, errno %d", (uint32_t)w, (uint32_t)h, errno);
+        return -1;
+    }
+    if (buffers_up(w, h, want))
+        return -1;
+    set_ctrl(V4L2_CID_EXPOSURE, exp);
+    set_ctrl(V4L2_CID_ANALOGUE_GAIN, gain);
+    int err = ioctl(video, VIDIOC_STREAMON, &type);
+    if (err)
+        k86_logf("camera: %dx%d: STREAMON failed, errno %d", (uint32_t)w, (uint32_t)h, errno);
+    return err;
+}
+
+int cam_open(void)
+{
+    for (int i = 0; i < 4 && media < 0; i++) {
+        char path[32];
+        struct media_entity_desc e;
+        snprintf(path, sizeof(path), "/dev/media%d", i);
+        media = open(path, O_RDWR);
+        if (media >= 0 && find("imx135", &e)) {
+            close(media);
+            media = -1;
+        }
+    }
+    if (media < 0 || pipeline())
+        return -1;
+    return stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code);
 }
 
 void cam_close(void)
 {
     if (video >= 0) {
-        int type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-        ioctl(video, VIDIOC_STREAMOFF, &type);
-        for (unsigned i = 0; i < nbufs; i++)
-            munmap(mem[i], mem_len[i]);
+        buffers_down();
         close(video);
     }
     if (sensor >= 0)
@@ -228,6 +273,61 @@ void cam_release(int slot)
     b.m.planes = &p;
     b.length = 1;
     ioctl(video, VIDIOC_QBUF, &b);
+}
+
+/* A photo-sized frame: the live picture stops, the sensor goes to the photo mode for a few
+ * frames (the first ones are dark or half-exposed, and the lens, which lost its power with
+ * the stream, needs to get back to where it was), one is copied, and the live picture
+ * comes back. The exposure was found for the live mode; a photo-mode line is longer, so
+ * it takes fewer of them for the same time. Returns a malloc'd copy (free it), its size
+ * and row pitch; NULL if the photo mode didn't come up (the live picture comes back all
+ * the same). */
+#define STILL_SKIP 5
+#define STILL_LINE_NUM 4572            /* the live mode's line length, and the photo mode's: */
+#define STILL_LINE_DEN 5120
+uint8_t *cam_still(int *w, int *h, int *row_bytes, void (*settled)(void))
+{
+    uint8_t *copy = NULL;
+    int sw = STILL_W, sh = STILL_H, got = 0, e;
+    buffers_down();
+    e = exposure * STILL_LINE_NUM / STILL_LINE_DEN;
+    e = e < 4 ? 4 : e;
+    if (stream_up(sw, sh, BUFS, e, gain_code) == 0) {
+        if (settled)
+            settled();                         /* the lens back to its place */
+        for (int tries = 0; tries < 40 && !copy; tries++) {
+            struct pollfd pf = { video, POLLIN, 0 };
+            struct v4l2_buffer b;
+            struct v4l2_plane p;
+            if (poll(&pf, 1, 1000) <= 0) {
+                k86_logf("camera: photo mode: no frame after %d", (uint32_t)got);
+                break;
+            }
+            memset(&b, 0, sizeof(b));
+            memset(&p, 0, sizeof(p));
+            b.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+            b.memory = V4L2_MEMORY_MMAP;
+            b.m.planes = &p;
+            b.length = 1;
+            if (ioctl(video, VIDIOC_DQBUF, &b))
+                continue;
+            if (++got > STILL_SKIP) {
+                k86_logf("camera: photo mode: frame %d of %dx%d, rows %d bytes", (uint32_t)got, (uint32_t)sw, (uint32_t)sh, (uint32_t)stride);
+                size_t len = (size_t)stride * (size_t)sh;
+                copy = malloc(len);
+                if (copy)
+                    memcpy(copy, mem[b.index], len);
+                *w = sw;
+                *h = sh;
+                *row_bytes = stride;
+            }
+            ioctl(video, VIDIOC_QBUF, &b);
+        }
+    }
+    buffers_down();
+    if (stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code))
+        k86_log("camera: the live picture didn't come back");
+    return copy;
 }
 
 static float gain_of(int code)

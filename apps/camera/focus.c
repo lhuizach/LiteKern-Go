@@ -43,13 +43,27 @@ static int lens_write(int reg, int value)
     return write(bus, b, 2) == 2 ? 0 : -1;
 }
 
+static int lens_pos = -1;               /* where the lens was last sent (-1: never) */
+
 void focus_move(int pos)
 {
     pos = pos < 0 ? 0 : pos > POS_MAX ? POS_MAX : pos;
+    lens_pos = pos;
     if (bus >= 0) {
         if (lens_write(2, 0) || lens_write(3, pos >> 8) || lens_write(4, pos & 0xff))
             k86_log("camera: focus motor didn't answer");
     }
+}
+
+/* The lens loses its power whenever the sensor stops streaming (a photo does that twice):
+ * this sends it back to where it was, and waits for it to settle. */
+void focus_restore(void)
+{
+    if (bus < 0 || lens_pos < 0)
+        return;
+    usleep(60 * 1000);                  /* the lens's supply comes up with the stream */
+    focus_move(lens_pos);
+    usleep(150 * 1000);
 }
 
 int focus_open(void)

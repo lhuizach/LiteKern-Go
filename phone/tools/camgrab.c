@@ -24,8 +24,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#define W 1280
-#define H 720
+static int W = 1280, H = 720;      /* CAM_SIZE=2104x1560 asks for another size */
 #define CODE MEDIA_BUS_FMT_SRGGB10_1X10
 #define BUFS 4
 #define BLACK 64
@@ -296,6 +295,8 @@ static void save_ppm(const uint8_t *frame, int stride, const char *path)
 
 int main(int argc, char **argv)
 {
+    if (getenv("CAM_SIZE"))
+        sscanf(getenv("CAM_SIZE"), "%dx%d", &W, &H);
     if (argc < 2) {
         fprintf(stderr, "usage: camgrab NAME\n");
         return 2;

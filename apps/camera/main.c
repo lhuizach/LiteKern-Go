@@ -12,6 +12,7 @@
 #include "sdk/kern86.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define FRAME_MS 16
@@ -95,22 +96,45 @@ static void focus_on(int x, int y)
     focus_at(y + top_skip, CAM_H - 1 - (x + left_skip));
 }
 
+static int restreamed;                  /* take() restarted the stream: the frame in hand is gone */
+
+/* The photo: the sensor goes to its photo mode for one frame (cam_still), which is developed
+ * and saved; if that doesn't come up, the live frame in hand is saved as it is. */
 static void take(const uint8_t *frame)
 {
     char name[64];
+    int w = 0, h = 0, rb = 0, err;
     busy = 1;
     say("Saving" TEXT_ELLIPSIS);
     overlay();
     k86_present(0, 0, canvas.w, canvas.h);
     uint32_t began = k86_uptime_ms();
-    if (photo_save(frame, red, blue, name)) {
+    size_t live_len = (size_t)cam_stride() * CAM_H;
+    uint8_t *live = malloc(live_len);           /* the live frame goes when the stream restarts */
+    if (live)
+        memcpy(live, frame, live_len);
+    int live_stride = cam_stride();
+    uint8_t *still = cam_still(&w, &h, &rb, focus_restore);
+    restreamed = 1;
+    focus_restore();                            /* the lens lost its power again */
+    uint32_t grabbed = k86_uptime_ms();
+    if (still)
+        err = photo_save(still, w, h, rb, red, blue, name);
+    else if (live)
+        err = photo_save(live, CAM_W, CAM_H, live_stride, red, blue, name);
+    else
+        err = -1;
+    if (err) {
         k86_log("camera: couldn't save the photo");
         say("Couldn't save the photo");
     } else {
-        k86_logf("camera: saved %s in %u ms", name, k86_uptime_ms() - began);
+        k86_logf("camera: saved %s (%s) in %u ms, %u ms of it the frame", name, still ? "photo mode" : "live frame",
+                 k86_uptime_ms() - began, grabbed - began);
         say("Saved to Gallery");
         have_thumb = photo_thumb(thumb);
     }
+    free(still);
+    free(live);
     busy = 0;
     shoot = 0;
 }
@@ -144,7 +168,10 @@ static void timer(void)
         take(frame);
     overlay();
     k86_present(0, 0, canvas.w, canvas.h);
-    cam_release(got);
+    if (restreamed)
+        restreamed = 0;                         /* a new stream: its buffers are all queued already */
+    else
+        cam_release(got);
     work += k86_uptime_ms() - t0;
     if (!since)
         since = t0;
