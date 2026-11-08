@@ -4,15 +4,16 @@
  * near to far, 512 and up is blurry for a subject 25 cm away; far subjects peak past 600). One register per write. The
  * sensor's streaming supplies keep it powered, so it only works while the camera runs.
  *
- * Autofocus is two sweeps: the lens goes through its range and each stop is scored
- * by how much detail there is around the point asked for; then finer stops around
- * the best, and it goes back to the sharpest. */
+ * Autofocus: the lens goes through its range in 7 steps, each scored by how much detail
+ * there is around the point asked for; it stops early once the detail has clearly fallen
+ * away past the best, and a parabola through the scores round the best gives the peak. */
 #include "cam.h"
 #include "sdk/kern86.h"
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,15 +22,17 @@
 
 #define LENS_ADDR 0x0c
 #define POS_MAX 800
-#define COARSE_STOPS 13
-#define FINE_STOPS 7
-#define SETTLE_FRAMES 5                 /* the lens rings for a moment after a move: about 80 ms */
-#define SAMPLES 2                       /* frames averaged for each stop */
+#define STOPS 7                         /* 0 to POS_MAX in steps of 133 */
+#define SETTLE_FRAMES 3                 /* after a move: the lens rings for a moment and the frames in flight are old */
+#define SAMPLES 1                       /* frames looked at for each stop */
+#define GIVE_UP 60                      /* per cent of the best: two stops below it in a row past the peak and it's found */
 #define NOISE 5                         /* a difference this small is the sensor's noise */
 #define WINDOW 150                      /* sensor pixels each way from the point */
 
 static int bus = -1;
-static int stop = -1, stops, wait_frames, start_pos, step_pos, best_pos, fine;
+static int stop = -1, wait_frames, best_pos, below;
+static long scores[STOPS];
+static uint32_t began;
 static long best_score, acc;
 static int nsamp;
 static int at_x = CAM_W / 2, at_y = CAM_H / 2;
@@ -93,17 +96,16 @@ int focus_active(void)
     return stop >= 0;
 }
 
-static void sweep(int from, int step, int count, int is_fine)
+static void sweep(void)
 {
     stop = 0;
-    stops = count;
-    start_pos = from;
-    step_pos = step;
-    fine = is_fine;
-    wait_frames = SETTLE_FRAMES + (is_fine ? 0 : 4);    /* the first move may be long */
+    below = 0;
+    began = k86_uptime_ms();
+    best_score = -1;
+    wait_frames = SETTLE_FRAMES + 2;        /* the first move may be long */
     acc = 0;
     nsamp = 0;
-    focus_move(from);
+    focus_move(0);
 }
 
 void focus_at(int x, int y)
@@ -112,8 +114,7 @@ void focus_at(int x, int y)
         return;
     at_x = x < WINDOW ? WINDOW : x > CAM_W - WINDOW - 8 ? CAM_W - WINDOW - 8 : x;
     at_y = y < WINDOW ? WINDOW : y > CAM_H - WINDOW - 1 ? CAM_H - WINDOW - 1 : y;
-    best_score = -1;
-    sweep(0, POS_MAX / (COARSE_STOPS - 1), COARSE_STOPS, 0);
+    sweep();
 }
 
 /* How much fine detail there is round the point: the differences between greens two
@@ -141,6 +142,24 @@ static long sharpness(const uint8_t *frame)
     return score;
 }
 
+/* The best stop is the peak to within a step; the scores either side of it say which way
+ * the real peak lies. A parabola through the logs of three scores (detail falls off like a
+ * bell, and the log of a bell is a parabola) gives where its top is. */
+static int refine(int i)
+{
+    int step = POS_MAX / (STOPS - 1);
+    int pos = i * step;
+    if (i <= 0 || i >= STOPS - 1 || scores[i - 1] <= 0 || scores[i + 1] <= 0 || scores[i] <= 0)
+        return pos;
+    double l = log((double)scores[i - 1]), m = log((double)scores[i]), r = log((double)scores[i + 1]);
+    double d = l - 2 * m + r;
+    if (d >= 0)
+        return pos;                         /* no peak: flat or a dip */
+    double off = 0.5 * (l - r) / d;         /* in steps, from the best stop */
+    off = off < -0.5 ? -0.5 : off > 0.5 ? 0.5 : off;
+    return pos + (int)(off * step);
+}
+
 void focus_frame(const uint8_t *frame)
 {
     if (stop < 0)
@@ -149,33 +168,34 @@ void focus_frame(const uint8_t *frame)
         wait_frames--;
         return;
     }
-    int pos = start_pos + stop * step_pos;
+    int step = POS_MAX / (STOPS - 1), pos = stop * step;
     acc += sharpness(frame);
     if (++nsamp < SAMPLES)
-        return;                             /* a second look at this stop */
+        return;
     long score = acc / SAMPLES;
     acc = 0;
     nsamp = 0;
+    scores[stop] = score;
     k86_logf("camera: focus pos %d score %d", (uint32_t)pos, (int)score);
     if (score > best_score) {
         best_score = score;
-        best_pos = pos;
+        best_pos = stop;
+        below = 0;
+    } else if (score * 100 < best_score * GIVE_UP) {
+        below++;
+    } else {
+        below = 0;                          /* it came back up: not past the peak */
     }
-    if (++stop < stops) {
-        focus_move(start_pos + stop * step_pos);
+    /* Done when all the stops are looked at, or two in a row past the best are well below it. */
+    if (++stop < STOPS && below < 2) {
+        focus_move(stop * step);
         wait_frames = SETTLE_FRAMES;
         return;
     }
-    if (!fine) {
-        int step = POS_MAX / (COARSE_STOPS - 1), span = step * 2 / (FINE_STOPS - 1);
-        int from = best_pos - step;
-        /* The lens has two ends: the fine stops all have to be real positions. */
-        if (from + span * (FINE_STOPS - 1) > POS_MAX)
-            from = POS_MAX - span * (FINE_STOPS - 1);
-        sweep(from < 0 ? 0 : from, span, FINE_STOPS, 1);
-        return;
-    }
+    for (int i = stop; i < STOPS; i++)
+        scores[i] = 0;
     stop = -1;
-    focus_move(best_pos);
-    k86_logf("camera: focused at %d", (uint32_t)best_pos);
+    int at = refine(best_pos);
+    focus_move(at);
+    k86_logf("camera: focused at %d in %u ms", (uint32_t)at, k86_uptime_ms() - began);
 }
