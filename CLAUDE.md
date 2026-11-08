@@ -71,6 +71,7 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 ## Status
 
 - Our system runs on the phone from RAM (`fastboot boot`, `go14`, 7 Nov 2026): GUI, touch, Wi-Fi and the R3lay app all confirmed, so proposed v1 works, though only from RAM: a restart goes back to Nura and forgets Wi-Fi and sign-ins.
+- Where things stand (8 Nov 2026, end of day): newest RAM-boot image `go33` (Apps for zach/to-fedora). Camera photo mode (2080x1170) and the camera app after go33 were put on the phone by hand over SSH, so the next image rebuild includes them (the sensor driver is in patch 0002). Parked for next time: a sharper preview (the screen is 720x1280, so only sharpening would show), faster photo saving (PNG compression is single-core, about 2.4 s), the untested 4160x2340 mode with JPEG saving, digital zoom, home screen customisation, a real flash.
 - Phone: lk2nd flashed to BOOT (Heimdall), then Nura Phosh v26.06 to userdata (fastboot), and Nura boots. Both from the Fedora VM. Android does not boot until Samsung's boot.img (`~/phone/stock/boot.img` in Fedora) is flashed back. KNOX probably tripped. Nothing else flashed. Reactivation lock was off; no accounts.
 - Downloaded and scanned: Heimdall 1.4.0 (win32), Android platform-tools, `lk2nd-msm8916.img` (418 KB), Nura v26.06 samsung-a5 Phosh images (boot and rootfs, extracted), Frija 2.0.26142.10.
 - Downloaded but waiting on admin to install: Zadig 2.9 (USB driver), Visual C++ 2012 x86 (Heimdall), .NET 8 Desktop Runtime x86 (Frija).
@@ -89,7 +90,8 @@ A VM cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 ## Known risks
 
-- Camera: not working on Nura ("can't be found"), and no driver in our kernel yet; the brother wants to take photos sometimes. Both sensors answer on our system (rear IMX135, front S5K5E3YX), and the rear gave its first real photo on 7 Nov 2026 (`accomplishments/first-photo.png`), and the phone now makes colour photos itself with auto-exposure (`accomplishments/first-colour-photo.png`), and the Camera app (`apps/camera`) has live preview, 720x1280 photos saved to Gallery, and a last-photo button. Autofocus is not working yet. Screen and Wi-Fi do work.
+- Camera: not working on Nura ("can't be found"), but it works on our system. Rear IMX135 driver (`phone/kernel/0002-a5-rear-camera.patch`), the Camera app (`apps/camera`): live preview 1280x720 at 30 fps, autofocus (the focus motor is DW9768-style: registers 2, 3, 4; about 0.5 to 1 s), tap to focus, and photos in a higher sensor mode (2080x1170 binned, the preview's own window, saved as 1170x2080 PNGs, about 3.5 s each; a 4160x2340 mode is in the driver but untested). The front sensor (S5K5E3YX) answers but has no driver. The phone's mode switch loses the lens power, so the app restores the lens position. Screen and Wi-Fi do work.
+- Brightness: works (8 Nov 2026, go33): kernel patch `phone/kernel/0003-a5-panel-backlight.patch`, dimming by AID only (the per-level colour tables tint the screen yellow-green), changes send once when the finger lifts. Settings > Display has a Reset Screen button. A short blink on each change is the msm DSI driver's own behaviour.
 - Games: Android games will not install on Linux. Waydroid might run them but is heavy on 2 GB RAM and unverified on this kernel.
 - Calls and mobile data are the hardest parts on mainline Linux and are not planned early.
 - Other reported gaps: display brightness and USB-OTG.
