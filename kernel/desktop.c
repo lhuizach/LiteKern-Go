@@ -2551,8 +2551,14 @@ static void qs_set(int open, int instant)
     qs.t = open ? FX(qs_h()) : 0;
     if (instant)
         spring_snap(&qs);
-    if (was != open)
+    if (was != open) {
         kprintf("qs: %s\n", open ? "open" : "closed");
+        if (open) {                             /* the brightness may have been set in Settings */
+            struct k86_machine now;
+            machine_status(&now);
+            machine_shown.brightness = now.brightness;
+        }
+    }
     was = open;
     qs_moving = qs.x != qs.t || qs.v;
     last_qs_tick = uptime_ms();
@@ -3070,6 +3076,7 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
         } else if (machine_shown.brightness >= 0 && inside(qs_slider_rect(0), x, y)) {
             qs_finger = QF_SLIDER;
             qs_sl = 0;
+            machine_status(&machine_shown);     /* what the screen really is, not the last look */
             qs_sl_from = machine_shown.brightness;
             qs_bright_sent = -1;
             qs_bright_want = machine_shown.brightness;
@@ -3779,16 +3786,25 @@ void desktop_tick(void)
     last_tick = ticks;
     struct k86_net n;                       /* the network and battery icons: redrawn when they change */
     net_status(&n);
-    struct k86_machine m = machine_shown;
+    /* The icon shows only the battery: the other fields are zeroed in both copies so that the
+     * comparison ignores them, and the brightness (which the control centre's slider reads) is
+     * kept apart and put back. */
+    struct k86_machine m = machine_shown, was = machine_shown;
+    int brightness = machine_shown.brightness;
+    m.minutes = m.brightness = m.timezone = 0;
+    was.minutes = was.brightness = was.timezone = 0;
     if (ticks % 5 == 0 || !last_machine_tick) {
         machine_status(&m);
-        m.minutes = m.brightness = m.timezone = 0;     /* the icon shows only these */
+        brightness = m.brightness;
+        m.minutes = m.brightness = m.timezone = 0;
         last_machine_tick = 1;
     }
-    if (memcmp(&n, &net_shown, sizeof(n)) || memcmp(&m, &machine_shown, sizeof(m))) {
+    machine_shown.brightness = brightness;
+    if (memcmp(&n, &net_shown, sizeof(n)) || memcmp(&m, &was, sizeof(m))) {
         int from = status_left();
         net_shown = n;
         machine_shown = m;
+        machine_shown.brightness = brightness;
         int left = status_left() < from ? status_left() : from;
         shell_damage((struct gfx_rect){ left - 200, 0, power_rect().x - left + 200, T()->topbar_h });
         shell_flush();
