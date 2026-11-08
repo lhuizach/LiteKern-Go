@@ -9,6 +9,8 @@
  * driver. Prints what it did. */
 #include <errno.h>
 #include <fcntl.h>
+#include <dirent.h>
+#include <linux/i2c-dev.h>
 #include <linux/media.h>
 #include <linux/v4l2-subdev.h>
 #include <linux/videodev2.h>
@@ -35,6 +37,58 @@
 #define SATURATION 1.35f
 
 static int media;
+
+static void die(const char *what);
+
+/* CAM_LENS=0..511: the focus motor to that position (as apps/camera/focus.c does it), once
+ * streaming has started, so a picture can be taken with the lens somewhere known. */
+static void lens(int pos)
+{
+    DIR *d = opendir("/sys/class/i2c-dev");
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        char path[300], name[64] = "";
+        snprintf(path, sizeof(path), "/sys/class/i2c-dev/%s/name", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f)
+            continue;
+        if (!fgets(name, sizeof(name), f))
+            name[0] = 0;
+        fclose(f);
+        if (!strstr(name, "focus"))
+            continue;
+        snprintf(path, sizeof(path), "/dev/%s", e->d_name);
+        int fd = open(path, O_RDWR);
+        if (fd < 0 || ioctl(fd, I2C_SLAVE, 0x0c))
+            die(path);
+        const char *raw = getenv("CAM_LENS_W");     /* "10:00,20:f0": each pair is one two-byte write */
+        if (raw) {
+            for (const char *q = raw; *q;) {
+                unsigned x, y;
+                int used = 0;
+                if (sscanf(q, "%x:%x%n", &x, &y, &used) != 2)
+                    break;
+                uint8_t w[2] = { (uint8_t)x, (uint8_t)y };
+                if (write(fd, w, 2) != 2)
+                    die("lens write");
+                q += used;
+                if (*q == ',')
+                    q++;
+            }
+            close(fd);
+            printf("lens wrote %s\n", raw);
+            break;
+        }
+        int v = pos << 7;
+        uint8_t b0[2] = { 0, (uint8_t)(v >> 8) }, b1[2] = { 1, (uint8_t)(v & 255) }, b2[2] = { 2, 0 };
+        if (write(fd, b0, 2) != 2 || write(fd, b1, 2) != 2 || write(fd, b2, 2) != 2)
+            die("lens write");
+        close(fd);
+        printf("lens at %d\n", pos);
+    }
+    if (d)
+        closedir(d);
+}
 
 static void die(const char *what)
 {
@@ -313,6 +367,8 @@ int main(int argc, char **argv)
     int type = f.type;
     if (ioctl(v, VIDIOC_STREAMON, &type))
         die("VIDIOC_STREAMON");
+    if (getenv("CAM_LENS") || getenv("CAM_LENS_W"))
+        lens(getenv("CAM_LENS") ? atoi(getenv("CAM_LENS")) : 0);
 
     int settled = 0, wait = 4;
     for (int n = 0;; n++) {
