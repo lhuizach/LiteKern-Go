@@ -10,6 +10,8 @@
 #include "kernel/deflate.h"
 #include "sdk/kern86.h"
 
+#include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +55,9 @@ static inline int clamp10(int v)
  * r, g, b: 10-bit linear, white balanced. */
 static inline void finish(int r0, int g0, int b0, uint8_t *out)
 {
+    r0 = clamp10(r0);                   /* a channel past full scale is just full: left alone, the */
+    g0 = clamp10(g0);                   /* matrix would take it off the others and tint the highlights */
+    b0 = clamp10(b0);
     int r = (359 * r0 - 77 * g0 - 26 * b0) >> 8;
     int g = (-51 * r0 + 358 * g0 - 51 * b0) >> 8;
     int b = (-13 * r0 - 90 * g0 + 359 * b0) >> 8;
@@ -86,10 +91,155 @@ void photo_balance(const uint8_t *frame, int *red, int *blue)
     }
 }
 
+/* The preview: one screen pixel for each sensor pixel (the screen is 720 wide, the
+ * sensor 720 high once turned). The top 8 bits of every pixel go into a plane, then each
+ * pixel's two missing colours come from a 5x5 window (Malvar-He-Cutler: a neighbour
+ * average corrected by the pixel's own colour's curvature), which keeps edges free of
+ * the coloured fringes a 2x2 cell gives.
+ *
+ * That's a lot for 30 frames a second on a Cortex-A53, so: the colour matrix and the
+ * saturation are one matrix, worked out once; the screen is done in tiles small enough
+ * for the sensor rows they need to stay in the cache (the picture's turned, so a screen
+ * row is a sensor column); and the four cores take a quarter of the screen each. */
+#define THREADS 4
+#define TILE_ROWS 64                    /* screen rows: 64 sensor columns, one cache line */
+#define TILE_COLS 120                   /* screen columns: 124 sensor rows, about 16 KB */
+
+static struct {
+    const uint8_t *frame;
+    uint8_t *p8;
+    const uint16_t *shade;
+    uint32_t *out;
+    int w, h, stride_px, top_skip, left_skip, red, blue;
+    int k[9];                           /* colour matrix then saturation, 8.8 */
+} pv;
+
+static void preview_matrix(void)
+{
+    static const int ccm[9] = { 359, -77, -26, -51, 358, -51, -13, -90, 359 };
+    static const int luma[3] = { 77, 151, 28 };
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            long v = 0;
+            for (int m = 0; m < 3; m++) {   /* saturation: S on the diagonal, (1 - S) of the luma */
+                long sat = (i == m ? (long)SATURATION * 256 : 0) + (256 - SATURATION) * (long)luma[m];
+                v += sat * ccm[m * 3 + j];
+            }
+            pv.k[i * 3 + j] = (int)(v >> 16);
+        }
+}
+
+static void unpack_rows(int y0, int y1)
+{
+    int stride = cam_stride();
+    for (int y = y0; y < y1; y++) {
+        const uint8_t *src = pv.frame + (size_t)y * (size_t)stride;
+        uint8_t *dst = pv.p8 + (size_t)y * CAM_W;
+        for (int x = 0; x < CAM_W; x += 4, src += 5) {
+            dst[x] = src[0] > 16 ? src[0] - 16 : 0;     /* black level, in 8 bits */
+            dst[x + 1] = src[1] > 16 ? src[1] - 16 : 0;
+            dst[x + 2] = src[2] > 16 ? src[2] - 16 : 0;
+            dst[x + 3] = src[3] > 16 ? src[3] - 16 : 0;
+        }
+    }
+}
+
+static void preview_tile(int dy0, int dy1, int dx0, int dx1)
+{
+    const int *k = pv.k;
+    for (int dy = dy0; dy < dy1; dy++) {
+        int x = dy + pv.top_skip;
+        if (x < 0 || x >= CAM_W)
+            continue;
+        int cx = x < 2 ? 2 : x > CAM_W - 3 ? CAM_W - 3 : x;
+        uint32_t *line = pv.out + (size_t)dy * (size_t)pv.stride_px;
+        const uint16_t *shade_col = pv.shade + x / 2;
+        for (int dx = dx0; dx < dx1; dx++) {
+            int y = CAM_H - 1 - (dx + pv.left_skip);
+            if (y < 0 || y >= CAM_H)
+                continue;
+            int cy = y < 2 ? 2 : y > CAM_H - 3 ? CAM_H - 3 : y;
+            const uint8_t *c = pv.p8 + (size_t)cy * CAM_W + cx;
+            int v = c[0], s1 = c[-1] + c[1], s2 = c[-CAM_W] + c[CAM_W];
+            int h2 = c[-2] + c[2], v2 = c[-2 * CAM_W] + c[2 * CAM_W];
+            int d4 = c[-CAM_W - 1] + c[-CAM_W + 1] + c[CAM_W - 1] + c[CAM_W + 1];
+            int r, g, b;
+            if (!((cx ^ cy) & 1)) {             /* a red or blue pixel */
+                g = (4 * v + 2 * (s1 + s2) - h2 - v2) >> 3;
+                int o = (12 * v + 4 * d4 - 3 * (h2 + v2)) >> 4;   /* the other colour */
+                if (cy & 1) {
+                    r = o;
+                    b = v;
+                } else {
+                    r = v;
+                    b = o;
+                }
+            } else {
+                int along = (10 * v + 8 * s1 - 2 * h2 - 2 * d4 + v2) >> 4;     /* colour in this row */
+                int across = (10 * v + 8 * s2 - 2 * v2 - 2 * d4 + h2) >> 4;    /* colour in the column */
+                g = v;
+                if (cy & 1) {
+                    b = along;
+                    r = across;
+                } else {
+                    r = along;
+                    b = across;
+                }
+            }
+            /* Shading and white balance, to 10 bits; past full scale is just full (left
+             * alone, the matrix would take it off the others and tint the highlights). */
+            int sh = shade_col[(y >> 1) * CELL_W];
+            r = r < 0 ? 0 : (r * sh * pv.red) >> 14;
+            g = g < 0 ? 0 : (g * sh) >> 6;
+            b = b < 0 ? 0 : (b * sh * pv.blue) >> 14;
+            r = r > 1023 ? 1023 : r;
+            g = g > 1023 ? 1023 : g;
+            b = b > 1023 ? 1023 : b;
+            int R = (k[0] * r + k[1] * g + k[2] * b) >> 8;
+            int G = (k[3] * r + k[4] * g + k[5] * b) >> 8;
+            int B = (k[6] * r + k[7] * g + k[8] * b) >> 8;
+            line[dx] = (uint32_t)gamma8[clamp10(R)] << 16 | (uint32_t)gamma8[clamp10(G)] << 8 | gamma8[clamp10(B)];
+        }
+    }
+}
+
+static void *preview_part(void *arg)
+{
+    int part = (int)(intptr_t)arg;
+    int dy0 = pv.h * part / THREADS, dy1 = pv.h * (part + 1) / THREADS;
+    for (int ty = dy0; ty < dy1; ty += TILE_ROWS)
+        for (int tx = 0; tx < pv.w; tx += TILE_COLS)
+            preview_tile(ty, ty + TILE_ROWS < dy1 ? ty + TILE_ROWS : dy1, tx, tx + TILE_COLS < pv.w ? tx + TILE_COLS : pv.w);
+    return 0;
+}
+
+static void *unpack_part(void *arg)
+{
+    int part = (int)(intptr_t)arg;
+    unpack_rows(CAM_H * part / THREADS, CAM_H * (part + 1) / THREADS);
+    return 0;
+}
+
+/* Runs fn on each quarter, three on threads of their own and one here. */
+static void on_all_cores(void *(*fn)(void *))
+{
+    pthread_t t[THREADS];
+    int started[THREADS] = { 0 };
+    for (int i = 1; i < THREADS; i++)
+        started[i] = pthread_create(&t[i], 0, fn, (void *)(intptr_t)i) == 0;
+    fn((void *)(intptr_t)0);
+    for (int i = 1; i < THREADS; i++) {
+        if (started[i])
+            pthread_join(t[i], 0);
+        else
+            fn((void *)(intptr_t)i);        /* no thread: done here instead */
+    }
+}
+
 void photo_preview(const uint8_t *frame, int red, int blue, uint32_t *out, int w, int h, int stride_px)
 {
     static uint16_t *shade;
-    int stride = cam_stride();
+    static uint8_t *p8;
     gamma_init();
     if (!shade) {
         shade = malloc(sizeof(uint16_t) * CELL_W * CELL_H);
@@ -98,31 +248,25 @@ void photo_preview(const uint8_t *frame, int red, int blue, uint32_t *out, int w
         for (int y = 0; y < CELL_H; y++)
             for (int x = 0; x < CELL_W; x++)
                 shade[y * CELL_W + x] = (uint16_t)shade_at(x - CELL_W / 2, y - CELL_H / 2, CELL_W / 2, CELL_H / 2);
+        preview_matrix();
     }
-    /* A quarter turn clockwise: the sensor's rows run down the screen, right to left. */
-    int top_skip = (CELL_W * 2 - h) / 2, left_skip = (CELL_H * 2 - w) / 2;
-    for (int dy = 0; dy + 1 < h; dy += 2) {
-        int sx = (dy + top_skip) / 2;
-        if (sx < 0 || sx >= CELL_W)
-            continue;
-        uint32_t *line = out + (size_t)dy * (size_t)stride_px;
-        for (int dx = 0; dx + 1 < w; dx += 2) {
-            int sy = CELL_H - 1 - (dx + left_skip) / 2;
-            if (sy < 0 || sy >= CELL_H)
-                continue;
-            const uint8_t *top = frame + (size_t)sy * 2 * (size_t)stride, *low = top + stride;
-            int col = sx * 2, at = col / 4 * 5 + col % 4, s = shade[sy * CELL_W + sx];
-            int r = (top[at] - CAM_BLACK / 4) * 4, g = (top[at + 1] - CAM_BLACK / 4) * 4, b = (low[at + 1] - CAM_BLACK / 4) * 4;
-            uint8_t px[3];
-            r = r < 0 ? 0 : r;
-            g = g < 0 ? 0 : g;
-            b = b < 0 ? 0 : b;
-            finish(((r * s) >> 8) * red >> 8, (g * s) >> 8, ((b * s) >> 8) * blue >> 8, px);
-            uint32_t c = (uint32_t)px[0] << 16 | (uint32_t)px[1] << 8 | px[2];
-            line[dx] = line[dx + 1] = c;
-            line[dx + stride_px] = line[dx + 1 + stride_px] = c;
-        }
-    }
+    if (!p8)
+        p8 = malloc((size_t)CAM_W * CAM_H);
+    if (!p8)
+        return;
+    pv.frame = frame;
+    pv.p8 = p8;
+    pv.shade = shade;
+    pv.out = out;
+    pv.w = w;
+    pv.h = h;
+    pv.stride_px = stride_px;
+    pv.top_skip = (CAM_W - h) / 2;
+    pv.left_skip = (CAM_H - w) / 2;
+    pv.red = red;
+    pv.blue = blue;
+    on_all_cores(unpack_part);
+    on_all_cores(preview_part);
 }
 
 /* --- a photo ------------------------------------------------------------------- */

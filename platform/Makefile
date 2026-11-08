@@ -45,6 +45,7 @@ PLATFORM_C := $(filter-out platform/libk86.c platform/nsfb_lkx.c,$(wildcard plat
 APP_DIRS := $(wildcard apps/*) $(EXTRA_APPS)    # EXTRA_APPS: the tests' misbehaving apps
 APP_SDK  := $(LBUILD)/sdk/sdk.o $(LBUILD)/platform/libk86.o \
             $(patsubst %,$(LBUILD)/kernel/%.o,gfx widget theme text inflate) $(LBUILD)/gen/uifont.o
+APP_LIBS_camera := -pthread      # the preview uses all four cores
 APP_BINS := $(foreach p,$(APP_DIRS),$(LBUILD)/apps/$(notdir $(p))/$(notdir $(p)))
 ifneq ($(SELFTEST),)
 CFLAGS += -DLKX_SELFTEST_$(shell echo $(SELFTEST) | tr a-z A-Z)
@@ -65,7 +66,7 @@ $(LBUILD)/apps/$(notdir $(1))/%.o: $(1)/%.c | kernel-build
 	$(CC) $(CFLAGS) -MMD -MP -c -o $$@ $$<
 
 $(LBUILD)/apps/$(notdir $(1))/$(notdir $(1)): $(patsubst $(1)/%.c,$(LBUILD)/apps/$(notdir $(1))/%.o,$(wildcard $(1)/*.c)) $(APP_SDK)
-	$(CC) $(LDFLAGS) -o $$@ $$^
+	$(CC) $(LDFLAGS) -o $$@ $$^ $(APP_LIBS_$(notdir $(1)))
 endef
 $(foreach p,$(APP_DIRS),$(eval $(call APP_RULE,$(p))))
 

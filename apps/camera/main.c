@@ -137,12 +137,24 @@ static void timer(void)
         cam_expose(frame);
     if (frames % BALANCE_EVERY == 1)
         photo_balance(frame, &red, &blue);
+    static uint32_t since, work, skipped;
+    uint32_t t0 = k86_uptime_ms();
     photo_preview(frame, red, blue, canvas.px, canvas.w, canvas.h, canvas.stride);
     if (shoot)
         take(frame);
     overlay();
     k86_present(0, 0, canvas.w, canvas.h);
     cam_release(got);
+    work += k86_uptime_ms() - t0;
+    if (!since)
+        since = t0;
+    if (frames % 60 == 0) {                     /* how fast it's going, for the log */
+        uint32_t span = k86_uptime_ms() - since;
+        k86_logf("camera: %u frames shown in %u ms, %u ms of work each", 60u, span, work / 60);
+        since = k86_uptime_ms();
+        work = 0;
+    }
+    (void)skipped;
 }
 
 static void pointer(const struct k86_event *ev)

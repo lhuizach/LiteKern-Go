@@ -2,6 +2,7 @@
  * through the media device, with frames taken as they come and auto-exposure on
  * the sensor's own controls. Nothing here waits: the app polls from its timer. */
 #include "cam.h"
+#include "sdk/kern86.h"
 
 #include <fcntl.h>
 #include <linux/media.h>
@@ -259,6 +260,9 @@ void cam_expose(const uint8_t *frame)
     float g = want / (float)e;
     int code = g <= 1 ? 0 : (int)(256 - 256 / g);
     code = code > GAIN_CODE_MAX ? GAIN_CODE_MAX : code;
+    if (e != exposure || code != gain_code)
+        k86_logf("camera: exposure %d -> %d, gain code %d, mean %d/1000, clipped %d/1000", (uint32_t)exposure, (uint32_t)e,
+                 code, (int)(mean * 1000), (int)(clipped * 1000));
     if (e != exposure) {
         exposure = e;
         set_ctrl(V4L2_CID_EXPOSURE, e);
