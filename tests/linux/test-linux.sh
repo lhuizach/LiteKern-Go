@@ -84,7 +84,7 @@ click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
 # The home screen (kernel/desktop.c): tap_app N taps the N-th app (0: Files,
 # 1 Calculator, 2 Settings, 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager, 7 R3lay, 8 Camera,
-# then Log; the tests' apps come before Log). Files, Gallery and Settings are
+# 9 Brickfit (order 120: after the tests' apps in their image), then Log; the tests' apps come before Log). Files, Gallery and Settings are
 # in the dock (y 1168; Web isn't in this build); the others in 4 columns of
 # 168 x 184 px tiles from y 352.
 tile_x() { case $1 in 0) echo 133 ;; 5) echo 359 ;; 2) echo 585 ;; *) local g=$(grid_of "$1"); echo $(( (W - 4 * 168) / 2 + 84 + (g % 4) * 168 )) ;; esac; }
@@ -110,12 +110,12 @@ check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the
     '!PANIC|Segmentation'
 
 # The home screen: swiped up, all the apps; a short swipe springs back. Down
-# sends them away; from them, a tap on Calculator (the second, 276,216) opens it.
+# sends them away; from them, a tap on Calculator (the third, after Blocksmith and Brickfit: 444,216) opens it.
 path; go 360 900; add press:1; go 360 860; add release sleep:0.8
 go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
 go 360 700; add press:1; go 360 800; go 360 1000; go 360 1200; add release sleep:1
 go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
-go 276 216; click; add sleep:1.5 phone_home sleep:1
+go 444 216; click; add sleep:1.5 phone_home sleep:1
 SCREEN="has=ffffff@0,56,720,276" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "the home screen: its clock, a swipe up to all the apps and back, one opened from there" \
     '^drawer: open$' \
@@ -125,7 +125,7 @@ check "the home screen: its clock, a swipe up to all the apps and back, one open
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.
-path; tap_app 9; add phone_home sleep:1
+path; tap_app 10; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
