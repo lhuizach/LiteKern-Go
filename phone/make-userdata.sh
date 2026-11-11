@@ -33,16 +33,7 @@ cp build/userdata/litekernx.img "$T/data.img"
 cp "$O/Image.gz" "$T/boot/vmlinuz"
 cp "$O/msm8916-samsung-a5u-eur.dtb" "$T/boot/"
 cp "$CPIO" "$T/boot/initramfs"
-cat > "$T/boot/extlinux/extlinux.conf" <<'EOF'
-timeout 1
-default litekern
-
-label litekern
-	kernel /vmlinuz
-	fdt /msm8916-samsung-a5u-eur.dtb
-	initrd /initramfs
-	append console=tty0 console=ttyMSM0,115200 loglevel=5
-EOF
+cp phone/extlinux.conf "$T/boot/extlinux/extlinux.conf"
 rm -f "$T/boot.ext2"
 mke2fs -q -t ext2 -b 1024 -I 256 -L LKGO_BOOT -E lazy_itable_init=0,root_owner=0:0 -d "$T/boot" "$T/boot.ext2" 64M
 

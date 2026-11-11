@@ -36,6 +36,8 @@ struct pic {
     char dir[K86_PATH_MAX];
     struct k86_dirent e;
     int thumb;                          /* 0 not yet, 1 made, -1 couldn't be */
+    int slot;                           /* which of thumbs[] holds its thumbnail: stays with the picture
+                                         * when new pictures come in front of it */
 };
 static struct pic pics[MAX_PICS];
 static int npics;
@@ -88,33 +90,95 @@ static int newer(const struct k86_dirent *a, const struct k86_dirent *b)
     return strcmp(a->name, b->name) > 0;    /* screenshots: their names are their times */
 }
 
+#define POLL_MS 2000                    /* how often the folders are looked at for new pictures */
+static uint32_t pic_sig;                /* what the folders held when they were last scanned */
+static uint32_t last_poll;
+
+static uint32_t sig_add(uint32_t h, const struct k86_dirent *e)
+{
+    for (const char *c = e->name; *c; c++)
+        h = h * 31 + (uint8_t)*c;
+    return ((h * 31 + e->size) * 31 + e->date) * 31 + e->time;
+}
+
+/* A number for what's in the picture folders, made like scan() reads them: cheap, no files opened. */
+static uint32_t folders_signature(void)
+{
+    static struct k86_dirent list[256];
+    uint32_t h = 0;
+    if (vol < 0)
+        return 0;
+    int passes = strcmp(home, "/") ? 2 : 1;
+    for (int pass = 0; pass < passes; pass++)
+        for (int f = 0; f < NFOLDERS; f++) {
+            char dir[K86_PATH_MAX];
+            join(dir, pass ? "/" : home, folders[f]);
+            int n = k86_list(vol, dir, list, 256);
+            for (int i = 0; i < n && i < 256; i++)
+                if (!list[i].is_dir && picture_named(list[i].name))
+                    h = sig_add(h, &list[i]);
+        }
+    return h;
+}
+
 static void scan(void)
 {
     static struct k86_dirent list[256];
+    static struct pic old[MAX_PICS];
+    int nold = npics;
+    memcpy(old, pics, sizeof(old[0]) * (size_t)nold);
     npics = 0;
+    pic_sig = 0;
     if (vol < 0)
         return;
-    for (int f = 0; f < NFOLDERS; f++) {
-        char dir[K86_PATH_MAX];
-        join(dir, home, folders[f]);
-        int n = k86_list(vol, dir, list, 256);
-        for (int i = 0; i < n && i < 256; i++) {
-            if (list[i].is_dir || !picture_named(list[i].name))
-                continue;
-            int k = npics < MAX_PICS ? npics++ : MAX_PICS - 1;
-            if (k == MAX_PICS - 1 && !newer(&list[i], &pics[k].e))
-                continue;                   /* full: only newer ones push the oldest out */
-            struct pic p;
-            copy(p.dir, dir, sizeof(p.dir));
-            p.e = list[i];
-            p.thumb = 0;
-            while (k > 0 && newer(&p.e, &pics[k - 1].e)) {   /* newest first */
-                pics[k] = pics[k - 1];
-                k--;
+    /* Once accounts are on (a PIN is set) the home folder is the user's own and starts empty; the
+     * pictures taken before are in the shared folders at the top, so those are looked in too. */
+    int passes = strcmp(home, "/") ? 2 : 1;
+    for (int pass = 0; pass < passes; pass++)
+        for (int f = 0; f < NFOLDERS; f++) {
+            char dir[K86_PATH_MAX];
+            join(dir, pass ? "/" : home, folders[f]);
+            int n = k86_list(vol, dir, list, 256);
+            for (int i = 0; i < n && i < 256; i++) {
+                if (list[i].is_dir || !picture_named(list[i].name))
+                    continue;
+                pic_sig = sig_add(pic_sig, &list[i]);
+                int k = npics < MAX_PICS ? npics++ : MAX_PICS - 1;
+                if (k == MAX_PICS - 1 && !newer(&list[i], &pics[k].e))
+                    continue;               /* full: only newer ones push the oldest out */
+                struct pic p;
+                copy(p.dir, dir, sizeof(p.dir));
+                p.e = list[i];
+                p.thumb = 0;
+                p.slot = -1;
+                while (k > 0 && newer(&p.e, &pics[k - 1].e)) {   /* newest first */
+                    pics[k] = pics[k - 1];
+                    k--;
+                }
+                pics[k] = p;
             }
-            pics[k] = p;
         }
-    }
+    /* A picture that was there before keeps its thumbnail; a new one gets a free slot. */
+    unsigned char used[MAX_PICS];
+    memset(used, 0, sizeof(used));
+    for (int i = 0; i < npics; i++)
+        for (int j = 0; j < nold; j++)
+            if (!strcmp(pics[i].dir, old[j].dir) && !strcmp(pics[i].e.name, old[j].e.name) &&
+                pics[i].e.size == old[j].e.size && pics[i].e.date == old[j].e.date &&
+                pics[i].e.time == old[j].e.time && old[j].slot >= 0 && !used[old[j].slot]) {
+                pics[i].slot = old[j].slot;
+                pics[i].thumb = old[j].thumb;
+                used[old[j].slot] = 1;
+                break;
+            }
+    for (int i = 0; i < npics; i++)
+        if (pics[i].slot < 0) {
+            int sl = 0;
+            while (used[sl])
+                sl++;
+            used[sl] = 1;
+            pics[i].slot = sl;
+        }
     k86_logf("gallery: %d picture%s", npics, npics == 1 ? "" : "s");
 }
 
@@ -168,7 +232,7 @@ static void draw_grid(void)
         if (r.y + r.h < 0 || r.y > canvas.h)
             continue;
         if (pics[i].thumb == 1) {
-            struct gfx_surface th = { thumbs[i], THUMB, THUMB, THUMB };
+            struct gfx_surface th = { thumbs[pics[i].slot], THUMB, THUMB, THUMB };
             if (r.w == THUMB)
                 gfx_blit(&canvas, r.x, r.y, &th, 0, 0, THUMB, THUMB);
             else
@@ -204,7 +268,7 @@ static int thumb_step(void)
         return 0;
     const char *why = 0;
     picture_app = 0;                        /* thumbnails: no log line each */
-    int ok = !picture_open(vol, pics[pick].dir, &pics[pick].e, &why) && !picture_thumb(thumbs[pick], THUMB);
+    int ok = !picture_open(vol, pics[pick].dir, &pics[pick].e, &why) && !picture_thumb(thumbs[pics[pick].slot], THUMB);
     picture_app = "gallery";
     picture_close();
     pics[pick].thumb = ok ? 1 : -1;
@@ -317,8 +381,7 @@ static void delete_now(void)
     }
     int i = viewing;
     for (int k = i; k < npics - 1; k++) {
-        pics[k] = pics[k + 1];
-        memcpy(thumbs[k], thumbs[k + 1], sizeof(thumbs[k]));
+        pics[k] = pics[k + 1];             /* its thumbnail's slot goes with it */
     }
     npics--;
     set_scroll(scroll);
@@ -333,7 +396,17 @@ static void delete_now(void)
 
 static void timer(void)
 {
-    int busy = 0;
+    int busy = 0, changed = 0;
+    static int was_busy;
+    uint32_t now = k86_uptime_ms();
+    if (viewing < 0 && now - last_poll >= POLL_MS - 100) {   /* a picture taken or deleted elsewhere (Camera) */
+        last_poll = now;
+        if (folders_signature() != pic_sig) {
+            scan();
+            set_scroll(scroll);
+            changed = 1;
+        }
+    }
     if (viewing < 0 && fling && !dragging) {    /* the fling slows down, then stops */
         set_scroll(scroll - fling * TICK_MS / 256);
         fling = fling * 94 / 100;
@@ -345,9 +418,10 @@ static void timer(void)
     }
     if (viewing < 0 && thumb_step())
         busy = 1;
-    if (viewing < 0)
+    if (viewing < 0 && (busy || was_busy || changed))
         draw_grid();
-    k86_timer_set(busy || fling ? TICK_MS : 0);
+    was_busy = busy;
+    k86_timer_set(busy || fling ? TICK_MS : POLL_MS);
 }
 
 static void grid_pointer(const struct wg_pointer *p, uint32_t ms)
@@ -491,7 +565,7 @@ int main(void)
     scan();
     header();
     draw_grid();
-    k86_timer_set(npics ? TICK_MS : 0);    /* the thumbnails, in the background */
+    k86_timer_set(TICK_MS);                /* the thumbnails in the background, then a look for new pictures now and then */
     k86_log("gallery: open");
     for (;;) {
         struct k86_event ev;
