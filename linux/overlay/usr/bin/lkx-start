@@ -30,6 +30,39 @@ done
 # The phone has no stick: its disk is a file in the system (linux/buildroot-phone.defconfig).
 disk=
 [ -f /usr/share/litekern/disk.img ] && disk=/usr/share/litekern/disk.img
+
+# A phone that was flashed (phone/make-userdata.sh) has the disk on its storage instead: in the
+# userdata partition, after the boot partition. Used from there, settings, Wi-Fi, the PIN and
+# photos survive a restart; only its apps part (the ramdisk, sectors 4096 up to the FAT32 at
+# 16384) is refreshed from the system's own copy at each start, because the apps come with the
+# system. Every check has to pass: the data disk's mark, the ramdisk's mark, and the FAT32
+# starting where it does in the system's copy. Nothing here ever formats, and nothing is
+# written until they have; failing any of them, the RAM copy above is used as before.
+DATA_START=133120           # sectors: where the data disk starts in userdata (phone/mkuserdata.py)
+persistent_disk() {
+    [ -f /usr/share/litekern/disk.img ] || return 1
+    for p in /sys/class/block/mmcblk*p*; do
+        [ -e "$p/uevent" ] || continue
+        grep -qi '^PARTNAME=userdata$' "$p/uevent" || continue
+        part=/dev/${p##*/}
+        [ "$(dd if="$part" bs=512 skip=$DATA_START count=1 2>/dev/null | head -c 8)" = "LKGODATA" ] || { echo "lkx-start: $part has no data disk" > "$out"; return 1; }
+        [ "$(dd if="$part" bs=512 skip=$((DATA_START + 4096)) count=1 2>/dev/null | head -c 4)" = "LKXR" ] || { echo "lkx-start: $part's data disk has no ramdisk" > "$out"; return 1; }
+        # the FAT32's start (the partition table's second entry): the same as in the system's copy
+        dd if="$part" bs=1 skip=$((DATA_START * 512 + 470)) count=4 of=/tmp/lk.a 2>/dev/null
+        dd if=/usr/share/litekern/disk.img bs=1 skip=470 count=4 of=/tmp/lk.b 2>/dev/null
+        cmp -s /tmp/lk.a /tmp/lk.b || { echo "lkx-start: $part's data disk has another layout" > "$out"; return 1; }
+        loop=$(losetup -f 2>/dev/null) || return 1
+        losetup -o $((DATA_START * 512)) "$loop" "$part" || return 1
+        dd if=/usr/share/litekern/disk.img of="$loop" bs=512 skip=4096 seek=4096 count=12288 2>/dev/null
+        echo "lkx-start: the disk is $loop, $part from sector $DATA_START" > "$out"
+        persistent=$loop
+        return 0
+    done
+    echo "lkx-start: no userdata partition found, the disk is the RAM copy" > "$out"
+    return 1
+}
+persistent=
+persistent_disk && disk=$persistent
 i=0
 while [ -z "$disk" ] && [ $i -lt 100 ]; do
     disk=$(find_disk) || disk=

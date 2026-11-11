@@ -98,6 +98,7 @@ int main(int argc, char **argv)
 
     /* Creating. */
     uint64_t free0 = fat_free_bytes(&v);
+    uint64_t cl = (uint64_t)v.sec_per_clus * 512;   /* a cluster's bytes: the small image's are 512, the phone's big data disk's 4096 */
     struct fat_entry hello, projects, notes;
     check(fat_create(&v, fat_root(&v), "hello world.txt", 0, &hello) == 0 && hello.lfn_slots == 2,
           "creates a file with a long name");
@@ -110,7 +111,7 @@ int main(int argc, char **argv)
           "refuses a name that exists (in any case)");
     check(fat_create(&v, fat_root(&v), "a:b", 0, 0) == -EINVAL && fat_bad_name("bad?") &&
               !fat_bad_name("fine name.txt"), "refuses names FAT can't hold");
-    check(fat_free_bytes(&v) == free0 - 512, "the new folder took one cluster of free space");
+    check(fat_free_bytes(&v) == free0 - cl, "the new folder took one cluster of free space");
 
     /* Enough files to spill Pictures over several clusters (16 slots each). */
     int ok = 1;
@@ -133,11 +134,11 @@ int main(int argc, char **argv)
     check(fat_find(&v, projects.cluster, "main.c", &mainc) == 0 &&
               fat_write(&v, &mainc, big, sizeof(big)) == 0 && mainc.size == sizeof(big),
           "writes a file over several clusters");
-    check(fat_free_bytes(&v) == free1 - 6 * 512, "it took six clusters");
+    check(fat_free_bytes(&v) == free1 - (sizeof(big) + cl - 1) / cl * cl, "it took the clusters it needs");
     check(fat_find(&v, projects.cluster, "main.c", &mainc) == 0 && mainc.size == sizeof(big) &&
               fat_read(&v, &mainc, 0, back, sizeof(back)) == (int)sizeof(big) &&
               !memcmp(big, back, sizeof(big)), "reads back what it wrote");
-    check(fat_write(&v, &mainc, "int main;\n", 10) == 0 && fat_free_bytes(&v) == free1 - 512 &&
+    check(fat_write(&v, &mainc, "int main;\n", 10) == 0 && fat_free_bytes(&v) == free1 - cl &&
               fat_find(&v, projects.cluster, "main.c", &mainc) == 0 && mainc.size == 10 &&
               fat_read(&v, &mainc, 0, back, sizeof(back)) == 10 && !memcmp(back, "int main;\n", 10),
           "rewriting it shorter frees the old clusters");
@@ -153,7 +154,7 @@ int main(int argc, char **argv)
               fat_read(&v, &bigf, 0, huge_back, sizeof(huge_back)) == (int)sizeof(huge) &&
               !memcmp(huge, huge_back, sizeof(huge)),
           "writes and reads back 3 MiB");
-    check(fat_free_bytes(&v) == free2 - (sizeof(huge) + 511) / 512 * 512, "it took just the clusters it needs");
+    check(fat_free_bytes(&v) == free2 - (sizeof(huge) + cl - 1) / cl * cl, "it took just the clusters it needs");
     check(fat_write(&v, &notes, 0, 0) == 0 && notes.size == 0 && notes.cluster == 0,
           "writes an empty file");
     check(fat_write(&v, &projects, "x", 1) == -EINVAL, "won't write over a folder");

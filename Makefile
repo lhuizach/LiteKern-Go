@@ -20,6 +20,7 @@ IMAGE  := $(BUILD)/litekernx.img
 RAMDISK_LBA := 4096
 FAT_MB      ?= $(if $(filter build,$(strip $(BUILD))),64,0)
 FAT_START   := 16384
+FAT_SPC     ?= 1        # sectors per cluster: 1 for the small image; the phone's big data disk uses 8 (phone/make-userdata.sh)
 
 # Build-time defaults: make STYLE=light ACCENT=teal WALLPAPER=crossing SPLASH=logo
 STYLE     ?= dark
@@ -140,14 +141,14 @@ $(IMAGE): $(BUILD)/mbr.bin $(BUILD)/gen/ramdisk.bin $(GENERATED) \
 # changes.
 $(BUILD)/gen/disk-files.md5: FORCE
 	@mkdir -p $(dir $@)
-	@{ echo "FAT_START=$(FAT_START) FAT_MB=$(FAT_MB)"; \
+	@{ echo "FAT_START=$(FAT_START) FAT_MB=$(FAT_MB) FAT_SPC=$(FAT_SPC)"; \
 	   find assets/disk -type f -exec md5sum {} + 2>/dev/null | sort; } > $@.new; \
 	cmp -s $@.new $@ && rm -f $@.new || mv $@.new $@
 
 $(BUILD)/fat.img: $(BUILD)/gen/disk-files.md5
 	@mkdir -p $(dir $@)
 	rm -f $@
-	mkfs.fat -C -F 32 -s 1 -S 512 -h $(FAT_START) -n LITEKERNX -i 4c4b5846 --invariant \
+	mkfs.fat -C -F 32 -s $(FAT_SPC) -S 512 -h $(FAT_START) -n LITEKERNX -i 4c4b5846 --invariant \
 		$@ $$(( $(FAT_MB) * 1024 )) >/dev/null
 	@if [ -d assets/disk ] && [ -n "$$(ls -A assets/disk)" ]; then \
 		MTOOLS_SKIP_CHECK=1 mcopy -s -m -i $@ assets/disk/* ::/; fi
