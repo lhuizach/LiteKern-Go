@@ -11,6 +11,7 @@
 #include "sdk/kern86.h"
 
 #include <pthread.h>
+#include <sys/resource.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -469,19 +470,6 @@ static int folder(char *dir)
 
 #define THUMB_FILE "last-photo.thumb"
 
-/* From the developed picture (pw wide, ph tall): its middle square, shrunk to THUMB x THUMB. */
-static void thumb_save(const uint8_t *rows, int row, int pw, int ph, int vol, const char *dir)
-{
-    static uint32_t t[THUMB * THUMB];
-    int side = pw, top = (ph - side) / 2;
-    for (int y = 0; y < THUMB; y++)
-        for (int x = 0; x < THUMB; x++) {
-            const uint8_t *p = rows + (size_t)(top + y * side / THUMB) * (size_t)row + 1 + (size_t)(x * side / THUMB) * 3;
-            t[y * THUMB + x] = (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
-        }
-    k86_write(vol, dir, THUMB_FILE, t, sizeof(t));
-}
-
 int photo_thumb(uint32_t *out)
 {
     char dir[K86_PATH_MAX];
@@ -489,30 +477,135 @@ int photo_thumb(uint32_t *out)
     return vol >= 0 && k86_read(vol, dir, THUMB_FILE, out, THUMB * THUMB * 4) == THUMB * THUMB * 4;
 }
 
-int photo_save(const uint8_t *frame, int fw, int fh, int fstride, int red, int blue, char *name)
+/* --- saving: the work in a thread of its own, the saving on the app's thread ------------------
+ *
+ * Turning a frame into a PNG takes a couple of seconds, so it's done in a background thread
+ * (at a lower priority, so the live picture keeps going), on all four cores for each step. The
+ * app's own thread has to be the one to talk to the shell (one socket, no locking), so the thread
+ * only makes the picture; photo_encode_finish() does the saving. */
+
+struct photo_job {
+    pthread_t th;
+    int started;
+    volatile int done;
+    uint8_t *frame;                     /* ours: freed when the job is */
+    int fw, fh, fstride, red, blue;
+    uint8_t *png;
+    size_t png_len;
+    uint32_t thumb[THUMB * THUMB];
+    int err;
+    uint32_t ms_develop, ms_filter, ms_deflate, ms_total;
+};
+
+/* From the developed picture (pw wide, ph tall): its middle square, shrunk to THUMB x THUMB. */
+static void thumb_make(const uint8_t *rows, int row, int pw, int ph, uint32_t *t)
 {
-    static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
-    int w = fh, h = fw, row = w * 3 + 1, err = -1;      /* turned a quarter: the sensor's rows are the picture's columns */
-    size_t raw_len = (size_t)row * (size_t)h, room = raw_len + raw_len / 64 + 2048;
-    uint8_t *rows = calloc(raw_len, 1), *png = malloc(room), *work = malloc(DEFLATE_WORK);
-    char dir[K86_PATH_MAX];
-    struct k86_time t;
-    gamma_init();
-    if (!rows || !png || !work)
-        goto out;
-    if (develop(frame, fw, fh, fstride, red, blue, rows, row))
-        goto out;
-    int vol = folder(dir);
-    if (vol < 0)
-        goto out;
-    thumb_save(rows, row, w, h, vol, dir);
-    /* PNG's "up" filter: each row as the change from the one above squeezes far better. */
-    for (int y = h - 1; y > 0; y--) {
-        uint8_t *now = rows + (size_t)y * (size_t)row, *above = now - row;
-        now[0] = 2;
-        for (int x = 1; x < row; x++)
-            now[x] = (uint8_t)(now[x] - above[x]);
+    int side = pw, top = (ph - side) / 2;
+    for (int y = 0; y < THUMB; y++)
+        for (int x = 0; x < THUMB; x++) {
+            const uint8_t *p = rows + (size_t)(top + y * side / THUMB) * (size_t)row + 1 + (size_t)(x * side / THUMB) * 3;
+            t[y * THUMB + x] = (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+        }
+}
+
+/* PNG's "up" filter, on four cores: each row as the change from the one above squeezes far better.
+ * Into a second buffer, so no thread reads a row another has already changed. */
+static struct {
+    const uint8_t *rows;
+    uint8_t *filt;
+    int row, h;
+} fl;
+
+static void *filter_part(void *arg)
+{
+    int part = (int)(intptr_t)arg, y0 = fl.h * part / THREADS, y1 = fl.h * (part + 1) / THREADS;
+    for (int y = y0; y < y1; y++) {
+        const uint8_t *src = fl.rows + (size_t)y * (size_t)fl.row;
+        uint8_t *dst = fl.filt + (size_t)y * (size_t)fl.row;
+        if (!y) {
+            memcpy(dst, src, (size_t)fl.row);        /* the first row: filter 0, as it is */
+            dst[0] = 0;
+            continue;
+        }
+        dst[0] = 2;
+        const uint8_t *above = src - fl.row;
+        for (int x = 1; x < fl.row; x++)
+            dst[x] = (uint8_t)(src[x] - above[x]);
     }
+    return 0;
+}
+
+/* Compression, on four cores: the rows in four bands, each compressed on its own and joined. */
+static struct {
+    const uint8_t *in[THREADS];
+    size_t len[THREADS];
+    uint8_t *out[THREADS];
+    size_t cap[THREADS];
+    uint8_t *work[THREADS];
+    int packed[THREADS];
+} cp;
+
+static void *compress_part(void *arg)
+{
+    int k = (int)(intptr_t)arg;
+    cp.packed[k] = deflate_part(cp.in[k], cp.len[k], cp.out[k], cp.cap[k], cp.work[k], k == THREADS - 1, 8);
+    return 0;
+}
+
+static uint32_t ms_now(void)
+{
+    return k86_uptime_ms();
+}
+
+static void *encode_thread(void *arg)
+{
+    struct photo_job *j = arg;
+    static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
+    int w = j->fh, h = j->fw, row = w * 3 + 1;     /* turned a quarter: the sensor's rows are the picture's columns */
+    size_t raw_len = (size_t)row * (size_t)h;
+    uint8_t *rows = calloc(raw_len, 1), *filt = malloc(raw_len), *png = 0;
+    uint32_t t0 = ms_now(), t1, t2;
+    j->err = -1;
+    setpriority(PRIO_PROCESS, 0, 10);               /* this thread only: the live picture first */
+    for (int k = 0; k < THREADS; k++) {
+        cp.out[k] = 0;
+        cp.work[k] = 0;
+    }
+    if (!rows || !filt)
+        goto out;
+    if (develop(j->frame, j->fw, j->fh, j->fstride, j->red, j->blue, rows, row))
+        goto out;
+    t1 = ms_now();
+    j->ms_develop = t1 - t0;
+    thumb_make(rows, row, w, h, j->thumb);
+    fl.rows = rows;
+    fl.filt = filt;
+    fl.row = row;
+    fl.h = h;
+    on_all_cores(filter_part);
+    t2 = ms_now();
+    j->ms_filter = t2 - t1;
+    for (int k = 0; k < THREADS; k++) {
+        int y0 = h * k / THREADS, y1 = h * (k + 1) / THREADS;
+        cp.in[k] = filt + (size_t)y0 * (size_t)row;
+        cp.len[k] = (size_t)(y1 - y0) * (size_t)row;
+        cp.cap[k] = cp.len[k] + cp.len[k] / 64 + 2048;
+        cp.out[k] = malloc(cp.cap[k]);
+        cp.work[k] = malloc(DEFLATE_WORK);
+        if (!cp.out[k] || !cp.work[k])
+            goto out;
+    }
+    on_all_cores(compress_part);
+    size_t packed = 0;
+    for (int k = 0; k < THREADS; k++) {
+        if (cp.packed[k] < 0)
+            goto out;
+        packed += (size_t)cp.packed[k];
+    }
+    j->ms_deflate = ms_now() - t2;
+    png = malloc(8 + 25 + 12 + 2 + packed + 4 + 12);
+    if (!png)
+        goto out;
     uint8_t *p = png;
     memcpy(p, signature, 8);
     p += 8;
@@ -522,23 +615,91 @@ int photo_save(const uint8_t *frame, int fw, int fh, int fstride, int red, int b
     memcpy(d, "\x08\x02\x00\x00\x00", 5);       /* 8 bits, RGB */
     p = chunk(p, "IHDR", 13);
     d = p + 8;
-    d[0] = 0x78;
-    d[1] = 0x01;
-    int packed = deflate_raw(rows, raw_len, d + 2, room - (size_t)(d + 2 - png) - 64, work);
-    if (packed < 0)
-        goto out;
-    put32(d + 2 + packed, adler_of(rows, raw_len));
-    p = chunk(p, "IDAT", (uint32_t)packed + 6);
+    *d++ = 0x78;
+    *d++ = 0x01;
+    for (int k = 0; k < THREADS; k++) {
+        memcpy(d, cp.out[k], (size_t)cp.packed[k]);
+        d += cp.packed[k];
+    }
+    put32(d, adler_of(filt, raw_len));
+    p = chunk(p, "IDAT", (uint32_t)(packed + 6));
     p = chunk(p, "IEND", 0);
-
-    if (k86_time(&t))
-        memset(&t, 0, sizeof(t));
-    snprintf(name, 64, "IMG-%04u%02u%02u-%02u%02u%02u.png", t.year, t.month, t.day, t.hour, t.minute, t.second);
-    if (k86_write(vol, dir, name, png, (uint32_t)(p - png)) >= 0)
-        err = 0;
+    j->png = png;
+    j->png_len = (size_t)(p - png);
+    png = 0;
+    j->err = 0;
 out:
     free(rows);
+    free(filt);
     free(png);
-    free(work);
+    for (int k = 0; k < THREADS; k++) {
+        free(cp.out[k]);
+        free(cp.work[k]);
+    }
+    j->ms_total = ms_now() - t0;
+    j->done = 1;
+    return 0;
+}
+
+struct photo_job *photo_encode_start(uint8_t *frame, int w, int h, int stride, int red, int blue)
+{
+    struct photo_job *j = calloc(1, sizeof(*j));
+    if (!j)
+        return 0;
+    gamma_init();
+    j->frame = frame;
+    j->fw = w;
+    j->fh = h;
+    j->fstride = stride;
+    j->red = red;
+    j->blue = blue;
+    if (pthread_create(&j->th, 0, encode_thread, j) == 0) {
+        j->started = 1;
+    } else {
+        encode_thread(j);                          /* no thread to be had: done here, then */
+    }
+    return j;
+}
+
+int photo_encode_done(const struct photo_job *j)
+{
+    return j->done;
+}
+
+int photo_encode_finish(struct photo_job *j, char *name)
+{
+    char dir[K86_PATH_MAX];
+    struct k86_time t;
+    int err = -1;
+    if (j->started)
+        pthread_join(j->th, 0);
+    if (!j->err) {
+        uint32_t w0 = k86_uptime_ms();
+        int vol = folder(dir);
+        if (vol >= 0) {
+            k86_write(vol, dir, THUMB_FILE, j->thumb, sizeof(j->thumb));
+            if (k86_time(&t))
+                memset(&t, 0, sizeof(t));
+            snprintf(name, 64, "IMG-%04u%02u%02u-%02u%02u%02u.png", t.year, t.month, t.day, t.hour, t.minute, t.second);
+            if (k86_write(vol, dir, name, j->png, (uint32_t)j->png_len) >= 0)
+                err = 0;
+        }
+        k86_logf("camera: encoded in %u ms (develop %u, filter %u, compress %u), %u bytes, written in %u ms", j->ms_total,
+                 j->ms_develop, j->ms_filter, j->ms_deflate, (uint32_t)j->png_len, k86_uptime_ms() - w0);
+    }
+    free(j->frame);
+    free(j->png);
+    free(j);
     return err;
+}
+
+int photo_save(const uint8_t *frame, int fw, int fh, int fstride, int red, int blue, char *name)
+{
+    size_t len = (size_t)fstride * (size_t)fh;
+    uint8_t *copy = malloc(len);
+    if (!copy)
+        return -1;
+    memcpy(copy, frame, len);
+    struct photo_job *j = photo_encode_start(copy, fw, fh, fstride, red, blue);
+    return j ? photo_encode_finish(j, name) : -1;
 }

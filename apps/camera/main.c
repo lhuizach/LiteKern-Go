@@ -25,6 +25,8 @@
 static struct k86_window win;
 static struct gfx_surface canvas;
 static int have_camera, shoot, busy;
+static struct photo_job *job;           /* a photo being made in the background */
+static uint32_t job_began;
 static int red = 310, blue = 640;       /* a guess until the first frame */
 static char note[80];
 static uint32_t note_until;
@@ -98,17 +100,39 @@ static void focus_on(int x, int y)
 
 static int restreamed;                  /* take() restarted the stream: the frame in hand is gone */
 
-/* The photo: the sensor goes to its photo mode for one frame (cam_still), which is developed
- * and saved; if that doesn't come up, the live frame in hand is saved as it is. */
-static void take(const uint8_t *frame)
+/* A photo that's been made in the background: saved here (the shell is spoken to from this thread
+ * only), and the note and the thumbnail updated. */
+static void job_finish(void)
 {
     char name[64];
-    int w = 0, h = 0, rb = 0, err;
+    int err = photo_encode_finish(job, name);
+    job = 0;
+    busy = 0;
+    if (err) {
+        k86_log("camera: couldn't save the photo");
+        say("Couldn't save the photo");
+    } else {
+        k86_logf("camera: saved %s in %u ms from the shutter", name, k86_uptime_ms() - job_began);
+        say("Saved to Gallery");
+        have_thumb = photo_thumb(thumb);
+    }
+}
+
+/* The photo: the sensor goes to its photo mode for one frame (cam_still); the live picture is
+ * back at once and the frame is turned into a PNG in the background. If the photo mode doesn't
+ * come up, the live frame in hand is used as it is. */
+static void take(const uint8_t *frame)
+{
+    int w = 0, h = 0, rb = 0;
+    shoot = 0;
+    if (job)
+        return;                                 /* the last one's still being made */
     busy = 1;
     say("Saving" TEXT_ELLIPSIS);
+    note_until = k86_uptime_ms() + 60000;       /* until it's done */
     overlay();
     k86_present(0, 0, canvas.w, canvas.h);
-    uint32_t began = k86_uptime_ms();
+    job_began = k86_uptime_ms();
     size_t live_len = (size_t)cam_stride() * CAM_H;
     uint8_t *live = malloc(live_len);           /* the live frame goes when the stream restarts */
     if (live)
@@ -117,26 +141,17 @@ static void take(const uint8_t *frame)
     uint8_t *still = cam_still(&w, &h, &rb, focus_restore);
     restreamed = 1;
     focus_restore();                            /* the lens lost its power again */
-    uint32_t grabbed = k86_uptime_ms();
-    if (still)
-        err = photo_save(still, w, h, rb, red, blue, name);
-    else if (live)
-        err = photo_save(live, CAM_W, CAM_H, live_stride, red, blue, name);
-    else
-        err = -1;
-    if (err) {
-        k86_log("camera: couldn't save the photo");
-        say("Couldn't save the photo");
-    } else {
-        k86_logf("camera: saved %s (%s) in %u ms, %u ms of it the frame", name, still ? "photo mode" : "live frame",
-                 k86_uptime_ms() - began, grabbed - began);
-        say("Saved to Gallery");
-        have_thumb = photo_thumb(thumb);
+    k86_logf("camera: the frame took %u ms (%s)", k86_uptime_ms() - job_began, still ? "photo mode" : "live frame");
+    if (still) {
+        free(live);
+        job = photo_encode_start(still, w, h, rb, red, blue);
+    } else if (live) {
+        job = photo_encode_start(live, CAM_W, CAM_H, live_stride, red, blue);
     }
-    free(still);
-    free(live);
-    busy = 0;
-    shoot = 0;
+    if (!job) {
+        busy = 0;
+        say("Couldn't save the photo");
+    }
 }
 
 static void timer(void)
@@ -152,6 +167,8 @@ static void timer(void)
     if (got < 0)
         return;
     frames++;
+    if (job && photo_encode_done(job))
+        job_finish();
     if (focus_pending && frames > 12) {         /* the exposure's settled by then */
         focus_pending = 0;
         focus_on(canvas.w / 2, canvas.h / 2);
@@ -163,11 +180,15 @@ static void timer(void)
         photo_balance(frame, &red, &blue);
     static uint32_t since, work, skipped;
     uint32_t t0 = k86_uptime_ms();
-    photo_preview(frame, red, blue, canvas.px, canvas.w, canvas.h, canvas.stride);
+    int draw = !job || frames % 3 == 0;          /* while a photo is made, the live picture takes a third of the CPU */
+    if (draw)
+        photo_preview(frame, red, blue, canvas.px, canvas.w, canvas.h, canvas.stride);
     if (shoot)
         take(frame);
-    overlay();
-    k86_present(0, 0, canvas.w, canvas.h);
+    if (draw) {
+        overlay();
+        k86_present(0, 0, canvas.w, canvas.h);
+    }
     if (restreamed)
         restreamed = 0;                         /* a new stream: its buffers are all queued already */
     else
@@ -191,7 +212,8 @@ static void pointer(const struct k86_event *ev)
     if (!p.up || !have_camera)
         return;
     if (dx * dx + dy * dy < (BUTTON_R + 24) * (BUTTON_R + 24)) {
-        shoot = 1;
+        if (!job)
+            shoot = 1;
     } else if (have_thumb && p.x >= thumb_x() - 16 && p.x < thumb_x() + THUMB + 16 &&
                p.y >= thumb_y() - 16 && p.y < thumb_y() + THUMB + 16) {
         k86_log("camera: opening Gallery");
@@ -245,6 +267,8 @@ int main(void)
                 draw_message("No camera found");
             break;
         case K86_EVENT_CLOSE:
+            if (job)
+                job_finish();               /* a photo still being made: wait for it, and keep it */
             focus_close();
             cam_close();
             return 0;

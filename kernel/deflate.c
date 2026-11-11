@@ -264,8 +264,10 @@ static uint32_t hash3(const uint8_t *p)
     return ((uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2]) * 2654435761u >> (32 - HASH_BITS);
 }
 
-int deflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, void *work_mem)
+int deflate_part(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, void *work_mem, int final,
+                 int effort)
 {
+    int max_chain = effort > 0 ? effort : MAX_CHAIN;
     struct work *w = work_mem;
     struct bits b = { out, out + out_len, 0, 0, 0 };
     for (int i = 0; i < HASH_SIZE; i++)
@@ -280,7 +282,7 @@ int deflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, 
             w->prev[i % WINDOW] = cand;
             w->head[h] = (int32_t)i;
             size_t most = in_len - i < MAX_MATCH ? in_len - i : MAX_MATCH;
-            for (int chain = 0; cand >= 0 && i - (size_t)cand <= WINDOW && chain < MAX_CHAIN; chain++) {
+            for (int chain = 0; cand >= 0 && i - (size_t)cand <= WINDOW && chain < max_chain; chain++) {
                 const uint8_t *p = in + cand, *q = in + i;
                 if (p[best] == q[best] && p[0] == q[0]) {
                     size_t n = 0;
@@ -317,7 +319,20 @@ int deflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, 
                 return -ENOSPC;
         }
     }
-    block(&b, w->sym, nsym, 1);
+    block(&b, w->sym, nsym, final);
+    if (!final) {
+        /* Not the last part: an empty stored block (3 header bits, the rest of the byte, then LEN 0 and
+         * NLEN 0xffff) ends it on a byte boundary, which is what lets the parts be joined. */
+        put(&b, 0, 3);
+        flush_bits(&b);
+        put(&b, 0x0000, 16);
+        put(&b, 0xffff, 16);
+    }
     flush_bits(&b);
     return b.full ? -ENOSPC : (int)(b.p - out);
+}
+
+int deflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, void *work_mem)
+{
+    return deflate_part(in, in_len, out, out_len, work_mem, 1, 0);
 }

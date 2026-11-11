@@ -32,6 +32,15 @@ void photo_balance(const uint8_t *frame, int *red, int *blue);
 /* A picture from a frame of w x h pixels and rows `stride` bytes apart, upright, as a PNG in
  * Pictures/Camera. Its name goes in name (64 bytes). 0, or -1. */
 int photo_save(const uint8_t *frame, int w, int h, int stride, int red, int blue, char *name);
+
+/* The same, in the background: photo_encode_start() takes a malloc'd frame (it frees it) and
+ * begins at once, on a thread of its own and at a low priority; photo_encode_done() says when the
+ * picture's made; photo_encode_finish() (from the app's own thread: it talks to the shell) waits
+ * if need be, saves it and the thumbnail, and puts the name in name (64 bytes). 0, or -1. */
+struct photo_job;
+struct photo_job *photo_encode_start(uint8_t *frame, int w, int h, int stride, int red, int blue);
+int photo_encode_done(const struct photo_job *job);
+int photo_encode_finish(struct photo_job *job, char *name);
 /* The last photo's little picture (THUMB x THUMB, 0x00RRGGBB), kept next to the
  * photos. 1 if there is one. */
 #define THUMB 104
