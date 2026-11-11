@@ -82,15 +82,16 @@ path() { PX=$((W / 2)) PY=$((H / 2)) P=""; }
 go() { P+=" move:$(( $1 - PX )),$(( $2 - PY ))"; PX=$1 PY=$2; }
 click() { P+=" sleep:0.2 press:1 release"; }
 add() { P+=" $*"; }
-# The home screen (kernel/desktop.c): tap_app N taps the N-th app (0: Files,
-# 1 Calculator, 2 Settings, 3 Clock, 4 Blocksmith, 5 Gallery, 6 Task Manager, 7 R3lay, 8 Camera,
-# 9 Brickfit (order 120: after the tests' apps in their image), then Log; the tests' apps come before Log). Files, Gallery and Settings are
-# in the dock (y 1168; Web isn't in this build); the others in 4 columns of
-# 168 x 184 px tiles from y 352.
-tile_x() { case $1 in 0) echo 133 ;; 5) echo 359 ;; 2) echo 585 ;; *) local g=$(grid_of "$1"); echo $(( (W - 4 * 168) / 2 + 84 + (g % 4) * 168 )) ;; esac; }
-tile_y() { case $1 in 0|2|5) echo 1168 ;; *) local g=$(grid_of "$1"); echo $(( 352 + 72 + (g / 4) * 184 )) ;; esac; }
-grid_of() { local g=$1; [ "$1" -gt 0 ] && g=$((g - 1)); [ "$1" -gt 2 ] && g=$((g - 1)); [ "$1" -gt 5 ] && g=$((g - 1)); echo $g; }
-tap_app() { go "$(tile_x "$1")" "$(tile_y "$1")"; click; add sleep:1.5; }
+# The home screen (kernel/desktop.c): tap_app NAME taps that app's icon, wherever it is: the position
+# comes from tests/linux/appslot.py, which lays the apps out as the shell does, so adding an app
+# can't move the others out from under the tests. (Files, Gallery and Settings are in the dock, y 1168;
+# the others in 4 columns of 168 x 184 px tiles from y 352.) APPSET=tests adds the tests' misbehaving
+# apps (their image): `APPSET=tests tap_app Crash`.
+tap_app() {
+    local xy
+    xy=$(python3 tests/linux/appslot.py "$1" ${APPSET:+--tests "$TEST_APPS"}) || { echo "tap_app: no app $1" >&2; exit 1; }
+    go "${xy% *}" "${xy#* }"; click; add sleep:1.5
+}
 PLAIN=202634
 
 SHELL_BIN=build-linux/lkx-shell
@@ -110,12 +111,12 @@ check "starts like the kernel: the disk image's ramdisk and FAT32, the apps, the
     '!PANIC|Segmentation'
 
 # The home screen: swiped up, all the apps; a short swipe springs back. Down
-# sends them away; from them, a tap on Calculator (the third, after Blocksmith and Brickfit: 444,216) opens it.
+# sends them away; from them, a tap on Calculator (the drawer is alphabetical: tests/linux/appslot.py) opens it.
 path; go 360 900; add press:1; go 360 860; add release sleep:0.8
 go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
 go 360 700; add press:1; go 360 800; go 360 1000; go 360 1200; add release sleep:1
 go 360 900; add press:1; go 360 700; go 360 400; go 360 200; add release sleep:1
-go 444 216; click; add sleep:1.5 phone_home sleep:1
+go $(python3 tests/linux/appslot.py Calculator --drawer); click; add sleep:1.5 phone_home sleep:1
 SCREEN="has=ffffff@0,56,720,276" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "the home screen: its clock, a swipe up to all the apps and back, one opened from there" \
     '^drawer: open$' \
@@ -125,7 +126,7 @@ check "the home screen: its clock, a swipe up to all the apps and back, one open
     '^screen: has ffffff in 0,56,720,276: yes$'
 
 # Log from its home screen icon: full-screen under the status bar; Home hides it.
-path; tap_app 10; add phone_home sleep:1
+path; tap_app "Log"; add phone_home sleep:1
 SCREEN="corner=" run $SHELL_BIN build-linux/test/disk.img "$P"
 check "an app opens full-screen from its home screen icon; Home goes back home" \
     '^desktop: open Log$' \
@@ -258,7 +259,7 @@ check "the screen saver starts after the idle time, covers the desktop, a key en
 # --- the apps, each its own Linux process (phase L2) ------------------------------------------
 open_app() { tap_app "$1"; }
 
-path; open_app 1; add 5 shift-equal 3 ret sleep:0.5
+path; open_app "Calculator"; add 5 shift-equal 3 ret sleep:0.5
 SCREEN="has=ffffff@330,110,700,230" run $SHELL_BIN build-linux/test/disk.img "$P" --keyboard qwerty
 check "Calculator runs as a Linux process: keys in, its window drawn" \
     '^desktop: open Calculator$' \
@@ -269,7 +270,7 @@ check "Calculator runs as a Linux process: keys in, its window drawn" \
 
 # Clock (the 4th icon): its tabs along the bottom (y 1220: Alarm 120, Timer
 # 360, Stopwatch 600). The timer: 5 typed (5 s), Enter starts it; it goes off.
-path; open_app 3; go 360 1220; click; add sleep:0.5 5 ret sleep:6.5
+path; open_app "Clock"; go 360 1220; click; add sleep:0.5 5 ret sleep:6.5
 run $SHELL_BIN build-linux/test/disk.img "$P" --keyboard qwerty
 check "Clock: the timer counts down and goes off, with a notification" \
     '^user: clock: tab Timer$' \
@@ -279,7 +280,7 @@ check "Clock: the timer counts down and goes off, with a notification" \
     '!crashed|stopped|PANIC'
 
 # The stopwatch: Start (524,532), a lap (196,532), Stop, Reset.
-path; open_app 3; go 600 1220; click; add sleep:0.5; go 524 532; click; add sleep:1.2; go 196 532; click
+path; open_app "Clock"; go 600 1220; click; add sleep:0.5; go 524 532; click; add sleep:1.2; go 196 532; click
 add sleep:0.3; go 524 532; click; add sleep:0.3; go 196 532; click; add sleep:0.3
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Clock: the stopwatch's Start, Lap, Stop and Reset" \
@@ -292,13 +293,13 @@ check "Clock: the stopwatch's Start, Lap, Stop and Reset" \
 # saved in Clock/alarms.txt. After a restart it's still there; its switch
 # (604,356) turns it off.
 cp build/litekernx.img build-linux/test/clock.img
-path; open_app 3; go 360 1088; click; add sleep:0.5; go 186 336; click; go 360 812; click; add sleep:0.5
+path; open_app "Clock"; go 360 1088; click; add sleep:0.5; go 186 336; click; go 360 812; click; add sleep:0.5
 run $SHELL_BIN build-linux/test/clock.img "$P"
 check "Clock: an alarm made and saved" \
     '^user: clock: new alarm$' \
     '^user: clock: alarm set [0-9]{2}:[0-9]{2}$' \
     '^user: clock: alarms saved \(1\): done$'
-path; open_app 3; go 604 356; click; add sleep:0.5
+path; open_app "Clock"; go 604 356; click; add sleep:0.5
 run $SHELL_BIN build-linux/test/clock.img "$P"
 check "Clock: the alarm kept across a restart; its switch turns it off" \
     '^user: clock: 1 alarm$' \
@@ -310,7 +311,7 @@ check "Clock: the alarm kept across a restart; its switch turns it off" \
 # deletes; Back goes back to the grid.
 cp build/litekernx.img build-linux/test/gallery.img
 path; add sleep:1 keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1.2
-add keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1; tap_app 5; add sleep:1
+add keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1; tap_app "Gallery"; add sleep:1
 go 118 266; click; add sleep:1.5 press:1; go 300 700; go 200 700; go 50 700; add release sleep:1.5
 go 588 1222; click; add sleep:0.8 ret sleep:1 phone_back sleep:0.8
 run $SHELL_BIN build-linux/test/gallery.img "$P"
@@ -324,7 +325,7 @@ check "Gallery: the pictures' grid, one opened, a swipe to the next, Delete" \
 # The Task Manager (the 7th icon): Calculator opened first, then Home; it
 # lists both (itself marked), with their memory; Calculator's Stop
 # (597,610) asks, Enter stops it.
-path; open_app 1; add phone_home sleep:0.8; tap_app 6; add sleep:1.5; go 597 610; click; add sleep:0.8 ret sleep:1.5
+path; open_app "Calculator"; add phone_home sleep:0.8; tap_app "Task Manager"; add sleep:1.5; go 597 610; click; add sleep:0.8 ret sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Task Manager: the running apps, and Stop ends one" \
     '^user: taskmgr: open, 2 apps running$' \
@@ -334,7 +335,7 @@ check "Task Manager: the running apps, and Stop ends one" \
 
 # Calculator's keys by touch: 7 (101,770), x (617,770), 1 (101,1052), Del
 # (274,629), 6 (446,911), = (617,1193): 7 x 6 = 42.
-path; open_app 1; go 101 770; click; go 617 770; click; go 101 1052; click; go 274 629; click
+path; open_app "Calculator"; go 101 770; click; go 617 770; click; go 101 1052; click; go 274 629; click
 go 446 911; click; go 617 1193; click; add sleep:0.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Calculator by touch: its keypad, Del" \
@@ -344,7 +345,7 @@ check "Calculator by touch: its keypad, Del" \
 # Files lists the disk; a single tap on Documents (its first row, 300,261) opens it.
 # The phone's Back goes up to the disk first (Files asked for it), then home,
 # Files kept open behind.
-path; open_app 0; go 300 261; click; add sleep:1 phone_back sleep:1 phone_back sleep:1.5
+path; open_app "Files"; go 300 261; click; add sleep:1 phone_back sleep:1 phone_back sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Files lists the disk; Back goes up a folder, then home (Files kept open)" \
     '^user: files: open Boot disk \(LITEKERNX\)$' \
@@ -359,7 +360,7 @@ check "Files lists the disk; Back goes up a folder, then home (Files kept open)"
 # (its second choice, 300,1123) to README.md (three Backspaces, md, Enter). Again on
 # it: Delete (300,1211), confirmed. A press held only briefly opens nothing.
 cp build/litekernx.img build-linux/test/files.img
-path; open_app 0; go 300 437; add press:1 sleep:0.8 release sleep:0.5; go 300 1123; click
+path; open_app "Files"; go 300 437; add press:1 sleep:0.8 release sleep:0.5; go 300 1123; click
 add sleep:0.8 backspace backspace backspace m d ret sleep:1; go 300 437; add press:1 sleep:0.8 release sleep:0.5; go 300 1211; click
 add sleep:0.8 ret sleep:1
 run $SHELL_BIN build-linux/test/files.img "$P" --keyboard qwerty
@@ -373,7 +374,7 @@ check "Files: a long press brings up Open, Rename, Delete" \
 # Pictures: a screenshot (Power + Volume Down), then Files: Pictures (300,349),
 # Screenshots (300,261), the picture (300,261) shown; Set on Lock Screen (192,1222).
 cp build/litekernx.img build-linux/test/pics.img
-path; add sleep:1 keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1; open_app 0
+path; add sleep:1 keydown:phone_power keydown:vol_down keyup:vol_down keyup:phone_power sleep:1; open_app "Files"
 go 300 349; click; add sleep:1; go 300 261; click; add sleep:1; click; add sleep:2.5; go 192 1222; click; add sleep:1.5
 run $SHELL_BIN build-linux/test/pics.img "$P"
 check "Files shows a screenshot; its button puts it on the lock screen" \
@@ -386,7 +387,7 @@ check "Files shows a screenshot; its button puts it on the lock screen" \
 # text field, so it comes up and Files shrinks above it; h (435,1010), i
 # (540,904), Shift then i: "hiI"; Enter (645,1222) creates it, and it goes.
 cp build/litekernx.img build-linux/test/osk.img
-path; open_app 0; go 146 1229; click; add sleep:1; go 435 1010; click; go 540 904; click; go 67 1116; click
+path; open_app "Files"; go 146 1229; click; add sleep:1; go 435 1010; click; go 540 904; click; go 67 1116; click
 go 540 904; click; add sleep:0.3; go 645 1222; click; add sleep:1
 run $SHELL_BIN build-linux/test/osk.img "$P"
 check "the on-screen keyboard: up for a text field, Files above it, taps type, Shift, Enter" \
@@ -400,7 +401,7 @@ check "the on-screen keyboard: up for a text field, Files above it, taps type, S
     '!crashed|PANIC'
 
 # Holding a letter offers its accents: e (180,904), held, gives the first, e acute.
-path; open_app 0; go 146 1229; click; add sleep:1; go 180 904; add sleep:0.2 press:1 sleep:0.8 release sleep:0.5
+path; open_app "Files"; go 146 1229; click; add sleep:1; go 180 904; add sleep:0.2 press:1 sleep:0.8 release sleep:0.5
 run $SHELL_BIN build-linux/test/osk.img "$P"
 check "the on-screen keyboard: a held letter offers its accents" \
     '^osk: shown$' \
@@ -415,7 +416,7 @@ check "fast typing: a new finger ends the last key" '^PASS  a second finger' '!^
 # in the middle, Calculator's card to its left (50,620): a tap goes to it.
 # Again: Calculator's card (now in the middle, 360,620) swiped up closes it;
 # the switcher stays, and its Close all (360,1196) closes Files.
-path; open_app 1; add phone_home sleep:0.8; open_app 0; add phone_recents sleep:0.8; go 50 620; click; add sleep:1.5
+path; open_app "Calculator"; add phone_home sleep:0.8; open_app "Files"; add phone_recents sleep:0.8; go 50 620; click; add sleep:1.5
 add phone_recents sleep:0.8; go 360 620; add press:1; go 360 520; go 360 320; go 360 120; add release sleep:1.5
 go 360 1196; click; add sleep:1.5
 run $SHELL_BIN build-linux/test/disk.img "$P"
@@ -431,7 +432,7 @@ check "the app switcher: a tap goes to an app, a swipe up closes one, Close all 
 # The switcher settles on a card when let go (One UI's way): a short drag
 # springs back to Files, a long one goes on to Calculator. What's behind it,
 # and behind the power menu, is kept once as they open.
-path; open_app 1; add phone_home sleep:0.8; open_app 0; add phone_recents sleep:1
+path; open_app "Calculator"; add phone_home sleep:0.8; open_app "Files"; add phone_recents sleep:1
 go 300 620; add press:1; go 340 620; go 380 620; go 400 620; add sleep:0.2 release sleep:1
 go 100 620; add press:1; go 200 620; go 300 620; go 400 620; add sleep:0.2 release sleep:1
 add phone_recents sleep:1 keydown:phone_power sleep:1 keyup:phone_power sleep:0.6 phone_back sleep:1
@@ -446,7 +447,7 @@ check "the switcher settles on the nearest card; it and the power menu blur what
 
 # Notify's two notifications (the tests' image), then Power: their cards
 # under the lock screen's clock (white titles, 80..640 x 580..800).
-path; tap_app 12; add phone_home sleep:0.8 phone_power sleep:1.5
+path; APPSET=tests tap_app Notify; add phone_home sleep:0.8 phone_power sleep:1.5
 cp build/test-apps/litekernx.img build-linux/test/locknote.img
 SCREEN="has=ffffff@80,580,640,800" run $SHELL_BIN build-linux/test/locknote.img "$P"
 check "the lock screen shows notifications under the clock" \
@@ -457,7 +458,7 @@ check "the lock screen shows notifications under the clock" \
 # Back, in an app with nothing to go back to, goes home: the app is kept
 # open behind (Android 12's way). Its icon brings it back as it was: the 7
 # typed before Back is still there (7 + 6 = 13). Home keeps it open too.
-path; open_app 1; add 7 phone_back sleep:1; tap_app 1; add shift-equal 6 ret sleep:0.5 phone_home sleep:1; tap_app 1
+path; open_app "Calculator"; add 7 phone_back sleep:1; tap_app "Calculator"; add shift-equal 6 ret sleep:0.5 phone_home sleep:1; tap_app "Calculator"
 run $SHELL_BIN build-linux/test/disk.img "$P"
 check "Back and Home go home, the app kept open: Calculator comes back as it was" \
     '^shell: Back leaves Calculator open, goes home$' \
@@ -473,7 +474,7 @@ check "Back and Home go home, the app kept open: Calculator comes back as it was
 # the header's back arrow, or Back, goes back to it. Display: the Light card
 # (530,320), saved; after a restart it's still light.
 cp build/litekernx.img build-linux/test/settings.img
-path; open_app 2; go 360 304; click; add sleep:1; go 530 320; click; add sleep:1 phone_back sleep:0.8
+path; open_app "Settings"; go 360 304; click; add sleep:1; go 530 320; click; add sleep:1 phone_back sleep:0.8
 go 360 656; click; add sleep:0.8 phone_back sleep:0.5 phone_back sleep:1
 run $SHELL_BIN build-linux/test/settings.img "$P"
 check "Settings: the list of pages, Display's style saved, About, Back to the list, then Back goes home" \
@@ -491,9 +492,9 @@ check "Settings' choices are kept across a restart" \
 # The PIN: Lock Screen (360,392), Set PIN (360,420), 1234 twice (the
 # keyboard comes up for it). Then Power locks; a swipe up asks for the PIN.
 cp build/litekernx.img build-linux/test/pin.img
-path; open_app 2; go 360 392; click; add sleep:1; go 360 420; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
+path; open_app "Settings"; go 360 392; click; add sleep:1; go 360 420; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
 add phone_power sleep:1.5 press:1; go 360 300; go 360 200; go 360 100; add release sleep:1 1 2 3 4 ret sleep:2
-add phone_home sleep:0.8; tap_app 5; add sleep:1.5
+add phone_home sleep:0.8; tap_app "Gallery"; add sleep:1.5
 run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
 check "after a PIN is set, the home folder exists for the apps (Gallery, Camera)" \
     '^settings: made User.s home folder$' \
@@ -509,7 +510,7 @@ check "Settings sets a PIN; the lock screen then asks for it" \
     '!refused|crashed|PANIC'
 # After a restart, it's needed to log in; then Remove PIN (530,420) takes
 # the PIN once, and the next start needs none.
-path; add sleep:0.6 ret sleep:0.3 1 2 3 4 ret sleep:2; open_app 2; go 360 392; click; add sleep:1; go 530 420; click
+path; add sleep:0.6 ret sleep:0.3 1 2 3 4 ret sleep:2; open_app "Settings"; go 360 392; click; add sleep:1; go 530 420; click
 add sleep:0.8 1 2 3 4 ret sleep:2
 run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
 check "the PIN at the next start; Remove PIN" \
@@ -534,7 +535,7 @@ printf 'firmware\n' >$F/bl/acpi_video0/type; printf '15\n' >$F/bl/acpi_video0/ma
 printf '3\n' >$F/bl/acpi_video0/brightness
 export LKX_POWER_SUPPLY=$PWD/$F/ps LKX_BACKLIGHT=$PWD/$F/bl
 cp build/litekernx.img build-linux/test/machine.img
-path; open_app 2; go 360 480; click; add sleep:1 phone_back sleep:0.5; go 360 304; click; add sleep:1
+path; open_app "Settings"; go 360 480; click; add sleep:1 phone_back sleep:0.5; go 360 304; click; add sleep:1
 go 176 247; add sleep:0.2 press:1; go 300 247; go 423 247; add release sleep:1 phone_back sleep:0.5
 go 360 568; click; add sleep:1; go 360 541; click; add sleep:1
 SCREEN="has=ffffff@560,5,700,50" run $SHELL_BIN build-linux/test/machine.img "$P"
@@ -556,7 +557,7 @@ unset LKX_POWER_SUPPLY LKX_BACKLIGHT
 # Blocksmith: F5 runs the starter project, a click on the stage, Esc, Ctrl+S
 # saves it as "Test" (SYS_FS_WRITE).
 cp build/litekernx.img build-linux/test/blocksmith.img
-path; open_app 4; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
+path; open_app "Blocksmith"; add sleep:0.5 f5 sleep:1; go 850 250; click; add sleep:0.5 esc sleep:0.3 ctrl-s sleep:0.5 shift-t e s t ret sleep:1
 run $SHELL_BIN build-linux/test/blocksmith.img "$P" --keyboard qwerty
 check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
     '^user: blocksmith: run$' \
@@ -569,7 +570,7 @@ check "Blocksmith: runs scripts, handles stage clicks, saves projects" \
 # from Recent apps' Close all (360,1196), 8 times (about 5 s each: run's limit
 # is 50 s); each must end cleanly.
 path; add gap:0.1
-files() { go "$(tile_x 0)" "$(tile_y 0)"; click; add sleep:0.6; }
+files() { go $(python3 tests/linux/appslot.py Files); click; add sleep:0.6; }
 for i in $(seq 8); do files; add phone_back sleep:0.5; files; add phone_recents sleep:0.5; go 360 1196; click; add sleep:0.6; done
 run $SHELL_BIN build-linux/test/disk.img "$P"
 n=$(grep -c '^lkx: Files exited (0)$' <<<"$out")
@@ -581,10 +582,9 @@ check "Files opened, sent home, back and closed 8 times, ending cleanly each tim
 # Misbehaving apps (tests/apps) must only end themselves: Crash writes to
 # address 0, Badcalls passes kernel pointers and nonsense (the same answers
 # as the kernel's), Hang spins until the watchdog. Then Files still works.
-# Their home screen icons: Crash, Badcalls, Hang are the 10th to 12th.
 path
-for i in 9 10 11; do add phone_home sleep:0.5; tap_app "$i"; done
-add sleep:11 phone_home sleep:0.5; tap_app 0
+for app in Crash Badcalls Hang; do add phone_home sleep:0.5; APPSET=tests tap_app "$app"; done
+add sleep:11 phone_home sleep:0.5; APPSET=tests tap_app Files
 cp build/test-apps/litekernx.img build-linux/test/apps.img
 run $SHELL_BIN build-linux/test/apps.img "$P"
 check "apps: a crash, bad calls and a hang each end only the app" \
@@ -616,7 +616,7 @@ check "apps: a crash, bad calls and a hang each end only the app" \
 # with them newest first. A tap on the first ("Again", 360,912) opens its app
 # and dismisses it. Pulled again: Dark Mode (530,589) and Do Not Disturb
 # (190,589), then Back closes it. Home held opens it too.
-path; tap_app 12; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
+path; APPSET=tests tap_app Notify; add phone_home sleep:0.8; go 360 20; add press:1; go 360 300; go 360 600; go 360 920; add release sleep:1
 go 360 912; click; add sleep:1 phone_home sleep:0.8; go 360 20; click; add sleep:1; go 530 589; click; add sleep:0.5
 go 190 589; click; add sleep:0.5 phone_back sleep:1 keydown:phone_home sleep:0.8 keyup:phone_home sleep:1
 cp build/test-apps/litekernx.img build-linux/test/qs.img

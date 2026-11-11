@@ -1,5 +1,7 @@
 # Developing LiteKern X
 
+> **LiteKern Go (the phone) is what's being built now.** Making an app: [NEW-APP.md](NEW-APP.md) (`tools/new-app.sh`, `check-app.sh`, `push-app.sh`, `build-system.sh`). Putting a build on the phone: `phone/README.md` and the notes in `CLAUDE.md`. The rest of this page is the older LiteKern X material (the Eee PC, 32-bit, 1024x600): useful for how the kernel and the PC tests work, but not the phone's screen size or boot.
+
 Everything you need to build, test and work on LiteKern X. For what the project is, see the [README](../README.md); for the plan, see [`LiteKernX-Roadmap/`](../LiteKernX-Roadmap/) (the phase files there are the source of truth).
 
 ## Setup (Windows + WSL Ubuntu)
