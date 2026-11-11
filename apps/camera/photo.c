@@ -111,9 +111,47 @@ static struct {
     uint8_t *p8;
     const uint16_t *shade;
     uint32_t *out;
-    int w, h, stride_px, top_skip, left_skip, red, blue;
+    int w, h, stride_px, red, blue;
     int k[9];                           /* colour matrix then saturation, 8.8 */
 } pv;
+
+/* The zoom: a middle part of the sensor's picture fills the screen. The screen's rows are the sensor's
+ * columns and the other way (it's a quarter turn), and zoom 1 shows all of it, 1 to 1. The map from a
+ * screen row to a sensor column (xrow) and a screen column to a sensor row (ycol) is made when the
+ * size or the zoom changes. */
+static int zoom_now = 1, map_w, map_h, map_zoom;
+static int xrow[1400], ycol[800];
+
+static int fdiv(int a, int b)           /* a / b, rounded down (b > 0) */
+{
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+static void build_map(int w, int h)
+{
+    int z = zoom_now;
+    for (int dy = 0; dy < h && dy < 1400; dy++)
+        xrow[dy] = CAM_W / 2 + fdiv(2 * dy - h, 2 * z);
+    for (int dx = 0; dx < w && dx < 800; dx++)
+        ycol[dx] = CAM_H / 2 - 1 - fdiv(2 * dx - w, 2 * z);
+    map_w = w;
+    map_h = h;
+    map_zoom = z;
+}
+
+void photo_zoom_set(int z)
+{
+    zoom_now = z < 1 ? 1 : z > 4 ? 4 : z;
+}
+
+/* Where a point of the screen is on the sensor (for focusing). */
+void photo_screen_to_sensor(int sx, int sy, int *x, int *y)
+{
+    sx = sx < 0 ? 0 : sx >= map_w ? map_w - 1 : sx;
+    sy = sy < 0 ? 0 : sy >= map_h ? map_h - 1 : sy;
+    *x = map_w ? xrow[sy] : CAM_W / 2;
+    *y = map_w ? ycol[sx] : CAM_H / 2;
+}
 
 static void preview_matrix(void)
 {
@@ -149,14 +187,14 @@ static void preview_tile(int dy0, int dy1, int dx0, int dx1)
 {
     const int *k = pv.k;
     for (int dy = dy0; dy < dy1; dy++) {
-        int x = dy + pv.top_skip;
+        int x = xrow[dy];
         if (x < 0 || x >= CAM_W)
             continue;
         int cx = x < 2 ? 2 : x > CAM_W - 3 ? CAM_W - 3 : x;
         uint32_t *line = pv.out + (size_t)dy * (size_t)pv.stride_px;
         const uint16_t *shade_col = pv.shade + x / 2;
         for (int dx = dx0; dx < dx1; dx++) {
-            int y = CAM_H - 1 - (dx + pv.left_skip);
+            int y = ycol[dx];
             if (y < 0 || y >= CAM_H)
                 continue;
             int cy = y < 2 ? 2 : y > CAM_H - 3 ? CAM_H - 3 : y;
@@ -262,8 +300,8 @@ void photo_preview(const uint8_t *frame, int red, int blue, uint32_t *out, int w
     pv.w = w;
     pv.h = h;
     pv.stride_px = stride_px;
-    pv.top_skip = (CAM_W - h) / 2;
-    pv.left_skip = (CAM_H - w) / 2;
+    if (map_w != w || map_h != h || map_zoom != zoom_now)
+        build_map(w, h);
     pv.red = red;
     pv.blue = blue;
     on_all_cores(unpack_part);
@@ -337,6 +375,7 @@ static inline int mir(int v, int n)
 static struct {
     const uint8_t *frame;
     int w, h, stride, red, blue, row_bytes;
+    int x0, y0, fw, fh;                 /* the window taken from the frame: its corner, and the frame's size */
     uint16_t *raw;
     int16_t *gp;
     int *fx2;                           /* the lens shading's x part, per column */
@@ -350,7 +389,7 @@ static void *dev_unpack(void *arg)
 {
     int part = (int)(intptr_t)arg, y0 = dv.h * part / THREADS, y1 = dv.h * (part + 1) / THREADS;
     for (int y = y0; y < y1; y++) {
-        const uint8_t *p = dv.frame + (size_t)y * (size_t)dv.stride;
+        const uint8_t *p = dv.frame + (size_t)(dv.y0 + y) * (size_t)dv.stride + (size_t)(dv.x0 / 4) * 5;
         uint16_t *r = dv.raw + (size_t)y * (size_t)dv.w;
         for (int x = 0; x < dv.w; x += 4, p += 5) {
             int low = p[4];
@@ -393,7 +432,7 @@ static void *dev_colour(void *arg)
 {
     int part = (int)(intptr_t)arg, y0 = dv.h * part / THREADS, y1 = dv.h * (part + 1) / THREADS;
     for (int y = y0; y < y1; y++) {
-        int fy = (y - dv.h / 2) * 256 / (dv.h / 2), fy2 = fy * fy;
+        int fy = (dv.y0 + y - dv.fh / 2) * 256 / (dv.fh / 2), fy2 = fy * fy;
         for (int x = 0; x < dv.w; x++) {
             int g = GRN(x, y), r, b;
             if (!(y & 1) && !(x & 1)) {         /* red: blue from the four corners */
@@ -423,8 +462,13 @@ static void *dev_colour(void *arg)
 #undef RAW
 #undef GRN
 
-static int develop(const uint8_t *frame, int w, int h, int stride, int red, int blue, uint8_t *out, int row_bytes)
+static int develop(const uint8_t *frame, int fw, int fh, int x0, int y0, int w, int h, int stride, int red, int blue,
+                   uint8_t *out, int row_bytes)
 {
+    dv.fw = fw;
+    dv.fh = fh;
+    dv.x0 = x0;
+    dv.y0 = y0;
     dv.frame = frame;
     dv.w = w;
     dv.h = h;
@@ -443,7 +487,7 @@ static int develop(const uint8_t *frame, int w, int h, int stride, int red, int 
         return -1;
     }
     for (int x = 0; x < w; x++) {
-        int fx = (x - w / 2) * 256 / (w / 2);
+        int fx = (x0 + x - fw / 2) * 256 / (fw / 2);
         dv.fx2[x] = fx * fx;
     }
     on_all_cores(dev_unpack);
@@ -489,7 +533,7 @@ struct photo_job {
     int started;
     volatile int done;
     uint8_t *frame;                     /* ours: freed when the job is */
-    int fw, fh, fstride, red, blue;
+    int fw, fh, fstride, red, blue, zoom;
     uint8_t *png;
     size_t png_len;
     uint32_t thumb[THUMB * THUMB];
@@ -561,7 +605,11 @@ static void *encode_thread(void *arg)
 {
     struct photo_job *j = arg;
     static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
-    int w = j->fh, h = j->fw, row = w * 3 + 1;     /* turned a quarter: the sensor's rows are the picture's columns */
+    /* A zoom takes the middle of the frame (a window of a whole number of Bayer groups: 4 pixels across,
+     * 2 down), and the picture is that, as it is. */
+    int cw = (j->fw / j->zoom) & ~3, ch = (j->fh / j->zoom) & ~1;
+    int x0 = ((j->fw - cw) / 2) & ~3, y0 = ((j->fh - ch) / 2) & ~1;
+    int w = ch, h = cw, row = w * 3 + 1;           /* turned a quarter: the sensor's rows are the picture's columns */
     size_t raw_len = (size_t)row * (size_t)h;
     uint8_t *rows = calloc(raw_len, 1), *filt = malloc(raw_len), *png = 0;
     uint32_t t0 = ms_now(), t1, t2;
@@ -573,7 +621,7 @@ static void *encode_thread(void *arg)
     }
     if (!rows || !filt)
         goto out;
-    if (develop(j->frame, j->fw, j->fh, j->fstride, j->red, j->blue, rows, row))
+    if (develop(j->frame, j->fw, j->fh, x0, y0, cw, ch, j->fstride, j->red, j->blue, rows, row))
         goto out;
     t1 = ms_now();
     j->ms_develop = t1 - t0;
@@ -641,7 +689,7 @@ out:
     return 0;
 }
 
-struct photo_job *photo_encode_start(uint8_t *frame, int w, int h, int stride, int red, int blue)
+struct photo_job *photo_encode_start(uint8_t *frame, int w, int h, int stride, int red, int blue, int zoom)
 {
     struct photo_job *j = calloc(1, sizeof(*j));
     if (!j)
@@ -653,6 +701,7 @@ struct photo_job *photo_encode_start(uint8_t *frame, int w, int h, int stride, i
     j->fstride = stride;
     j->red = red;
     j->blue = blue;
+    j->zoom = zoom < 1 ? 1 : zoom > 4 ? 4 : zoom;
     if (pthread_create(&j->th, 0, encode_thread, j) == 0) {
         j->started = 1;
     } else {
@@ -700,6 +749,6 @@ int photo_save(const uint8_t *frame, int fw, int fh, int fstride, int red, int b
     if (!copy)
         return -1;
     memcpy(copy, frame, len);
-    struct photo_job *j = photo_encode_start(copy, fw, fh, fstride, red, blue);
+    struct photo_job *j = photo_encode_start(copy, fw, fh, fstride, red, blue, 1);
     return j ? photo_encode_finish(j, name) : -1;
 }

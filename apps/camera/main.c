@@ -21,10 +21,14 @@
 #define BUTTON_R 72
 #define BUTTON_BELOW 150                /* its centre, up from the bottom */
 #define NOTE_MS 2000
+#define ZOOM_R 32                       /* the zoom buttons' radius, and where they sit: above the shutter */
+#define ZOOM_STEP 104
+#define NZOOMS 3
 
 static struct k86_window win;
 static struct gfx_surface canvas;
 static int have_camera, shoot, busy;
+static int zoom = 1;                    /* 1, 2 or 3 */
 static struct photo_job *job;           /* a photo being made in the background */
 static uint32_t job_began;
 static int red = 310, blue = 640;       /* a guess until the first frame */
@@ -35,6 +39,16 @@ static uint32_t thumb[THUMB * THUMB];
 static int have_thumb;
 static int focus_pending = 1;
 static int focus_x, focus_y;            /* on screen, for the square */
+
+static int zoom_cx(int i)
+{
+    return canvas.w / 2 + (i - 1) * ZOOM_STEP;
+}
+
+static int zoom_cy(void)
+{
+    return canvas.h - BUTTON_BELOW - BUTTON_R - 56;
+}
 
 static int thumb_x(void)
 {
@@ -54,9 +68,21 @@ static void button_draw(int pressed)
     gfx_fill_circle(&canvas, cx, cy, BUTTON_R - 18, pressed ? 0xc0c0c0 : 0xffffff);
 }
 
+static void zoom_draw(void)
+{
+    for (int i = 0; i < NZOOMS; i++) {
+        int on = zoom == i + 1;
+        char label[4] = { (char)('1' + i), 'x', 0, 0 };
+        gfx_fill_circle(&canvas, zoom_cx(i), zoom_cy(), ZOOM_R, on ? 0xffffff : 0x303030);
+        text_draw(&canvas, zoom_cx(i) - text_width(label, TEXT_BOLD) / 2, zoom_cy() - text_height(TEXT_BOLD) / 2, label,
+                  TEXT_BOLD, on ? 0x202020 : 0xffffff);
+    }
+}
+
 static void overlay(void)
 {
     button_draw(busy);
+    zoom_draw();
     if (have_thumb) {
         struct gfx_surface t = { thumb, THUMB, THUMB, THUMB };
         gfx_fill_rect(&canvas, thumb_x() - 3, thumb_y() - 3, THUMB + 6, THUMB + 6, 0xffffff);
@@ -92,10 +118,11 @@ static void draw_message(const char *text)
  * 2 screen pixels to a Bayer cell of 2 sensor pixels, so 1 to 1 once turned. */
 static void focus_on(int x, int y)
 {
-    int top_skip = (CAM_W - canvas.h) / 2, left_skip = (CAM_H - canvas.w) / 2;
+    int sx, sy;
+    photo_screen_to_sensor(x, y, &sx, &sy);
     focus_x = x;
     focus_y = y;
-    focus_at(y + top_skip, CAM_H - 1 - (x + left_skip));
+    focus_at(sx, sy);
 }
 
 static int restreamed;                  /* take() restarted the stream: the frame in hand is gone */
@@ -144,9 +171,9 @@ static void take(const uint8_t *frame)
     k86_logf("camera: the frame took %u ms (%s)", k86_uptime_ms() - job_began, still ? "photo mode" : "live frame");
     if (still) {
         free(live);
-        job = photo_encode_start(still, w, h, rb, red, blue);
+        job = photo_encode_start(still, w, h, rb, red, blue, zoom);
     } else if (live) {
-        job = photo_encode_start(live, CAM_W, CAM_H, live_stride, red, blue);
+        job = photo_encode_start(live, CAM_W, CAM_H, live_stride, red, blue, zoom);
     }
     if (!job) {
         busy = 0;
@@ -181,6 +208,7 @@ static void timer(void)
     static uint32_t since, work, skipped;
     uint32_t t0 = k86_uptime_ms();
     int draw = !job || frames % 3 == 0;          /* while a photo is made, the live picture takes a third of the CPU */
+    photo_zoom_set(zoom);
     if (draw)
         photo_preview(frame, red, blue, canvas.px, canvas.w, canvas.h, canvas.stride);
     if (shoot)
@@ -211,6 +239,16 @@ static void pointer(const struct k86_event *ev)
     int dx = p.x - canvas.w / 2, dy = p.y - (canvas.h - BUTTON_BELOW);
     if (!p.up || !have_camera)
         return;
+    for (int i = 0; i < NZOOMS; i++) {
+        int zx = p.x - zoom_cx(i), zy = p.y - zoom_cy();
+        if (zx * zx + zy * zy < (ZOOM_R + 14) * (ZOOM_R + 14)) {
+            if (zoom != i + 1) {
+                zoom = i + 1;
+                k86_logf("camera: zoom %dx", (uint32_t)zoom);
+            }
+            return;
+        }
+    }
     if (dx * dx + dy * dy < (BUTTON_R + 24) * (BUTTON_R + 24)) {
         if (!job)
             shoot = 1;
