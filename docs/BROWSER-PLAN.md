@@ -11,6 +11,12 @@ Done in WSL with no admin rights: `unshare -r` (user namespace), Alpine 3.21 x86
 - Size: about 540 MB installed. Memory for one trivial page: about 480 MB across three processes (web 240, network 120, Cog 110), so a heavy page on the 2 GB phone is the risk.
 - Not proven yet: getting the pixels out. Cog's headless platform draws nowhere we can read. Phase 4 means our own small host using libwpe and wpebackend-fdo (both in Alpine) to receive the frames.
 
+## Phase 1 and 2 result (13 Nov 2026): it runs on the phone
+- Phase 1: the extras area (3 GiB ext4, label LKGO_EXTRAS) is written into userdata at sector 4343808 and checked by reading it back (`phone/make-extras.sh`, `update-system.sh --write extras`). `lkx-start` mounts it on `/extras` from the next `--write system`; until then it's mounted by hand over ssh.
+- Phase 2: Alpine 3.21 aarch64 minirootfs (sha256 checked on the PC, sent over USB) in `/extras/alpine`; `apk add cog wpewebkit mesa-dri-gallium mesa-gles font-dejavu` ran on the phone over Wi-Fi (the phone's own busybox has no https, Alpine's does): 196 packages, about 500 MB, about 25 minutes (mostly the flash). `phone/sandbox/enter.sh` (kept at `/extras/enter.sh`) runs a command inside it as root.
+- Phase 3 first numbers: Cog 0.18.3 with WPE WebKit 2.40.5 starts and runs JavaScript on the phone (aarch64 UA). The 30-million-step loop took **884 ms** (59 ms on the PC: about 15 times slower), a canvas draws, no crash. Memory for a trivial page: about 390 MB (web 194, network 94, Cog 103). Not measured yet: a real, heavy page, and how fast software rendering paints.
+- Notes: the phone's busybox has no `timeout`, `nc` or `httpd` (run those inside the sandbox); load test pages from `file:///root/...`.
+
 ## Phases (each ends in a decision)
 
 0. **Prove the design on the PC** (no phone). Alpine x86_64 base (official site, hash checked) in WSL; `apk add wpewebkit`; a minimal `lkx-web` showing a page in the headless desktop. Answers: does WPE render without a GPU (Mesa software), what it needs (fonts, certificates), how it meets our app protocol. If it can't render: stop and look at NetSurf or the Buildroot WebKit.
