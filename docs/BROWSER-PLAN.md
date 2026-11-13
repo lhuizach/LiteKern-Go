@@ -2,7 +2,14 @@
 
 Not started. The idea: WPE WebKit from Alpine's ready-made packages, in a small Alpine sandbox on the phone's spare storage, run by our own app `lkx-web` that draws its pages into a LiteKern window. No long WebKit compile. (The other design, in `ROADMAP.md` and `linux/buildroot-web.fragment`, builds WPE WebKit with Buildroot: 3 to 6 hours on the PC, 150 to 250 MB; kept as the fallback. NetSurf, `linux/package/netsurf-lkx`, is the light fallback without real JS.) Firefox is out: it needs X11 or Wayland and a GPU, and our desktop is neither.
 
-Alpine has WPE WebKit for aarch64: `wpewebkit` 2.40.5 on 3.19, newer on edge (pkgs.alpinelinux.org).
+Alpine has WPE WebKit for aarch64 only in 3.19 to 3.21 (`wpewebkit` 2.40.5, with `cog` 0.18.3); 3.22 and newer, and edge, don't have it. So the sandbox uses Alpine **3.21**. It's installed once on the phone, so an old but working copy is fine.
+
+## Phase 0 result (13 Nov 2026): it works on the PC
+Done in WSL with no admin rights: `unshare -r` (user namespace), Alpine 3.21 x86_64 minirootfs (sha256 checked) in `~/lkx-web-p0/root`, then `apk --usermode add cog wpewebkit mesa-dri-gallium mesa-gles font-dejavu`.
+- Real JavaScript runs (a 30-million-step loop took 59 ms, so the JIT works on x86; **not yet measured on the phone's Cortex-A53**). A canvas draws; HTTPS works (certificates come with `ca-certificates`).
+- It needs Mesa's software GL (`mesa-dri-gallium`, `LIBGL_ALWAYS_SOFTWARE=1`; without it the web process crashes at once), `/dev` bound into the chroot, `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` (WebKit's own sandbox off) and fonts.
+- Size: about 540 MB installed. Memory for one trivial page: about 480 MB across three processes (web 240, network 120, Cog 110), so a heavy page on the 2 GB phone is the risk.
+- Not proven yet: getting the pixels out. Cog's headless platform draws nowhere we can read. Phase 4 means our own small host using libwpe and wpebackend-fdo (both in Alpine) to receive the frames.
 
 ## Phases (each ends in a decision)
 
