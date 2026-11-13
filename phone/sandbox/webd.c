@@ -45,6 +45,7 @@ static struct wpe_view_backend_exportable_fdo *exportable;
 static struct wpe_view_backend *vb;
 static WebKitWebView *view;
 static int W = 720, H = 1032;
+static double zoom = 1.0;                   /* the page's zoom: 2 = a 360 px wide page on the 720 px picture */
 static unsigned char *shm;                  /* the mapped FRAME_FILE */
 static struct frame_header *fh;
 static unsigned char *last;                 /* --shot mode: newest frame */
@@ -149,7 +150,7 @@ static void command(char *line)
                  "(function(x,y,dy){var e=document.elementFromPoint(x,y);"
                  "while(e&&e!==document.body&&e!==document.documentElement){var s=getComputedStyle(e);"
                  "if(/(auto|scroll)/.test(s.overflowY)&&e.scrollHeight>e.clientHeight){var b=e.scrollTop;e.scrollTop+=dy;if(e.scrollTop!==b)return;}"
-                 "e=e.parentElement;}window.scrollBy(0,dy);})(%d,%d,%d)", x, y, dy);
+                 "e=e.parentElement;}window.scrollBy(0,dy);})(%f,%f,%f)", x / zoom, y / zoom, dy / zoom);   /* the page's own pixels */
         webkit_web_view_evaluate_javascript(view, js, -1, NULL, NULL, NULL, NULL, NULL);
     } else if (sscanf(line, "key %i %u", &sym, &down) == 2) key(sym, (int)down);
 }
@@ -274,6 +275,7 @@ int main(int argc, char **argv)
 {
     int wait_s = 8, serve = 0;
     const char *ua = NULL;
+    int desktop = 0;
     const char *url = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
@@ -281,6 +283,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--serve")) serve = 1;
         else if (!strcmp(argv[i], "--ua") && i + 1 < argc) ua = argv[++i];
+        else if (!strcmp(argv[i], "--desktop")) desktop = 1;
         else url = argv[i];
     }
     if (!serve && !url) { fprintf(stderr, "usage: lkx-webd --serve [--size WxH] [URL] | [--wait S] --shot F.ppm URL\n"); return 2; }
@@ -294,6 +297,14 @@ int main(int argc, char **argv)
     WebKitWebViewBackend *wb = webkit_web_view_backend_new(vb, NULL, NULL);
     view = WEBKIT_WEB_VIEW(webkit_web_view_new(wb));
     wpe_view_backend_add_activity_state(vb, wpe_view_activity_state_visible | wpe_view_activity_state_focused | wpe_view_activity_state_in_window);
+    /* A phone's way: the sites that have a mobile version get it. The identity string is Safari on an iPhone (the
+     * same engine family) and the page is shown at twice the size, so the page is 360 wide, as on a phone, and
+     * the text and buttons are big enough to tap. --desktop turns both off. */
+    if (!desktop) {
+        zoom = 2.0;
+        webkit_web_view_set_zoom_level(view, zoom);
+        if (!ua) ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1";
+    }
     if (ua) webkit_settings_set_user_agent(webkit_web_view_get_settings(view), ua);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load), NULL);
     g_signal_connect(view, "load-failed", G_CALLBACK(on_load_failed), NULL);
