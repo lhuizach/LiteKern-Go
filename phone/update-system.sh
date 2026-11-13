@@ -7,6 +7,7 @@
 #   bash phone/update-system.sh --write system          the system (the initramfs: apps and all)
 #   bash phone/update-system.sh --write dtb             the device tree
 #   bash phone/update-system.sh --write kernel          the kernel
+#   bash phone/update-system.sh --write extras          the extras area (phone/make-extras.sh), only if the phone has none yet
 #   bash phone/update-system.sh --write all             all four (the config last)
 #
 # What it writes: only files on the boot partition, the first partition inside userdata (an ext2
@@ -35,9 +36,12 @@ mode=${1:-}
 what=${2:-}
 case "$mode" in
 --check) ;;
---write) [ -n "$what" ] || { sed -n '3,10p' "$0"; exit 2; } ;;
-*) sed -n '3,10p' "$0"; exit 2 ;;
+--write) [ -n "$what" ] || { sed -n '3,11p' "$0"; exit 2; } ;;
+*) sed -n '3,11p' "$0"; exit 2 ;;
 esac
+EXTRAS_START=4343808      # sectors into userdata; keep in step with lkx-start and phone/make-extras.sh
+EXTRAS_IMG=${LKX_EXTRAS:-$OUT/extras.ext4}
+EXTRAS_MIB=3072
 
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 "$PHONE")
 
@@ -55,6 +59,7 @@ system) list=(initramfs) ;;
 dtb) list=(msm8916-samsung-a5u-eur.dtb) ;;
 kernel) list=(vmlinuz) ;;
 all | "") list=("${ALL[@]}") ;;
+extras) list=() ;;
 *) echo "unknown: $what" >&2; exit 2 ;;
 esac
 for n in "${list[@]}"; do
@@ -90,7 +95,36 @@ df -k "$mnt" | tail -1 | awk '{print "space: " $4 " KiB free of " $2}'
 EOF
 }
 
+# The extras area: a separate ext4 filesystem in userdata after the data disk, at EXTRAS_START. These
+# lines go first in a script the phone runs: they find userdata and say what's at the extras' start
+# ("label" is LKGO_EXTRAS if the area is there already).
+extras_probe() {
+    printf 'ES=%s\n' "$EXTRAS_START"
+    cat <<'EOF'
+set -eu
+part=
+for p in /sys/class/block/mmcblk*p*; do
+    if grep -qi '^PARTNAME=userdata$' "$p/uevent" 2>/dev/null; then part=/dev/${p##*/}; fi
+done
+[ -n "$part" ] || { echo "no userdata partition" >&2; exit 1; }
+sectors=$(cat /sys/class/block/${part##*/}/size)
+lo=$(losetup -f)
+losetup -r -o $((ES * 512)) "$lo" "$part"
+label=$(blkid "$lo" 2>/dev/null | sed -n 's/.*LABEL="\([^"]*\)".*/\1/p' || true)
+losetup -d "$lo"
+# where the data disk ends, from userdata's own partition table (its second entry): the extras must start after
+dend=$(dd if="$part" bs=1 skip=470 count=8 2>/dev/null | od -An -tu4 | awk '{print $1 + $2}')
+EOF
+}
+
 if [ "$mode" = "--check" ]; then
+    echo "== the extras area (read only)"
+    {
+        extras_probe
+        echo 'echo "userdata: $sectors sectors; extras start at sector $ES; label there: ${label:-none}; the data disk ends at sector $dend"'
+        echo 'grep -E " /extras " /proc/mounts || echo "not mounted on /extras"'
+        echo 'grep -q " /extras " /proc/mounts && df -k /extras | tail -1 | awk "{print \"space: \" \$4 \" KiB free of \" \$2}"; true'
+    } | "${SSH[@]}" 'sh -s'
     echo "== the boot partition (read only)"
     {
         remote_open "-o ro" "-r"
@@ -108,6 +142,34 @@ EOF
         if [ -f "$f" ]; then printf '%s  %s\n' "$(sha256sum "$f" | cut -c1-64)" "$n"; else printf '%-64s  %s (no file here)\n' "-" "$n"; fi
     done
     echo "(a line that differs from the phone's is what a --write of it would change)"
+    exit 0
+fi
+
+if [ "$what" = extras ]; then
+    [ -f "$EXTRAS_IMG" ] || { echo "missing: $EXTRAS_IMG (bash phone/make-extras.sh)" >&2; exit 1; }
+    want_bytes=$((EXTRAS_MIB * 1048576))
+    [ "$(stat -c %s "$EXTRAS_IMG")" = "$want_bytes" ] || { echo "$EXTRAS_IMG isn't $EXTRAS_MIB MiB" >&2; exit 1; }
+    echo "== writing the extras area: $EXTRAS_MIB MiB at sector $EXTRAS_START of userdata"
+    # looks first: it has to fit, and an extras area that's there already is not overwritten (it will hold
+    # things that took a long time to put there); LKX_EXTRAS_FORCE=1 says it may be
+    {
+        extras_probe
+        printf 'MIB=%s\nFORCE=%s\n' "$EXTRAS_MIB" "${LKX_EXTRAS_FORCE:-0}"
+        cat <<'EOF'
+grep -q " /extras " /proc/mounts && { echo "the extras area is mounted: restart the phone first" >&2; exit 1; }
+[ $((ES + MIB * 2048)) -le "$sectors" ] || { echo "userdata is too small for it" >&2; exit 1; }
+[ -n "$dend" ] && [ "$dend" -gt 0 ] && [ "$dend" -le "$ES" ] || { echo "the data disk ends at sector '$dend', not before the extras at $ES: not writing" >&2; exit 1; }
+if [ "$label" = LKGO_EXTRAS ] && [ "$FORCE" != 1 ]; then echo "an extras area is there already: left alone (LKX_EXTRAS_FORCE=1 to replace it)" >&2; exit 3; fi
+echo "ok to write (label there: ${label:-none})"
+EOF
+    } | "${SSH[@]}" 'sh -s'
+    want=$(sha256sum "$EXTRAS_IMG" | cut -c1-64)
+    echo "-- sending (zeros squeezed), sha256 ${want:0:16}..."
+    gzip -1 -c "$EXTRAS_IMG" | "${SSH[@]}" "{ part=; for p in /sys/class/block/mmcblk*p*; do grep -qi '^PARTNAME=userdata\$' \$p/uevent 2>/dev/null && part=/dev/\${p##*/}; done; [ -n \"\$part\" ] && gunzip -c | dd of=\$part bs=1M seek=$((EXTRAS_START / 2048)) conv=fsync 2>&1 | tail -1; }"
+    echo "-- reading it back to check"
+    got=$("${SSH[@]}" "part=; for p in /sys/class/block/mmcblk*p*; do grep -qi '^PARTNAME=userdata\$' \$p/uevent 2>/dev/null && part=/dev/\${p##*/}; done; dd if=\$part bs=1M skip=$((EXTRAS_START / 2048)) count=$EXTRAS_MIB 2>/dev/null | sha256sum | cut -c1-64")
+    [ "$got" = "$want" ] || { echo "what's on the phone differs ($got)" >&2; exit 1; }
+    echo "== done: the extras area is on the phone and checked. It mounts on /extras at the next start."
     exit 0
 fi
 

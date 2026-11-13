@@ -63,6 +63,33 @@ persistent_disk() {
 }
 persistent=
 persistent_disk && disk=$persistent
+
+# The extras area (phone/make-extras.sh, written with phone/update-system.sh --write extras): an ext4
+# filesystem (label LKGO_EXTRAS) in userdata after the data disk, for big things that don't belong in the
+# system image, like the web browser's sandbox. Mounted on /extras if it's there; if it isn't, or
+# anything about it is wrong, nothing happens (never formatted or written here).
+EXTRAS_START=4343808        # sectors; keep in step with phone/make-extras.sh
+mount_extras() {
+    for p in /sys/class/block/mmcblk*p*; do
+        [ -e "$p/uevent" ] || continue
+        grep -qi '^PARTNAME=userdata$' "$p/uevent" || continue
+        part=/dev/${p##*/}
+        eloop=$(losetup -f 2>/dev/null) || return 1
+        losetup -o $((EXTRAS_START * 512)) "$eloop" "$part" || return 1
+        if blkid "$eloop" 2>/dev/null | grep -q 'LABEL="LKGO_EXTRAS"'; then
+            mkdir -p /extras
+            if mount -t ext4 -o noatime "$eloop" /extras 2>/dev/null; then
+                echo "lkx-start: extras mounted on /extras from $eloop" > "$out"
+                return 0
+            fi
+            echo "lkx-start: the extras area didn't mount" > "$out"
+        fi
+        losetup -d "$eloop" 2>/dev/null
+        return 1
+    done
+    return 1
+}
+[ -f /usr/share/litekern/disk.img ] && mount_extras
 i=0
 while [ -z "$disk" ] && [ $i -lt 100 ]; do
     disk=$(find_disk) || disk=
