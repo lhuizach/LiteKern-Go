@@ -273,12 +273,14 @@ static int map_frame(void)
 int main(int argc, char **argv)
 {
     int wait_s = 8, serve = 0;
+    const char *ua = NULL;
     const char *url = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
         else if (!strcmp(argv[i], "--wait") && i + 1 < argc) wait_s = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--serve")) serve = 1;
+        else if (!strcmp(argv[i], "--ua") && i + 1 < argc) ua = argv[++i];
         else url = argv[i];
     }
     if (!serve && !url) { fprintf(stderr, "usage: lkx-webd --serve [--size WxH] [URL] | [--wait S] --shot F.ppm URL\n"); return 2; }
@@ -292,6 +294,7 @@ int main(int argc, char **argv)
     WebKitWebViewBackend *wb = webkit_web_view_backend_new(vb, NULL, NULL);
     view = WEBKIT_WEB_VIEW(webkit_web_view_new(wb));
     wpe_view_backend_add_activity_state(vb, wpe_view_activity_state_visible | wpe_view_activity_state_focused | wpe_view_activity_state_in_window);
+    if (ua) webkit_settings_set_user_agent(webkit_web_view_get_settings(view), ua);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load), NULL);
     g_signal_connect(view, "load-failed", G_CALLBACK(on_load_failed), NULL);
     g_signal_connect(view, "notify::title", G_CALLBACK(on_title), NULL);

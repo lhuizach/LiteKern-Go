@@ -10,7 +10,7 @@ size=${4:-720x1224}
 KEY=${LKX_PHONE_KEY:-$HOME/.ssh/litekern-phone}
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 "${LKX_PHONE:-root@172.16.42.1}")
 tmp=$(mktemp)
-"${SSH[@]}" "/extras/enter.sh sh -c 'mkdir -p /run/u; chmod 700 /run/u; cd /root; XDG_RUNTIME_DIR=/run/u HOME=/root WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 LIBGL_ALWAYS_SOFTWARE=1 /usr/local/bin/lkx-webd --size $size --wait $wait_s --shot /root/shot.ppm \"$url\"' 2>&1 | grep -v -i -E 'fontconfig|accessib' || true"
+"${SSH[@]}" "/extras/enter.sh sh -c 'mkdir -p /run/u; chmod 700 /run/u; cd /root; XDG_RUNTIME_DIR=/run/u HOME=/root WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 LIBGL_ALWAYS_SOFTWARE=1 /usr/local/bin/lkx-webd --size $size --wait $wait_s --shot /root/shot.ppm \"$url\"' > /extras/alpine/root/shot.log 2>&1 < /dev/null"; "${SSH[@]}" 'grep -v -i -E "fontconfig|accessib" /extras/alpine/root/shot.log || true'
 "${SSH[@]}" 'cat /extras/alpine/root/shot.ppm' > "$tmp"
 python3 - "$tmp" "$out" <<'EOF'
 import sys, zlib, struct
