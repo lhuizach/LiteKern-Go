@@ -102,6 +102,30 @@ static void key(uint32_t sym, int down)
     wpe_view_backend_dispatch_keyboard_event(vb, &e);
 }
 
+/* After a tap: is the thing that has the focus one you type into? Then the app brings up the keyboard. */
+static void editable_done(GObject *o, GAsyncResult *res, gpointer d)
+{
+    (void)d;
+    GError *err = NULL;
+    JSCValue *v = webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(o), res, &err);
+    int yes = v && jsc_value_is_boolean(v) && jsc_value_to_boolean(v);
+    if (v) g_object_unref(v);
+    if (err) g_error_free(err);
+    say("editable %d", yes);
+}
+
+static gboolean check_editable(gpointer d)
+{
+    (void)d;
+    webkit_web_view_evaluate_javascript(view,
+        "(function(){var e=document.activeElement;if(!e)return false;var t=(e.tagName||'').toLowerCase();"
+        "if(t==='textarea'||e.isContentEditable)return true;"
+        "if(t==='input'){var k=(e.type||'text').toLowerCase();return !/^(button|submit|checkbox|radio|range|color|file|image|reset)$/.test(k);}"
+        "return false;})()",
+        -1, NULL, NULL, NULL, editable_done, NULL);
+    return G_SOURCE_REMOVE;
+}
+
 static void command(char *line)
 {
     int x, y, dy;
@@ -116,6 +140,7 @@ static void command(char *line)
         pointer(wpe_input_pointer_event_type_motion, x, y, 0, 0);
         pointer(wpe_input_pointer_event_type_button, x, y, 1, 1);
         pointer(wpe_input_pointer_event_type_button, x, y, 1, 0);
+        g_timeout_add(200, check_editable, NULL);
     } else if (sscanf(line, "scroll %d %d %d", &x, &y, &dy) == 3) {
         /* WPE's wheel events move the page a fixed 40 px a notch whatever the value, too coarse for a finger
          * following the page, so a small script moves the nearest scrollable thing under the finger (or the page) */
