@@ -1,6 +1,6 @@
 {
   "name": "Brickfit",
-  "icon": "",
+  "icon": "brickfit",
   "entry": "brickfit.lkx",
   "version": "1.0",
   "order": 120,

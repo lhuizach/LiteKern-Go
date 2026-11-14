@@ -1,6 +1,6 @@
 {
   "name": "Browser",
-  "icon": "",
+  "icon": "browser",
   "entry": "browser.lkx",
   "version": "1.0",
   "order": 130,

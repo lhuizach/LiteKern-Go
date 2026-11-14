@@ -1,6 +1,6 @@
 {
   "name": "Music",
-  "icon": "",
+  "icon": "music",
   "entry": "music.lkx",
   "version": "1.0",
   "order": 131,
