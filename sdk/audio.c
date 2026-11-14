@@ -236,6 +236,19 @@ int k86_audio_write(const int16_t *frames, int count)
     return done;
 }
 
+int k86_audio_buffer(void)
+{
+    return (int)buffer;
+}
+
+void k86_audio_flush(void)
+{
+    if (pcm < 0)
+        return;
+    ioctl(pcm, SNDRV_PCM_IOCTL_DROP);
+    ioctl(pcm, SNDRV_PCM_IOCTL_PREPARE);
+}
+
 void k86_audio_close(void)
 {
     if (pcm < 0)

@@ -26,6 +26,10 @@ int k86_audio_open(int rate);
 int k86_audio_write(const int16_t *frames, int count);
 /* How many frames could be written right now without being refused. */
 int k86_audio_space(void);
+/* The ring's size in frames: k86_audio_space() equal to it means everything written has played. */
+int k86_audio_buffer(void);
+/* Throw away what's written but not played yet (pause, a seek, a new track): the sound stops now. */
+void k86_audio_flush(void);
 void k86_audio_close(void);
 
 /* The volume, 0-100, as the shell has it now. */
