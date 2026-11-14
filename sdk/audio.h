@@ -28,7 +28,9 @@ int k86_audio_write(const int16_t *frames, int count);
 int k86_audio_space(void);
 /* The ring's size in frames: k86_audio_space() equal to it means everything written has played. */
 int k86_audio_buffer(void);
-/* Throw away what's written but not played yet (pause, a seek, a new track): the sound stops now. */
+/* Throw away what's written but not played yet (a seek, a new track), to write new sound at once.
+ * It does NOT silence the output: the hardware keeps playing the last of the ring over and over.
+ * To stop the sound (a pause, the end), k86_audio_close(); open again to carry on. */
 void k86_audio_flush(void);
 void k86_audio_close(void);
 

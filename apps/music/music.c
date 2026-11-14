@@ -233,10 +233,12 @@ static uint32_t heard_frame(void)
     return f > nframes ? nframes : f;
 }
 
+/* Stops the sound. The stream is closed, not just flushed: flushed, the hardware went on playing
+ * the last of the ring over and over until the stream was closed. Playing again opens it anew. */
 static void stop_sound(void)
 {
     playing = draining = 0;
-    k86_audio_flush();
+    k86_audio_close();
 }
 
 static int load(int i)
