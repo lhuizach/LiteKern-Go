@@ -11,13 +11,89 @@
 #include <string.h>
 #include <sound/asound.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
-#define SPEAKER_DEV 2                   /* "Quaternary MI2S": the amplifier */
+#define SPEAKER_DEV 2                   /* "Quaternary MI2S": the loudspeaker's amplifier */
+#define PHONES_DEV 0                    /* "Primary MI2S": the internal codec: headphones (and the earpiece) */
 #define VOLUME_FILE "/dev/shm/lkx-volume"
 
-static int pcm = -1;
+static int pcm = -1, ctl = -1, on_phones, cur_rate;
 static unsigned period, buffer;
+static long jack_checked;               /* ms of the last look at the headphone jack */
+
+/* The sound card's mixer, by control name (the numbers differ between kernels). */
+static void ctl_id(struct snd_ctl_elem_id *id, const char *name, int iface)
+{
+    memset(id, 0, sizeof(*id));
+    id->iface = (unsigned)iface;
+    strncpy((char *)id->name, name, sizeof(id->name) - 1);
+}
+
+static int ctl_open(void)
+{
+    char path[32];
+    for (int card = 0; card < 4 && ctl < 0; card++) {
+        snprintf(path, sizeof(path), "/dev/snd/controlC%d", card);
+        ctl = open(path, O_RDWR | O_CLOEXEC);
+        if (ctl >= 0) {
+            struct snd_ctl_card_info ci;
+            if (ioctl(ctl, SNDRV_CTL_IOCTL_CARD_INFO, &ci) || strcmp((char *)ci.id, "samsunga2015")) {
+                close(ctl);
+                ctl = -1;
+            }
+        }
+    }
+    return ctl;
+}
+
+static void ctl_set(const char *name, int value)
+{
+    struct snd_ctl_elem_value v;
+    memset(&v, 0, sizeof(v));
+    ctl_id(&v.id, name, SNDRV_CTL_ELEM_IFACE_MIXER);
+    v.value.integer.value[0] = value;           /* the same bytes for an enumerated control's item */
+    ioctl(ctl, SNDRV_CTL_IOCTL_ELEM_WRITE, &v);
+}
+
+/* Are headphones (or a headset) in the jack? */
+static int jack_in(void)
+{
+    if (ctl < 0 && ctl_open() < 0)
+        return 0;
+    struct snd_ctl_elem_value v;
+    memset(&v, 0, sizeof(v));
+    ctl_id(&v.id, "Headphone Jack", SNDRV_CTL_ELEM_IFACE_CARD);
+    if (ioctl(ctl, SNDRV_CTL_IOCTL_ELEM_READ, &v) < 0)
+        return 0;
+    return v.value.integer.value[0] != 0;
+}
+
+/* The codec's paths for the headphones (RX1 left, RX2 right), or all off: the loudspeaker's
+ * amplifier needs none of this. */
+static void route(int phones)
+{
+    if (ctl < 0)
+        return;
+    ctl_set("EAR_S", 0);
+    if (phones) {
+        ctl_set("RX1 MIX1 INP1", 3);            /* RX1 */
+        ctl_set("RX2 MIX1 INP1", 4);            /* RX2 */
+        ctl_set("RDAC2 MUX", 1);                /* the right DAC takes RX2 */
+        ctl_set("HPHL", 1);
+        ctl_set("HPHR", 1);
+    } else {
+        ctl_set("HPHL", 0);
+        ctl_set("HPHR", 0);
+    }
+}
+
+static long now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
 
 int k86_volume(void)
 {
@@ -55,8 +131,11 @@ int k86_audio_open(int rate)
         return 0;
     char path[48];
     int fd = -1;
+    on_phones = jack_in();
+    route(on_phones);
+    jack_checked = now_ms();
     for (int card = 0; card < 4 && fd < 0; card++) {
-        snprintf(path, sizeof(path), "/dev/snd/pcmC%dD%dp", card, SPEAKER_DEV);
+        snprintf(path, sizeof(path), "/dev/snd/pcmC%dD%dp", card, on_phones ? PHONES_DEV : SPEAKER_DEV);
         fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     }
     if (fd < 0)
@@ -100,6 +179,7 @@ int k86_audio_open(int rate)
         return -e;
     }
     pcm = fd;
+    cur_rate = rate;
     return 0;
 }
 
@@ -120,6 +200,16 @@ int k86_audio_write(const int16_t *frames, int count)
 {
     if (pcm < 0)
         return -ENODEV;
+    long now = now_ms();
+    if (now - jack_checked >= 500) {            /* headphones plugged in or out: play from the other output */
+        jack_checked = now;
+        if (jack_in() != on_phones) {
+            int rate = cur_rate;
+            k86_audio_close();
+            if (k86_audio_open(rate))
+                return -ENODEV;
+        }
+    }
     /* The volume, squared (the ear is not linear), applied to a copy, a few frames at a time. */
     int v = k86_volume();
     int gain = v * v * 256 / 10000;             /* 0..256 */
