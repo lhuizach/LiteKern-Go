@@ -160,6 +160,7 @@ static int home_shown(void);
 static void draw_topbar(void);
 static void draw_menu(void);
 static void draw_volume(void);
+static int volume;
 static void draw_toast(void);
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
@@ -1964,6 +1965,7 @@ void desktop_start(void)
         uint32_t bytes = (uint32_t)(S()->w * S()->h * 4);
         anim_save = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     }
+    volume = machine_volume();  /* the kept level (60 the first time) */
     ramdisk_init();             /* apps and wallpapers, from the boot disk */
     splash_progress(65);
     apps_init();
@@ -2743,6 +2745,7 @@ static void slider_drag(int y)
     p = p > 100 ? 100 : p < least ? least : p;
     if (qs_sl == 1) {
         volume = p;
+        machine_set_volume(p);
         damage_all();
     } else {
         qs_bright_want = p;
@@ -3124,8 +3127,10 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
                 bright_flush();
                 damage_all();
             }
-            if (qs_sl == 1)
+            if (qs_sl == 1) {
                 kprintf("qs: volume %d%%\n", volume);
+                machine_volume_commit();
+            }
         }
         return 1;
     case QF_NOTE:
@@ -3386,9 +3391,9 @@ static void home_key(void)
 
 /* --- volume, screenshots, toasts (UI-PLAN.md) ------------------------------------------
  *
- * The volume keys show a slim slider on the right edge, near the keys, for
- * 2 s after the last press; held, they keep changing it. There's no sound
- * yet, so the level is only kept (and logged). Power + Volume Down saves a
+ * The volume keys show a slim slider on the left edge for 2 s after the last
+ * press; held, they keep changing it. The level is kept, logged, and told to
+ * apps (sdk/audio.h) through machine_set_volume. Power + Volume Down saves a
  * screenshot to Pictures/Screenshots; a toast says so. */
 
 #define VOL_STEP 10
@@ -3406,7 +3411,7 @@ static uint32_t toast_until;
 
 static struct gfx_rect vol_rect(void)
 {
-    return (struct gfx_rect){ S()->w - 24 - 64, T()->topbar_h + 160, 64, 440 };
+    return (struct gfx_rect){ 24, T()->topbar_h + 160, 64, 440 };
 }
 
 static struct gfx_rect toast_rect(void)
@@ -3420,6 +3425,7 @@ static void vol_hide(void)
     if (!vol_until)
         return;
     vol_until = 0;
+    machine_volume_commit();            /* the changing has stopped: keep it */
     fx_start(&volv, 0);                 /* it slides back out */
     shell_damage(vol_rect());
 }
@@ -3428,16 +3434,17 @@ static void vol_change(int up)
 {
     int v = volume + (up ? VOL_STEP : -VOL_STEP);
     volume = v < 0 ? 0 : v > 100 ? 100 : v;
+    machine_set_volume(volume);
     kprintf("shell: volume %s, %d%%\n", up ? "up" : "down", volume);
     vol_until = uptime_ms() + VOL_SHOW_MS;
-    fx_start(&volv, 1);                 /* in from the right edge */
+    fx_start(&volv, 1);                 /* in from the left edge */
     shell_damage(vol_rect());
 }
 
 static void draw_volume(void)
 {
     struct gfx_rect r = vol_rect();
-    r.x += (255 - vol_alpha) * (r.w + 40) / 255;        /* sliding in from the edge */
+    r.x -= (255 - vol_alpha) * (r.w + 40) / 255;        /* sliding in from the left edge */
     if (vol_alpha <= 0 || !visible(r))
         return;
     const struct theme *t = T();

@@ -16,6 +16,11 @@ void machine_init(void);
 void machine_status(struct k86_machine *out);
 /* 0 or -errno (-EINVAL out of range, -ENODEV none). Both are saved. */
 int machine_set_brightness(int percent);
+/* LiteKern Go: the loudspeaker's volume, 0-100. set: apps see it at once (sdk/audio.h);
+ * commit: kept for the next start (call it when the changing stops). */
+int machine_volume(void);
+void machine_set_volume(int percent);
+void machine_volume_commit(void);
 /* LiteKern Go: a short buzz on the phone's vibrator; nothing on a machine without one. */
 void machine_haptic(int ms);
 int machine_set_timezone(int zone);

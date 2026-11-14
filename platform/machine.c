@@ -44,6 +44,9 @@
 
 static int target;                  /* on the EeePC: the backlight and the clock are ours */
 static int zone = LKX_ZONE_DEFAULT;
+static int saved_volume = 60;       /* the loudspeaker's level, 0-100 (apps read it from VOLUME_FILE) */
+#define VOLUME_FILE "/dev/shm/lkx-volume"
+static void write_volume_file(void);
 static int saved_brightness = -1;   /* from machine.txt, until it's applied or changed */
 static char backlight[300];         /* the chosen /sys/class/backlight/<name> ("" none) */
 
@@ -154,6 +157,7 @@ static void save(void)
     if (b >= 0)
         n += snprintf(text + n, sizeof(text) - (size_t)n, "brightness %d\n", b);
     n += snprintf(text + n, sizeof(text) - (size_t)n, "touchpad %d\n", plat_touchpad_speed);
+    n += snprintf(text + n, sizeof(text) - (size_t)n, "volume %d\n", saved_volume);
     settings_write_file(MACHINE_FILE, text, (uint32_t)n);
 }
 
@@ -172,6 +176,9 @@ static void load(void)
         } else if (!strncmp(l, "brightness ", 11)) {
             int b = atoi(l + 11);
             saved_brightness = b < 5 ? 5 : b > 100 ? 100 : b;
+        } else if (!strncmp(l, "volume ", 7)) {
+            int v = atoi(l + 7);
+            saved_volume = v < 0 ? 0 : v > 100 ? 100 : v;
         } else if (!strncmp(l, "touchpad ", 9)) {
             int t = atoi(l + 9);
             plat_touchpad_speed = t < 0 ? 0 : t > 100 ? 100 : t;
@@ -250,6 +257,7 @@ void machine_init(void)
         kprintf("machine: cpu at %ld MHz, %ld at most (-1: no speed control)\n", cur < 0 ? -1 : cur / 1000,
                 top < 0 ? -1 : top / 1000);
     cpu_governor("performance");
+    write_volume_file();
     plat_key_light_poke();
     find_backlight();
     if (backlight[0] && saved_brightness >= 0)
@@ -347,6 +355,35 @@ void machine_haptic(int ms)
     play.value = 1;
     if (write(fd, &play, sizeof(play)) < 0)
         return;
+}
+
+/* The volume: told to the apps through a file in memory (sdk/audio.c reads it) at every change,
+ * and kept on the stick when the changing has stopped (machine_volume_commit). */
+static void write_volume_file(void)
+{
+    char t[8];
+    int n = snprintf(t, sizeof(t), "%d\n", saved_volume);
+    FILE *f = fopen(VOLUME_FILE, "w");
+    if (f) {
+        fwrite(t, 1, (size_t)n, f);
+        fclose(f);
+    }
+}
+
+int machine_volume(void)
+{
+    return saved_volume;
+}
+
+void machine_set_volume(int percent)
+{
+    saved_volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    write_volume_file();
+}
+
+void machine_volume_commit(void)
+{
+    save();
 }
 
 int machine_set_brightness(int percent)

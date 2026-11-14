@@ -43,7 +43,7 @@ PLATFORM_C := $(filter-out platform/libk86.c platform/nsfb_lkx.c,$(wildcard plat
 # build-linux/apps/<name>/<name>, from its own sources and the SDK, as the
 # kernel build makes apps/<name>/<name>.lkx. lkx-shell runs them.
 APP_DIRS := $(wildcard apps/*) $(EXTRA_APPS)    # EXTRA_APPS: the tests' misbehaving apps
-APP_SDK  := $(LBUILD)/sdk/sdk.o $(LBUILD)/platform/libk86.o \
+APP_SDK  := $(LBUILD)/sdk/sdk.o $(LBUILD)/sdk/audio.o $(LBUILD)/platform/libk86.o \
             $(patsubst %,$(LBUILD)/kernel/%.o,gfx widget theme text inflate) $(LBUILD)/gen/uifont.o
 APP_LIBS_camera := -pthread -lm      # the preview uses all four cores
 APP_BINS := $(foreach p,$(APP_DIRS),$(LBUILD)/apps/$(notdir $(p))/$(notdir $(p)))

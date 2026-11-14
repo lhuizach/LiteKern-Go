@@ -176,13 +176,13 @@ check "the power menu: a tap outside closes it" \
     '!shell: lock'
 
 # Volume Up held: it keeps going up (60 -> 100 and stays); the pop-up on the
-# right edge (its accent fill, 632..696 x 216..656), gone 2 s after the last press.
-SCREEN="has=3584e4@632,216,696,656" \
+# left edge (its accent fill, 24..88 x 216..656), gone 2 s after the last press.
+SCREEN="has=3584e4@24,216,88,656" \
     run $SHELL_BIN build-linux/test/disk.img "sleep:0.5 keydown:vol_up sleep:1.2 keyup:vol_up sleep:0.3"
 check "Volume Up held: the level climbs to 100, the pop-up shows it (the blue accent)" \
     '^shell: volume up, 70%$' \
     '^shell: volume up, 100%$' \
-    '^screen: has 3584e4 in 632,216,696,656: yes$' \
+    '^screen: has 3584e4 in 24,216,88,656: yes$' \
     '!shell: volume up, 110%'
 
 # Screenshots: Power, then Volume Down (and the other way round): a PNG in

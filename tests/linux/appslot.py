@@ -59,7 +59,8 @@ def main():
     dock = [n for n in DOCK if n in names]
     if name in dock:
         slot = dock.index(name)
-        print(133 + 226 * slot, 1168)           # three in the dock: 133, 359, 585
+        w = 678 // len(dock)                    # the dock is 678 px wide (20 px in each side), shared equally
+        print(20 + slot * w + w // 2, 1168)     # three: 133, 359, 585; four: 109, 279, 449, 619
         return
     grid = [n for n in names if n not in dock]
     g = grid.index(name)
