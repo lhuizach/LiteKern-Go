@@ -227,6 +227,26 @@ int cam_open(void)
     return stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code);
 }
 
+/* Not in front: stop the sensor and give the buffers back, so the camera costs the CPU nothing; cam_resume() brings
+ * the live picture back (the lens needs focus_restore() after it, as after any restream). */
+static int paused;
+
+void cam_pause(void)
+{
+    if (!paused && video >= 0) {
+        buffers_down();
+        paused = 1;
+    }
+}
+
+int cam_resume(void)
+{
+    if (!paused)
+        return 0;
+    paused = 0;
+    return stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code);
+}
+
 void cam_close(void)
 {
     if (video >= 0) {

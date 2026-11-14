@@ -17,6 +17,8 @@
 /* Starts streaming. 0, or -1 if there's no camera. */
 int cam_open(void);
 void cam_close(void);
+void cam_pause(void);              /* stop the sensor while the app isn't in front */
+int cam_resume(void);              /* and start it again (0 = ok) */
 /* The newest frame not yet seen, or NULL; give it back with cam_release(). */
 const uint8_t *cam_next(int *slot);
 void cam_release(int slot);

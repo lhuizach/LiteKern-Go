@@ -233,6 +233,46 @@ static void timer(void)
     (void)skipped;
 }
 
+/* Is the app's window the one in front? Not when it's minimised or another app is over it. */
+static int in_front(void)
+{
+    struct k86_task tasks[K86_TASKS_MAX];
+    struct k86_meminfo mem;
+    int n = k86_tasks(tasks, K86_TASKS_MAX, &mem);
+    for (int i = 0; i < n && i < K86_TASKS_MAX; i++)
+        if (tasks[i].flags & K86_TASK_SELF)
+            return (tasks[i].flags & K86_TASK_FRONT) != 0;
+    return 1;
+}
+
+/* The timer: twice a second look whether the app is in front; if not, the sensor is stopped (it was using a
+ * whole core of the CPU in the background) and it comes back when the app does. */
+static void timer_event(void)
+{
+    static uint32_t checked;
+    static int paused;
+    uint32_t now = k86_uptime_ms();
+    if (now - checked >= 500) {
+        checked = now;
+        int front = in_front();
+        if (!front && !paused && !job && !shoot) {
+            cam_pause();
+            paused = 1;
+            k86_timer_set(500);
+            k86_log("camera: not in front, the live picture is paused");
+        } else if (front && paused) {
+            if (cam_resume())
+                k86_log("camera: the live picture didn't come back");
+            focus_restore();
+            paused = 0;
+            k86_timer_set(FRAME_MS);
+            k86_log("camera: in front again");
+        }
+    }
+    if (!paused)
+        timer();
+}
+
 static void pointer(const struct k86_event *ev)
 {
     struct wg_pointer p = wg_pointer_make(ev->x, ev->y, ev->buttons, ev->changed, ev->time_ms);
@@ -292,7 +332,7 @@ int main(void)
             pointer(&ev);
             break;
         case K86_EVENT_TIMER:
-            timer();
+            timer_event();
             break;
         case K86_EVENT_RESIZE:
             canvas.w = ev.x;
