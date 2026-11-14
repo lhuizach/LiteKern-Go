@@ -1,0 +1,64 @@
+--- a/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts	2026-11-14 18:24:55.164549053 +0000
++++ b/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts	2026-11-14 18:25:20.767955215 +0000
+@@ -259,3 +259,61 @@
+ 		bias-pull-up;
+ 	};
+ };
++
++/*
++ * LiteKern Go: sound straight through the SoC's own audio block (LPASS), not through the
++ * modem's DSP (QDSP6). The modem firmware isn't started here, so the QDSP6 route
++ * (msm8916-modem-qdsp6.dtsi) never appears; this is the route the dtsi describes
++ * "when the modem is disabled". Internal codec for earpiece, headphones and mics; the
++ * loudspeaker amplifier (TFA9895) sits on the quaternary MI2S port.
++ */
++&lpass {
++	status = "okay";
++};
++
++/delete-node/ &sound_link_backend0;
++/delete-node/ &sound_link_backend1;
++/delete-node/ &sound_link_backend2;
++
++&sound {
++	compatible = "qcom,apq8016-sbc-sndcard";
++
++	/delete-node/ frontend0-dai-link;
++	/delete-node/ frontend1-dai-link;
++	/delete-node/ frontend2-dai-link;
++	/delete-node/ frontend3-dai-link;
++	/delete-node/ frontend4-dai-link;
++
++	dai-link-primary {
++		link-name = "Primary MI2S";
++
++		cpu {
++			sound-dai = <&lpass MI2S_PRIMARY>;
++		};
++		codec {
++			sound-dai = <&lpass_codec 0>, <&pm8916_codec 0>;
++		};
++	};
++
++	dai-link-tertiary {
++		link-name = "Tertiary MI2S";
++
++		cpu {
++			sound-dai = <&lpass MI2S_TERTIARY>;
++		};
++		codec {
++			sound-dai = <&lpass_codec 1>, <&pm8916_codec 1>;
++		};
++	};
++
++	dai-link-quaternary {
++		link-name = "Quaternary MI2S";
++
++		cpu {
++			sound-dai = <&lpass MI2S_QUATERNARY>;
++		};
++		codec {
++			sound-dai = <&speaker_codec>;
++		};
++	};
++};
