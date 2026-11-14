@@ -790,7 +790,7 @@ static int home_shown(void)
 }
 
 /* The dock's apps, in order: only the ones this build has. */
-static const char *const dock_names[] = { "Files", "Web", "Gallery", "Settings" };
+static const char *const dock_names[] = { "Files", "Web", "Browser", "Gallery", "Settings" };   /* the phone has Browser, not Web (NetSurf) */
 
 static int dock_slot(int i)     /* app i's place in the dock, or -1 */
 {

@@ -12,7 +12,7 @@ shell does it (kernel/appreg.c, kernel/desktop.c):
   - the ramdisk lists apps/* (alphabetically by folder) then EXTRA_APPS, in that order;
   - they're sorted by "order" in kerns.json (100 if it has none), keeping the list's order for equal ones;
   - the shell's own Log app comes last;
-  - the dock holds Files, Web, Gallery and Settings (the ones there are), in that order;
+  - the dock holds Files, Web, Browser, Gallery and Settings (the ones there are), in that order;
   - the others fill the grid: 4 columns of 168 x 184 px tiles from y 352, centred on a 720 px screen.
 The 720x1280 phone screen is assumed, like the rest of the tests.
 """
@@ -22,7 +22,7 @@ import os
 import sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-DOCK = ["Files", "Web", "Gallery", "Settings"]
+DOCK = ["Files", "Web", "Browser", "Gallery", "Settings"]
 W = 720
 
 
