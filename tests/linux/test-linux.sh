@@ -632,6 +632,19 @@ check "notifications: posted, in the pulled-down panel, a tap opens the app; the
     '^shell: quick settings \(Home held\)$' \
     '!crashed|PANIC'
 
+# Home edit mode: hold the home screen (wiggle, then zoom out), the Clock popup, a style, drag the
+# clock, Done. The home clock's choices are kept in settings.txt.
+path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 103 1200; click; add sleep:1.2
+go 605 1004; click; add sleep:0.5
+go 360 270; add sleep:0.1 press:1 sleep:0.2; go 300 330; add sleep:0.2 release sleep:0.4
+go 630 783; click; add sleep:0.8; go 615 1200; click; add sleep:1.5
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "home edit: hold, the Clock popup, a style, a drag, Done" \
+    '^shell: home edit$' \
+    '^shell: home clock font 0 style 3 .* at [0-9]+,[0-9]+$' \
+    '^shell: home edit done$' \
+    '!crashed|PANIC'
+
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do
     run build-linux/selftest-$t/lkx-shell build-linux/test/disk.img "sleep:0.5"

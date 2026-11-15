@@ -162,6 +162,8 @@ static void draw_menu(void);
 static void draw_volume(void);
 static int volume;
 static void draw_toast(void);
+static int edit_zoomed(void);           /* home edit mode: the page is a card (see "home edit mode") */
+static void draw_edit(void);
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
@@ -233,6 +235,8 @@ static void compose(struct gfx_rect r)
     } else if (sw_open && sw_alpha >= 255) {
         wallpaper_draw(VS, v.ox, v.oy, 0);
         draw_switcher();                /* all there: nothing under it shows */
+    } else if (edit_zoomed() && !qs_shown() && !drw_shown()) {
+        draw_edit();
     } else if (bd_ok && (qs_shown() || drw_shown())) {
         backdrop_draw();
         if (drw_shown())
@@ -344,6 +348,11 @@ static void spring_snap(struct spring *s)
  * slide a little) in and out on springs, FX(1) all there; fx_tick() steps
  * them a frame at a time and sets the *_alpha the drawing uses. */
 static struct spring swv, menuv, volv, toastv;
+/* Home edit mode (hold the home screen): wiggling icons, the page zoomed out, a bar of choices. */
+static int edit_on, edit_panel, edit_sel;
+static struct spring edit_sp, panel_sp;
+static struct gfx_rect clk_mask_r, clk_box_r;   /* the clock's digits, and digits + date, page coordinates */
+static void show_toast(const char *text);
 static int fx_moving;
 static uint32_t last_fx_tick;
 static uint32_t fx_began, fx_frames, fx_slowest;    /* frame stats, for the log */
@@ -1047,6 +1056,42 @@ static void draw_icon(const struct app *a, struct gfx_rect r, uint32_t alpha)
     }
 }
 
+/* An icon turned a degree or two about its middle: the wiggle of home edit mode. Each icon has its
+ * own beat. */
+static void draw_icon_wiggle(const struct app *a, struct gfx_rect r, int idx)
+{
+    const struct icon *ic = icon_find(a->icon);
+    const uint32_t *sz = ic ? icon_sized(ic, r.w, r.h) : 0;
+    if (!sz) {
+        draw_icon(a, r, 255);
+        return;
+    }
+    uint32_t period = 150 + (uint32_t)(idx * 37 % 80), t = uptime_ms() + (uint32_t)idx * 53;
+    int u = (int)(t % period * 512 / period), tri = u < 256 ? u : 511 - u;      /* 0..255 and back */
+    int sn = (tri * 2 - 255) * 9 / 255 * (idx % 2 ? 1 : -1);                    /* about +-2 degrees, in 256ths */
+    int cs = 256 - sn * sn / 512;
+    int cx = r.x + r.w / 2, cy = r.y + r.h / 2, hw = r.w / 2 + 4, hh = r.h / 2 + 4;
+    for (int dy = -hh; dy < hh; dy++) {
+        int y = cy + dy - V->oy;
+        if (y < 0 || y >= V->s.h)
+            continue;
+        uint32_t *row = V->s.px + (size_t)y * (size_t)V->s.stride;
+        for (int dx = -hw; dx < hw; dx++) {
+            int x = cx + dx - V->ox;
+            if (x < 0 || x >= V->s.w)
+                continue;
+            int sx = (dx * cs + dy * sn) / 256 + r.w / 2, sy = (dy * cs - dx * sn) / 256 + r.h / 2;
+            if (sx < 0 || sy < 0 || sx >= r.w || sy >= r.h)
+                continue;
+            uint32_t px = sz[sy * r.w + sx], al = px >> 24;
+            if (al == 255)
+                row[x] = px & 0xffffff;
+            else if (al)
+                row[x] = gfx_mix(px & 0xffffff, row[x], al);
+        }
+    }
+}
+
 /* The network (kernel/net.h): Wi-Fi as a fan whose arcs light up with the
  * signal, Ethernet as three linked boxes; dimmed when not connected. */
 /* The status bar's icons: LiteKern X's, drawn BAR_SCALE times bigger for
@@ -1313,33 +1358,10 @@ static void draw_menu(void)
 
 static void draw_home(void)
 {
-    const struct theme *t = T();
-    /* The clock and date: on the first page, turning with it. */
-    if (rtc && clock_shown.month) {
-        static const char *const days[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
-                                            "Friday", "Saturday" };
-        static const char *const months[] = { "January", "February", "March", "April", "May", "June", "July",
-                                              "August", "September", "October", "November", "December" };
-        char hm[6] = { (char)('0' + clock_shown.hour / 10), (char)('0' + clock_shown.hour % 10), ':',
-                       (char)('0' + clock_shown.minute / 10), (char)('0' + clock_shown.minute % 10), 0 };
-        char date[40];
-        int n = 0;
-        for (const char *q = days[clock_shown.weekday % 7]; *q; q++)
-            date[n++] = *q;
-        date[n++] = ' ';
-        if (clock_shown.day >= 10)
-            date[n++] = (char)('0' + clock_shown.day / 10);
-        date[n++] = (char)('0' + clock_shown.day % 10);
-        date[n++] = ' ';
-        for (const char *q = months[(clock_shown.month - 1) % 12]; *q; q++)
-            date[n++] = *q;
-        date[n] = 0;
-        const struct text_face *big = lockscreen_clock_face();
-        int cx = page_x(0) + S()->w / 2, y = t->topbar_h + 36;
-        text_draw_face(VS, VX(cx - text_width_face(hm, big) / 2), VY(y), hm, big, SHELL_FG);
-        y += big->ascent + big->descent + 2;
-        text_draw(VS, VX(cx - text_width(date, TEXT_BOLD) / 2), VY(y), date, TEXT_BOLD, SHELL_FG);
-    }
+    /* The clock and date: on the first page, turning with it. The same clock as the lock screen's,
+     * with its own choices (hold the home screen to change them). */
+    if (rtc && clock_shown.month && lockscreen_home_clock()->show)
+        lockscreen_home_clock_draw(VS, V->ox - page_x(0), V->oy, &clock_shown, &clk_mask_r, &clk_box_r);
     /* The dock: a dark bar over the wallpaper, in reach of a thumb. */
     struct gfx_rect d = home_dock();
     if (dock_count() && visible(d))
@@ -1349,11 +1371,14 @@ static void draw_home(void)
         if (!visible(r))
             continue;
         struct hit h = { H_TILE, i };
-        if (same(h, pressed) && same(h, hover))
+        if (!edit_on && same(h, pressed) && same(h, hover))
             gfx_blend_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
         const struct app *a = &builtin_apps[i];
         struct gfx_rect ir = tile_icon_rect(i);
-        draw_icon(a, ir, 255);
+        if (edit_on)
+            draw_icon_wiggle(a, ir, i);
+        else
+            draw_icon(a, ir, 255);
         if (dock_slot(i) >= 0)
             continue;                       /* the dock's apps have no labels: their icons are enough */
         int ty = ir.y + ir.h + 12, max_w = r.w - 8;
@@ -1420,6 +1445,512 @@ static void drw_tick(void)
         drw_moving = spring_step(&drw, 28, 150);
     damage_all();
     shell_flush();
+}
+
+/* --- home edit mode ---------------------------------------------------------------------------
+ * Hold anywhere on the home screen: the icons start to wiggle, then the page shrinks to a card
+ * and a bar of choices slides up under it: Clock, Widgets, Apps, Done. Clock opens a popup
+ * sheet (like the drawer) with the lock screen's clock choices; the sheet can be closed to see the
+ * result, and opened again. The clock on the card has a frame with six dots (the corners resize,
+ * the top and bottom ones stretch) and can be dragged. Everything is saved as it changes. */
+
+#define EDIT_HOLD_MS 450                /* a finger held this long on the home screen */
+#define EDIT_ZOOM_DELAY_MS 380          /* the wiggle first, then the zoom out */
+#define EDIT_ZOOM 184                   /* the card's size, 256ths: 72% */
+#define EDIT_CARD_Y 104                 /* the card's top, under the status bar */
+#define EDIT_BAR_H 120
+#define PANEL_H 540
+#define EDIT_FRAME_MS 45                /* the wiggle's frames */
+#define HANDLE_R 11
+#define HANDLE_HIT 40
+#define KNOB_R 22
+#define SNAP_PCT 6                      /* % from the middle where the clock snaps to it */
+
+static uint32_t edit_start_ms, last_wiggle, hold_since;
+static int hold_x, hold_y, hold_swallow;
+static int edit_moving, ed_drag, ed_grab_x, ed_grab_y;
+static int ed_size0, ed_stretch0, ed_dist0;
+static uint32_t last_edit_tick;
+static uint32_t *pg_px;                 /* the page at full size, drawn when it changes */
+static int pg_ok;
+
+enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_SLIDER };
+
+static int edit_p(void)                 /* how far zoomed out: 0..256 */
+{
+    int p = edit_sp.x / 256;
+    return p < 0 ? 0 : p > 256 ? 256 : p;
+}
+
+static int edit_zoomed(void)
+{
+    return started && home_shown() && edit_p() > 0;
+}
+
+static int edit_zoom(void)              /* the page's scale, 256ths */
+{
+    return 256 - (256 - EDIT_ZOOM) * edit_p() / 256;
+}
+
+static struct gfx_rect edit_card(void)
+{
+    int z = edit_zoom(), w = S()->w * z / 256, h = S()->h * z / 256;
+    return (struct gfx_rect){ (S()->w - w) / 2, EDIT_CARD_Y * edit_p() / 256, w, h };
+}
+
+static void page_to_screen(int px, int py, int *sx, int *sy)
+{
+    struct gfx_rect c = edit_card();
+    *sx = c.x + px * edit_zoom() / 256;
+    *sy = c.y + py * edit_zoom() / 256;
+}
+
+static void screen_to_page(int sx, int sy, int *px, int *py)
+{
+    struct gfx_rect c = edit_card();
+    *px = (sx - c.x) * 256 / edit_zoom();
+    *py = (sy - c.y) * 256 / edit_zoom();
+}
+
+static void edit_damage(void)
+{
+    pg_ok = 0;
+    damage_all();
+}
+
+static void edit_enter(void)
+{
+    if (edit_on || !home_shown())
+        return;
+    kprintf("shell: home edit\n");
+    edit_on = 1;
+    edit_panel = 0;
+    edit_sel = 0;
+    ed_drag = D_NONE;
+    edit_start_ms = last_wiggle = last_edit_tick = uptime_ms();
+    drw_y0 = -1;
+    swipe_x0 = -1;
+    swipe_on = 0;
+    damage_hit(pressed);
+    pressed = (struct hit){ H_NONE, 0 };
+    hold_swallow = 1;                   /* the finger that held is still down: ignore it until it lifts */
+    turn_to(0, 1);
+    edit_sp.t = 0;                  /* the zoom follows the wiggle, in edit_tick */
+    panel_sp.t = 0;
+    edit_moving = 1;
+    edit_damage();
+}
+
+static void edit_exit(void)
+{
+    if (!edit_on)
+        return;
+    kprintf("shell: home edit done\n");
+    edit_on = 0;
+    edit_panel = 0;
+    edit_sel = 0;
+    ed_drag = D_NONE;
+    edit_sp.t = 0;
+    panel_sp.t = 0;
+    edit_moving = 1;
+    last_edit_tick = uptime_ms();
+    edit_damage();
+}
+
+/* One of the page's pixels from four of the page's, so a shrunk icon or letter stays smooth. */
+static void edit_scale_page(struct gfx_rect card)
+{
+    struct gfx_rect vis = gfx_rect_intersect(card, (struct gfx_rect){ V->ox, V->oy, V->s.w, V->s.h });
+    if (gfx_rect_empty(vis) || !pg_px)
+        return;
+    int pw = S()->w, ph = S()->h;
+    uint32_t step = (uint32_t)((uint64_t)65536 * 256 / (uint32_t)edit_zoom());
+    static int xmap[4096];
+    if (vis.w > 4096)
+        return;
+    for (int i = 0; i < vis.w; i++) {
+        int sx = (int)((uint32_t)(vis.x + i - card.x) * step >> 16);
+        xmap[i] = sx > pw - 2 ? pw - 2 : sx;
+    }
+    for (int y = vis.y; y < vis.y + vis.h; y++) {
+        int sy = (int)((uint32_t)(y - card.y) * step >> 16);
+        sy = sy > ph - 2 ? ph - 2 : sy;
+        const uint32_t *r0 = pg_px + (size_t)sy * (size_t)pw, *r1 = r0 + pw;
+        uint32_t *dp = VS->px + (size_t)VY(y) * (size_t)VS->stride + VX(vis.x);
+        for (int i = 0; i < vis.w; i++) {
+            int sx = xmap[i];
+            uint32_t a = r0[sx], b = r0[sx + 1], c = r1[sx], d = r1[sx + 1];
+            dp[i] = (a >> 2 & 0x3f3f3f) + (b >> 2 & 0x3f3f3f) + (c >> 2 & 0x3f3f3f) + (d >> 2 & 0x3f3f3f);
+        }
+    }
+}
+
+static void edit_render_page(void)
+{
+    if (!pg_px) {
+        uint32_t bytes = (uint32_t)(S()->w * S()->h * 4);
+        pg_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!pg_px)
+            return;
+    }
+    struct gfx_view v = { { pg_px, S()->w, S()->h, S()->w }, 0, 0 };
+    struct gfx_view *outer = V;
+    V = &v;
+    wallpaper_draw(VS, 0, 0, 0);
+    draw_home();
+    V = outer;
+    pg_ok = 1;
+}
+
+static int panel_top(void)
+{
+    return S()->h - panel_sp.x / 256;
+}
+
+static struct gfx_rect bar_chip(int i)
+{
+    int w = (S()->w - 48 - 3 * 14) / 4;
+    int slide = (256 - edit_p()) * (EDIT_BAR_H + 40) / 256;
+    return (struct gfx_rect){ 24 + i * (w + 14), S()->h - 24 - EDIT_BAR_H + 16 + slide, w, 88 };
+}
+
+static const char *const bar_names[4] = { "Clock", "Widgets", "Apps", "Done" };
+
+#define PANEL_SIDE 36
+#define CHIP_H 56
+static struct gfx_rect pn_close(void) { return (struct gfx_rect){ S()->w - 24 - 130, panel_top() + 16, 130, CHIP_H }; }
+static struct gfx_rect pn_reset(void) { return (struct gfx_rect){ S()->w - 24 - 130 - 12 - 130, panel_top() + 16, 130, CHIP_H }; }
+static struct gfx_rect pn_font(int i)
+{
+    int w = (S()->w - 2 * PANEL_SIDE - 3 * 10) / 4;
+    return (struct gfx_rect){ PANEL_SIDE + i % 4 * (w + 10), panel_top() + 96 + i / 4 * (CHIP_H + 10), w, CHIP_H };
+}
+static struct gfx_rect pn_style(int i)
+{
+    int w = (S()->w - 2 * PANEL_SIDE - 3 * 10) / 4;
+    return (struct gfx_rect){ PANEL_SIDE + i * (w + 10), panel_top() + 96 + 2 * (CHIP_H + 10) + 8, w, CHIP_H };
+}
+static int pn_slider_y(int k)
+{
+    return panel_top() + 96 + 2 * (CHIP_H + 10) + 8 + CHIP_H + 14 + k * 70;
+}
+static struct gfx_rect pn_slider(int k)
+{
+    return (struct gfx_rect){ 210, pn_slider_y(k) + 29, S()->w - 210 - PANEL_SIDE - KNOB_R, 12 };
+}
+
+static const char *const font_names[7] = { "Bold", "Light", "Thin", "Condensed", "Mono", "Serif", "Slim" };
+static const char *const style_names[4] = { "Standard", "Stacked", "Outline", "Glass" };
+static const char *const slider_names[3] = { "Opacity", "Stretch", "Size" };
+static const int slider_lo[3] = { 20, 100, 30 };
+static const int slider_hi[3] = { 100, 250, 250 };
+
+static int slider_value(int k, const struct home_clock *h)
+{
+    return k == 0 ? h->opacity : k == 1 ? h->stretch : h->size;
+}
+
+static void ed_chip(struct gfx_rect r, const char *label, int on, int dark)
+{
+    const struct theme *t = T();
+    uint32_t bg = on ? t->accent_bg : dark ? SHELL_POPOVER : t->button_bg;
+    uint32_t fg = on ? t->accent_fg : dark ? SHELL_FG : t->fg;
+    gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, bg);
+    int mw = r.w - 16;
+    enum text_style st = text_width(label, TEXT_BODY) > mw ? TEXT_SMALL : TEXT_BODY;     /* "Condensed" is long */
+    int tw = text_width(label, st);
+    text_draw_fit(VS, VX(r.x + (r.w - (tw < mw ? tw : mw)) / 2), VY(r.y + (r.h - text_height(st)) / 2), label, mw, st, fg);
+}
+
+static void draw_handles(void)
+{
+    if (!edit_sel || edit_p() < 240 || !clk_box_r.w)
+        return;
+    const struct theme *t = T();
+    int pad = 14;
+    int x0, y0, x1, y1;
+    page_to_screen(clk_box_r.x - pad, clk_box_r.y - pad, &x0, &y0);
+    page_to_screen(clk_box_r.x + clk_box_r.w + pad, clk_box_r.y + clk_box_r.h + pad, &x1, &y1);
+    gfx_rect_outline(VS, VX(x0), VY(y0), x1 - x0, y1 - y0, WHITE);
+    gfx_rect_outline(VS, VX(x0 + 1), VY(y0 + 1), x1 - x0 - 2, y1 - y0 - 2, WHITE);
+    int xm = (x0 + x1) / 2;
+    const int hx[6] = { x0, x1, x0, x1, xm, xm }, hy[6] = { y0, y0, y1, y1, y0, y1 };
+    for (int i = 0; i < 6; i++) {
+        gfx_fill_circle(VS, VX(hx[i]), VY(hy[i]), HANDLE_R + 3, t->accent_bg);
+        gfx_fill_circle(VS, VX(hx[i]), VY(hy[i]), HANDLE_R, WHITE);
+    }
+}
+
+static void draw_panel(void)
+{
+    int top = panel_top();
+    if (top >= S()->h)
+        return;
+    const struct theme *t = T();
+    const struct home_clock *h = lockscreen_home_clock();
+    gfx_shadow(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, 28, 110);
+    gfx_fill_round_rect(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, t->window_bg);
+    text_draw(VS, VX(PANEL_SIDE), VY(top + 20), "Clock", TEXT_HEADING, t->fg);
+    ed_chip(pn_reset(), "Reset", 0, 0);
+    ed_chip(pn_close(), "Close", 0, 0);
+    for (int i = 0; i < 7; i++)
+        ed_chip(pn_font(i), font_names[i], h->font == i, 0);
+    for (int i = 0; i < 4; i++)
+        ed_chip(pn_style(i), style_names[i], h->style == i, 0);
+    for (int k = 0; k < 3; k++) {
+        struct gfx_rect r = pn_slider(k);
+        int v = slider_value(k, h), kx = r.x + r.w * (v - slider_lo[k]) / (slider_hi[k] - slider_lo[k]);
+        text_draw(VS, VX(PANEL_SIDE), VY(pn_slider_y(k) + (70 - text_height(TEXT_BODY)) / 2), slider_names[k],
+                  TEXT_BODY, t->fg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, r.h / 2, t->button_bg);
+        gfx_fill_round_rect(VS, VX(r.x), VY(r.y), kx - r.x + r.h / 2, r.h, r.h / 2, t->accent_bg);
+        gfx_fill_circle(VS, VX(kx), VY(r.y + r.h / 2), KNOB_R, ed_drag == D_SLIDER + k ? t->accent_bg : t->fg);
+    }
+}
+
+static void draw_edit(void)
+{
+    int p = edit_p();
+    wallpaper_draw(VS, V->ox, V->oy, (uint32_t)(150 * p / 256));
+    struct gfx_rect card = edit_card();
+    if (!pg_ok)
+        edit_render_page();
+    gfx_shadow(VS, VX(card.x), VY(card.y), card.w, card.h, 0, 26, (uint32_t)(130 * p / 256));
+    edit_scale_page(card);
+    gfx_rect_outline(VS, VX(card.x) - 1, VY(card.y) - 1, card.w + 2, card.h + 2, gfx_mix(WHITE, 0, (uint32_t)(60 * p / 256)));
+    draw_handles();
+    if (panel_sp.x < FX(PANEL_H) && p > 8) {
+        for (int i = 0; i < 4; i++) {
+            struct gfx_rect r = bar_chip(i);
+            if (visible(r))
+                ed_chip(r, bar_names[i], 0, 1);
+        }
+    }
+    draw_panel();
+}
+
+/* The clock's choices changed: draw it, and keep them. */
+static void home_clock_set(const struct home_clock *h, int save)
+{
+    lockscreen_set_home_clock(h);
+    edit_damage();
+    if (save) {
+        const struct home_clock *n = lockscreen_home_clock();
+        kprintf("shell: home clock font %d style %d opacity %d stretch %d size %d at %d,%d\n", n->font, n->style,
+                n->opacity, n->stretch, n->size, n->x, n->y);
+        settings_save();
+    }
+}
+
+static int isqrt(int v)
+{
+    int r = 0;
+    while ((r + 1) * (r + 1) <= v)
+        r++;
+    return r;
+}
+
+/* Which of the frame's six dots (0-3 the corners, 4 top, 5 bottom) a screen point is on, or -1. */
+static int handle_at(int x, int y)
+{
+    if (!edit_sel || !clk_box_r.w || edit_p() < 240)
+        return -1;
+    int pad = 14, x0, y0, x1, y1;
+    page_to_screen(clk_box_r.x - pad, clk_box_r.y - pad, &x0, &y0);
+    page_to_screen(clk_box_r.x + clk_box_r.w + pad, clk_box_r.y + clk_box_r.h + pad, &x1, &y1);
+    int xm = (x0 + x1) / 2;
+    const int hx[6] = { x0, x1, x0, x1, xm, xm }, hy[6] = { y0, y0, y1, y1, y0, y1 };
+    for (int i = 0; i < 6; i++)
+        if ((x - hx[i]) * (x - hx[i]) + (y - hy[i]) * (y - hy[i]) <= HANDLE_HIT * HANDLE_HIT)
+            return i;
+    return -1;
+}
+
+static void slider_to(int k, int x)
+{
+    struct home_clock h = *lockscreen_home_clock();
+    struct gfx_rect r = pn_slider(k);
+    int pc = (x - r.x) * 100 / r.w;
+    pc = pc < 0 ? 0 : pc > 100 ? 100 : pc;
+    int v = slider_lo[k] + pc * (slider_hi[k] - slider_lo[k]) / 100;
+    if (k == 0)
+        h.opacity = v;
+    else if (k == 1)
+        h.stretch = v;
+    else
+        h.size = v;
+    home_clock_set(&h, 0);
+}
+
+static void edit_open_panel(int open)
+{
+    edit_panel = open;
+    panel_sp.t = open ? FX(PANEL_H) : 0;
+    edit_moving = 1;
+    last_edit_tick = uptime_ms();
+    if (open)
+        edit_sel = 1;
+    edit_damage();
+}
+
+static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
+{
+    if (hold_swallow) {
+        if (up || !(buttons & MOUSE_LEFT))
+            hold_swallow = 0;
+        return 1;
+    }
+    if (!edit_on)
+        return 0;
+    int held = !!(buttons & MOUSE_LEFT);
+    struct home_clock h = *lockscreen_home_clock();
+    if (down) {
+        ed_drag = D_NONE;
+        if (panel_top() < S()->h && y >= panel_top()) {         /* the popup */
+            if (inside(pn_close(), x, y)) {
+                edit_open_panel(0);
+            } else if (inside(pn_reset(), x, y)) {
+                h = (struct home_clock){ 1, 0, 0, 100, 100, 100, 500, -1 };
+                home_clock_set(&h, 1);
+            } else {
+                for (int i = 0; i < 7; i++)
+                    if (inside(pn_font(i), x, y)) {
+                        h.font = i;
+                        home_clock_set(&h, 1);
+                    }
+                for (int i = 0; i < 4; i++)
+                    if (inside(pn_style(i), x, y)) {
+                        h.style = i;
+                        home_clock_set(&h, 1);
+                    }
+                for (int k = 0; k < 3; k++)
+                    if (y >= pn_slider_y(k) && y < pn_slider_y(k) + 70 && x >= pn_slider(k).x - KNOB_R) {
+                        ed_drag = D_SLIDER + k;
+                        slider_to(k, x);
+                    }
+            }
+            return 1;
+        }
+        if (!edit_panel && edit_p() > 200) {                    /* the bar */
+            for (int i = 0; i < 4; i++)
+                if (inside(bar_chip(i), x, y)) {
+                    if (i == 0)
+                        edit_open_panel(1);
+                    else if (i == 3)
+                        edit_exit();
+                    else
+                        show_toast(i == 1 ? "Widgets are coming" : "Apps are coming");
+                    return 1;
+                }
+        }
+        int hd = handle_at(x, y);
+        int px, py;
+        screen_to_page(x, y, &px, &py);
+        int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
+        if ((hd >= 0 || (clk_box_r.w && inside(clk_box_r, px, py))) && h.y < 0) {   /* from here on it's where it is */
+            h.y = cy * 1000 / S()->h;
+            h.x = cx * 1000 / S()->w;
+            lockscreen_set_home_clock(&h);
+        }
+        if (hd >= 0) {
+            ed_size0 = h.size;
+            ed_stretch0 = h.stretch;
+            ed_dist0 = isqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+            if (ed_dist0 < 20)
+                ed_dist0 = 20;
+            ed_drag = hd >= 4 ? D_STRETCH : D_CORNER;
+            ed_grab_y = py < cy ? cy - py : py - cy;
+            if (ed_grab_y < 20)
+                ed_grab_y = 20;
+        } else if (clk_box_r.w && px >= clk_box_r.x - 20 && px < clk_box_r.x + clk_box_r.w + 20 &&
+                   py >= clk_box_r.y - 20 && py < clk_box_r.y + clk_box_r.h + 20) {
+            if (!edit_sel) {
+                edit_sel = 1;
+                edit_damage();
+            }
+            ed_drag = D_MOVE;
+            ed_grab_x = cx - px;
+            ed_grab_y = cy - py;
+        } else if (edit_sel) {
+            edit_sel = 0;
+            edit_damage();
+        }
+        return 1;
+    }
+    if (ed_drag != D_NONE && held) {
+        int px, py;
+        screen_to_page(x, y, &px, &py);
+        int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
+        if (ed_drag >= D_SLIDER) {
+            slider_to(ed_drag - D_SLIDER, x);
+        } else if (ed_drag == D_MOVE) {
+            int nx = (px + ed_grab_x) * 1000 / S()->w, ny = (py + ed_grab_y) * 1000 / S()->h;
+            h.x = nx < 0 ? 0 : nx > 1000 ? 1000 : nx;
+            if (h.x >= 500 - SNAP_PCT * 10 && h.x <= 500 + SNAP_PCT * 10)
+                h.x = 500;              /* the middle is easy to find */
+            h.y = ny < 30 ? 30 : ny > 970 ? 970 : ny;
+            home_clock_set(&h, 0);
+        } else if (ed_drag == D_CORNER) {
+            int d = isqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+            int v = ed_size0 * d / ed_dist0;
+            h.size = v < 30 ? 30 : v > 250 ? 250 : v;
+            home_clock_set(&h, 0);
+        } else {
+            int d = py < cy ? cy - py : py - cy;
+            int v = ed_stretch0 * d / ed_grab_y;
+            h.stretch = v < 100 ? 100 : v > 250 ? 250 : v;
+            home_clock_set(&h, 0);
+        }
+        return 1;
+    }
+    if (ed_drag != D_NONE) {            /* let go: keep it */
+        ed_drag = D_NONE;
+        home_clock_set(&h, 1);
+        return 1;
+    }
+    (void)up;
+    return 1;                           /* the home screen is not for tapping while it's being edited */
+}
+
+static void edit_tick(void)
+{
+    uint32_t now = uptime_ms();
+    if (hold_since && now - hold_since >= EDIT_HOLD_MS) {
+        hold_since = 0;
+        if ((last_buttons & MOUSE_LEFT) && home_shown() && !edit_on && !menu_open && !drw_shown() && !swipe_on &&
+            !drw_live)
+            edit_enter();
+    }
+    if (edit_on && !home_shown()) {     /* an app took the screen */
+        edit_on = 0;
+        edit_panel = 0;
+        edit_sp.x = edit_sp.t = 0;
+        panel_sp.x = panel_sp.t = 0;
+        edit_moving = 0;
+        edit_damage();
+    }
+    if (edit_moving) {
+        uint32_t steps = (now - last_edit_tick) / TICK_MS;
+        if (steps) {
+            last_edit_tick = now;
+            if (edit_on && edit_sp.t == 0 && now - edit_start_ms >= EDIT_ZOOM_DELAY_MS)
+                edit_sp.t = FX(256);
+            int a = 1, b = 1;
+            for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++) {
+                if (!(edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS))
+                    a = spring_step(&edit_sp, 30, 150);
+                b = spring_step(&panel_sp, 36, 150);
+            }
+            edit_moving = a || b || (edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS);
+            edit_damage();
+        }
+    }
+    if (edit_on && now - last_wiggle >= EDIT_FRAME_MS) {        /* the wiggle: a frame at a time */
+        last_wiggle = now;
+        edit_damage();
+    }
+    if (edit_on || edit_moving)
+        shell_flush();
 }
 
 static __attribute__((unused)) void draw_dock(void)
@@ -2050,6 +2581,8 @@ void desktop_refresh(void)
 {
     if (!started)
         return;
+    pg_ok = 0;
+    lockscreen_home_changed();
     damage_all();
     shell_flush();
 }
@@ -3314,6 +3847,17 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         sw_pointer(x, y, buttons, down);
         return;
     }
+    if (edit_pointer(x, y, buttons, down, up))
+        return;
+    /* A finger held still on the home screen starts edit mode (edit_tick). */
+    if (down && home_shown() && !menu_open && !drw_shown() && y >= T()->topbar_h) {
+        hold_since = uptime_ms() ? uptime_ms() : 1;
+        hold_x = x;
+        hold_y = y;
+    } else if (hold_since && (up || !(buttons & MOUSE_LEFT) || (x - hold_x) * (x - hold_x) + (y - hold_y) * (y - hold_y) >
+                                                                SWIPE_SLOP * SWIPE_SLOP)) {
+        hold_since = 0;
+    }
     if (drawer_swipe(y, buttons, down, up))
         return;
     if (home_swipe(x, buttons, down, up))
@@ -3376,6 +3920,10 @@ static int home_held;
 static void home_key(void)
 {
     kprintf("shell: Home\n");
+    if (edit_on) {
+        edit_exit();
+        return;
+    }
     menu_set(0);
     set_grid(0);
     if (qs_shown()) {
@@ -3780,6 +4328,7 @@ void desktop_tick(void)
     }
     dock_tick();
     pager_tick();
+    edit_tick();
     qs_tick();
     power_tick();
     volume_tick();
@@ -3824,13 +4373,19 @@ void desktop_tick(void)
     clock_shown = now;
     log_clock();
     shell_damage(clock_rect());
+    if (home_shown() && lockscreen_home_clock()->show) {
+        struct gfx_rect box;
+        lockscreen_home_clock_draw(0, 0, 0, &clock_shown, 0, &box);
+        shell_damage((struct gfx_rect){ 0, box.y - 20, S()->w, box.h + 40 });
+        pg_ok = 0;
+    }
     shell_flush();
 }
 
 int desktop_busy(void)
 {
     /* A key held: its long press (or repeat) is timed, so no sleeping. */
-    return dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
+    return hold_since || edit_on || edit_moving || dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
            fx_moving || osk_moving();
 }
 

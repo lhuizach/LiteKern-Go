@@ -21,7 +21,9 @@
 #define LKX_LOCKSCREEN_H
 
 #include <stdint.h>
+#include "kernel/gfx.h"
 #include "kernel/input.h"
+#include "kernel/rtc.h"
 
 /* Its choices. wallpaper: "desktop" (the desktop's own, the default),
  * "none" (the plain colour), a preset's name, or LOCK_PICTURE (a picture
@@ -70,6 +72,21 @@ int lockscreen_load_picture(const void *data, uint32_t size);
 int lockscreen_has_picture(void);
 /* The picture packed for saving, as wallpaper_pack(). -ENOENT if none. */
 int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len);
+
+/* The home screen's clock: the same clock, with choices of its own (saved in settings.txt).
+ * x, y: its middle, in tenths of a percent of the screen; y -1: where it goes by itself.
+ * size, opacity, stretch: %. */
+struct home_clock {
+    int show, font, style, opacity, stretch, size, x, y;
+};
+const struct home_clock *lockscreen_home_clock(void);
+void lockscreen_set_home_clock(const struct home_clock *h);     /* clamps; doesn't save */
+/* The wallpaper changed (for the glass style). */
+void lockscreen_home_changed(void);
+/* Draws it into s (0: only measure): something at screen (x, y) goes to s at (x - ox, y - oy).
+ * mask: the digits, box: the digits and the date, both in screen coordinates. */
+void lockscreen_home_clock_draw(struct gfx_surface *s, int ox, int oy, const struct rtc_time *t,
+                                struct gfx_rect *mask, struct gfx_rect *box);
 
 /* The big bold clock's face (the home screen uses it too). */
 struct text_face;

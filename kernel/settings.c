@@ -22,7 +22,7 @@
 #define PIXEL_FILE  "wallpaper.lkxw"
 #define LOCK_FILE   "lock.lkxw"
 #define LAST_FILE   "last-user.txt"
-#define TEXT_MAX    512
+#define TEXT_MAX    1024
 
 static int loaded;                  /* settings.txt was there */
 static char wallpaper[32];          /* what it said ("" = it didn't say) */
@@ -193,6 +193,7 @@ static int apply(int top, int at_boot)
     int style = -1, accent = -1;
     uint32_t saver = 0xffffffffu;
     struct lock_settings lock = *lockscreen_settings();
+    struct home_clock home = *lockscreen_home_clock();
     wallpaper[0] = '\0';
     for (char *line = text; *line;) {
         char *end = line;
@@ -234,6 +235,26 @@ static int apply(int top, int at_boot)
         } else if (!strcmp(line, "lock-clock-y")) {
             uint32_t n;
             lock.clock_y = number(value, &n) ? -1 : (int)n;
+        } else if (strlen(line) > 11 && !memcmp(line, "home-clock-", 11)) {
+            uint32_t n;
+            if (!strcmp(line, "home-clock-y"))
+                home.y = number(value, &n) ? -1 : (int)n;
+            else if (!number(value, &n)) {
+                if (!strcmp(line, "home-clock-show"))
+                    home.show = (int)n;
+                else if (!strcmp(line, "home-clock-font"))
+                    home.font = (int)n;
+                else if (!strcmp(line, "home-clock-style"))
+                    home.style = (int)n;
+                else if (!strcmp(line, "home-clock-opacity"))
+                    home.opacity = (int)n;
+                else if (!strcmp(line, "home-clock-stretch"))
+                    home.stretch = (int)n;
+                else if (!strcmp(line, "home-clock-size"))
+                    home.size = (int)n;
+                else if (!strcmp(line, "home-clock-x"))
+                    home.x = (int)n;
+            }
         } else if (strlen(line) > 11 && !memcmp(line, "lock-clock-", 11)) {
             uint32_t n;
             if (!number(value, &n)) {
@@ -262,6 +283,7 @@ static int apply(int top, int at_boot)
     if (!strcmp(lock.wallpaper, LOCK_PICTURE) && settings_load_lock_picture())
         memcpy(lock.wallpaper, "desktop", 8);   /* its picture is gone: the desktop's */
     lockscreen_configure(&lock);
+    lockscreen_set_home_clock(&home);
     if (!at_boot) {
         const char *wp = settings_wallpaper("");
         if (!strcmp(wp, WALLPAPER_CUSTOM)) {
@@ -360,7 +382,12 @@ void settings_save(void)
     char text[TEXT_MAX];
     const char *wp = wallpaper_current();
     const struct lock_settings *lock = lockscreen_settings();
-    char clock_y[12];
+    char clock_y[12], home_y[12];
+    const struct home_clock *home = lockscreen_home_clock();
+    if (home->y < 0)
+        memcpy(home_y, "auto", 5);
+    else
+        ksnprintf(home_y, sizeof(home_y), "%d", home->y);
     if (lock->clock_y < 0)
         memcpy(clock_y, "auto", 5);
     else
@@ -369,11 +396,14 @@ void settings_save(void)
               "style %s\naccent %s\nwallpaper %s\nscreensaver %u\n"
               "lock-wallpaper %s\nclock %s\nlock-on-wake %s\n"
               "lock-clock-font %d\nlock-clock-style %d\nlock-clock-opacity %d\n"
-              "lock-clock-stretch %d\nlock-clock-x %d\nlock-clock-y %s\n",
+              "lock-clock-stretch %d\nlock-clock-x %d\nlock-clock-y %s\n"
+              "home-clock-show %d\nhome-clock-font %d\nhome-clock-style %d\nhome-clock-opacity %d\n"
+              "home-clock-stretch %d\nhome-clock-size %d\nhome-clock-x %d\nhome-clock-y %s\n",
               theme_is_light() ? "light" : "dark", theme_accent(theme_accent_index(), 0),
               wp[0] ? wp : "none", screensaver_timeout(), lock->wallpaper, lock->clock24 ? "24" : "12",
               lock->on_wake ? "yes" : "no", lock->clock_font, lock->clock_style, lock->clock_opacity,
-              lock->clock_stretch, lock->clock_x, clock_y);
+              lock->clock_stretch, lock->clock_x, clock_y, home->show, home->font, home->style, home->opacity,
+              home->stretch, home->size, home->x, home_y);
     int err = save_file(TEXT_FILE, text, (uint32_t)strlen(text));
     if (err && err != -ENODEV)
         kprintf("settings: couldn't save (%d)\n", err);

@@ -271,13 +271,19 @@ static int clock_y(void)
  * its stretch and outline are too much to work out on every frame of a slide. */
 #define BIG_W 1280                      /* where the big digits are drawn */
 #define BIG_H 800
-static struct {
+struct clkstate {
     char hm[8];
-    int font, style, stretch, top_gap;  /* top_gap: above the digits, in the font's line */
-    struct gfx_surface tmp;             /* BIG_W x BIG_H */
-    uint8_t *raw, *mask, *edge, *work;  /* raw, work: BIG_W x BIG_H; edge: the glass style's rim */
+    int font, style, stretch, size, top_gap;    /* top_gap: above the digits, in the font's line; size: % */
+    uint8_t *mask, *edge;               /* the digits; edge: the glass style's rim (screen-sized) */
     int w, h;
-} clk = { .font = -1 };
+};
+static struct clkstate clk = { .font = -1, .size = 100 };      /* the one in use: the lock screen's, or the home's */
+static struct clkstate clk_lock_keep;   /* the lock screen's, while the home's is in use */
+static struct {
+    struct gfx_surface tmp;             /* BIG_W x BIG_H */
+    uint8_t *raw, *work;                /* BIG_W x BIG_H */
+} scratch;
+static int cur_size = 100;              /* the clock's size, %: 100 on the lock screen, the home clock's own */
 
 /* src (w x h) to dst (nw x h): each column the average of the ones it covers. */
 static void shrink_cols(const uint8_t *src, int w, int h, uint8_t *dst, int nw)
@@ -340,10 +346,12 @@ static void *big_buffer(uint32_t bytes)
  * the background changes. So it's blurred once a minute at most, and each frame of a
  * slide is only a blend, as for the other styles. */
 #define GLASS_R 7                       /* each of three box blurs: about 20 px in all */
-static struct {
+struct glassstate {
     struct gfx_surface pic;
     int x0, y0, w, h, left, top, gen;
-} glass = { .gen = -1 };
+};
+static struct glassstate glass = { .gen = -1 };
+static struct gfx_surface *glass_src;   /* what the glass blurs: the lock screen's wallpaper, or the home's */
 
 /* One box blur pass over count lines of n pixels: `along` apart within a line,
  * `across` from one line to the next. */
@@ -375,7 +383,7 @@ static void box_pass(uint32_t *p, int n, int count, int along, int across, uint3
 static int glass_make(int left, int top)
 {
     static uint32_t line[2048];
-    struct gfx_surface *b = &ls.bg;
+    struct gfx_surface *b = glass_src ? glass_src : &ls.bg;
     if (!b->px || (!glass.pic.px && screen_buffer(&glass.pic)))
         return -1;
     if (glass.gen == clock_gen && glass.left == left && glass.top == top)
@@ -408,28 +416,33 @@ static int glass_make(int left, int top)
 static void clock_mask(const char *hm)
 {
     const struct lock_settings *c = &ls.set;
-    if (!clk.raw) {
-        struct gfx_surface b = { 0 }, e = { 0 };
+    if (!scratch.raw) {
         uint32_t *t = big_buffer(BIG_W * BIG_H * 4);
-        clk.raw = big_buffer(BIG_W * BIG_H);
-        clk.work = big_buffer(BIG_W * BIG_H);
-        if (!t || !clk.raw || !clk.work || screen_buffer(&b) || screen_buffer(&e)) {
-            clk.raw = 0;
+        scratch.raw = big_buffer(BIG_W * BIG_H);
+        scratch.work = big_buffer(BIG_W * BIG_H);
+        if (!t || !scratch.raw || !scratch.work) {
+            scratch.raw = 0;
             return;
         }
-        clk.tmp = (struct gfx_surface){ t, BIG_W, BIG_H, BIG_W };
+        scratch.tmp = (struct gfx_surface){ t, BIG_W, BIG_H, BIG_W };
+    }
+    if (!clk.mask) {
+        struct gfx_surface b = { 0 }, e = { 0 };
+        if (screen_buffer(&b) || screen_buffer(&e))
+            return;
         clk.mask = (uint8_t *)b.px;
         clk.edge = (uint8_t *)e.px;
     }
     if (clk.font == c->clock_font && clk.style == c->clock_style && clk.stretch == c->clock_stretch &&
-        !strcmp(clk.hm, hm))
+        clk.size == cur_size && !strcmp(clk.hm, hm))
         return;
     memcpy(clk.hm, hm, sizeof(clk.hm));
     clock_gen++;
     clk.font = c->clock_font;
     clk.style = c->clock_style;
     clk.stretch = c->clock_stretch;
-    struct gfx_surface *t = &clk.tmp;
+    clk.size = cur_size;
+    struct gfx_surface *t = &scratch.tmp;
     const struct text_face *f = clock_font();
     memset(t->px, 0, (size_t)t->w * (size_t)t->h * 4);
     if (c->clock_style == 1) {                  /* stacked: the hours over the minutes */
@@ -462,20 +475,20 @@ static void clock_mask(const char *hm)
     int w = x1 - x0 + 1, h = y1 - y0 + 1;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
-            clk.raw[y * w + x] = (uint8_t)(t->px[(y + y0) * t->stride + x + x0] & 255);
+            scratch.raw[y * w + x] = (uint8_t)(t->px[(y + y0) * t->stride + x + x0] & 255);
     /* Down to the clock's size, then up by the stretch: from a big face, both stay sharp. */
     int size = f->size > 0 ? f->size : CLOCK_PX;
-    int nw = w * CLOCK_PX / size, nh = h * CLOCK_PX / size;
+    int nw = w * CLOCK_PX / size * cur_size / 100, nh = h * CLOCK_PX / size * cur_size / 100;
     int stretch = c->clock_stretch < 100 ? 100 : c->clock_stretch;
-    nw = nw < 1 ? 1 : nw > S()->w ? S()->w : nw;
+    nw = nw < 1 ? 1 : nw > S()->w - 16 ? S()->w - 16 : nw;
     nh = nh * stretch / 100;
     nh = nh < 1 ? 1 : nh > S()->h * 3 / 4 ? S()->h * 3 / 4 : nh;
-    clk.top_gap = y0 * CLOCK_PX / size;
-    shrink_cols(clk.raw, w, h, clk.work, nw);
-    scale_rows(clk.work, nw, h, clk.mask, nh);
+    clk.top_gap = y0 * CLOCK_PX / size * cur_size / 100;
+    shrink_cols(scratch.raw, w, h, scratch.work, nw);
+    scale_rows(scratch.work, nw, h, clk.mask, nh);
     if (c->clock_style == 2) {                  /* outline: only what's near an edge */
-        edges(clk.mask, nw, nh, CLOCK_PX / 30 + 2, clk.work);
-        memcpy(clk.mask, clk.work, (size_t)nw * (size_t)nh);
+        edges(clk.mask, nw, nh, CLOCK_PX / 30 + 2, scratch.work);
+        memcpy(clk.mask, scratch.work, (size_t)nw * (size_t)nh);
     } else if (c->clock_style == 3) {           /* glass: a hairline rim */
         edges(clk.mask, nw, nh, 2, clk.edge);
     }
@@ -483,16 +496,21 @@ static void clock_mask(const char *hm)
     clk.h = nh;
 }
 
+static int home_mode;                   /* drawing the home screen's clock (home_enter) */
+#define HOME_AUTO_Y 108                 /* the home clock's top by itself, under the status bar */
+
 /* Where the digits go, on the screen. */
 static void clock_place(int *x, int *y)
 {
     const struct lock_settings *c = &ls.set;
     int sw = S()->w, sh = S()->h;
-    int cx = sw * (c->clock_x < 0 || c->clock_x > 100 ? 50 : c->clock_x) / 100;
+    int den = home_mode ? 1000 : 100;       /* the home clock's place is in tenths of a percent */
+    int cx = sw * (c->clock_x < 0 || c->clock_x > den ? den / 2 : c->clock_x) / den;
     /* By itself, the digits sit where the home screen's face puts them: the big faces
      * have the space above their digits trimmed (tools/font-rasterize.py). */
     int lead = !load_clock_face(HOME_FACE) ? clock_faces[HOME_FACE].glyphs['0' - 32].yoff : 0;
-    int top = c->clock_y < 0 ? clock_y() + lead + clk.top_gap : sh * c->clock_y / 100 - clk.h / 2;
+    int top = c->clock_y < 0 ? (home_mode ? HOME_AUTO_Y : clock_y()) + lead + clk.top_gap
+                              : sh * c->clock_y / den - clk.h / 2;
     int left = cx - clk.w / 2;
     left = left < 8 ? 8 : left + clk.w > sw - 8 ? sw - 8 - clk.w : left;
     int date = text_height(TEXT_BOLD) + 12, above = c->clock_style == 3 ? date : 0, under = above ? 0 : date;
@@ -1459,4 +1477,117 @@ int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len)
     if (!ls.pic.px)
         return -ENOENT;
     return wallpaper_pack_surface(&ls.pic, phys, bytes, len);
+}
+
+/* --- the home screen's clock ----------------------------------------------------------------
+ * The same clock as the lock screen's, with choices of its own (font, style, opacity, stretch,
+ * size, place). It's drawn by the same code: home_enter() swaps the lock screen's clock state
+ * for the home's, and home_leave() swaps it back. */
+
+static struct home_clock home_set = { 1, 0, 0, 100, 100, 100, 500, -1 };
+static struct clkstate clk_home = { .font = -1, .size = 100 };
+static struct glassstate glass_home = { .gen = -1 };
+static struct glassstate glass_keep;
+static struct gfx_surface home_bg;      /* the desktop's wallpaper, for the glass style */
+static int home_bg_stale = 1;
+static struct lock_settings home_keep;
+
+static void home_enter(void)
+{
+    home_keep = ls.set;
+    ls.set.clock_font = home_set.font;
+    ls.set.clock_style = home_set.style;
+    ls.set.clock_opacity = home_set.opacity;
+    ls.set.clock_stretch = home_set.stretch;
+    ls.set.clock_x = home_set.x;
+    ls.set.clock_y = home_set.y;
+    cur_size = home_set.size;
+    home_mode = 1;
+    clk_lock_keep = clk;
+    clk = clk_home;
+    glass_keep = glass;
+    glass = glass_home;
+    if (home_set.style == 3 && (home_bg.px || !screen_buffer(&home_bg))) {
+        if (home_bg_stale) {
+            wallpaper_draw(&home_bg, 0, 0, 0);
+            home_bg_stale = 0;
+            clock_gen++;
+        }
+        glass_src = &home_bg;
+    } else {
+        glass_src = 0;
+    }
+}
+
+static void home_leave(void)
+{
+    clk_home = clk;
+    clk = clk_lock_keep;
+    glass_home = glass;
+    glass = glass_keep;
+    ls.set = home_keep;
+    cur_size = 100;
+    home_mode = 0;
+    glass_src = 0;
+}
+
+const struct home_clock *lockscreen_home_clock(void)
+{
+    return &home_set;
+}
+
+static int clampi(int v, int lo, int hi, int dflt)
+{
+    return v < lo || v > hi ? dflt : v;
+}
+
+void lockscreen_set_home_clock(const struct home_clock *h)
+{
+    home_set.show = !!h->show;
+    home_set.font = clampi(h->font, 0, K86_CLOCK_FONTS - 1, 0);
+    home_set.style = clampi(h->style, 0, 3, 0);
+    home_set.opacity = clampi(h->opacity, 20, 100, 100);
+    home_set.stretch = clampi(h->stretch, 100, 250, 100);
+    home_set.size = clampi(h->size, 30, 250, 100);
+    home_set.x = clampi(h->x, 0, 1000, 500);
+    home_set.y = clampi(h->y, 0, 1000, -1);
+}
+
+void lockscreen_home_changed(void)
+{
+    home_bg_stale = 1;                  /* the wallpaper changed: the glass blurs it again */
+    clock_gen++;
+}
+
+/* The digits and the date under them (over them, for glass), where they are now. */
+static void home_boxes(const struct rtc_time *t, struct gfx_rect *mask, struct gfx_rect *box)
+{
+    char hm[8], ampm[4], date[40];
+    time_text(t, hm, ampm);
+    date_text(t, date);
+    int left, top;
+    clock_mask(hm);
+    clock_place(&left, &top);
+    int dw = text_width(date, TEXT_BOLD), dh = text_height(TEXT_BOLD);
+    int dx = left + clk.w / 2 - dw / 2;
+    dx = dx < 8 ? 8 : dx + dw > S()->w - 8 ? S()->w - 8 - dw : dx;
+    int dy = ls.set.clock_style == 3 ? top - 12 - dh : top + clk.h + 12;
+    struct gfx_rect m = { left, top, clk.w, clk.h }, d = { dx, dy, dw, dh };
+    if (mask)
+        *mask = m;
+    if (box)
+        *box = gfx_rect_union(m, d);
+}
+
+void lockscreen_home_clock_draw(struct gfx_surface *s, int ox, int oy, const struct rtc_time *t,
+                                struct gfx_rect *mask, struct gfx_rect *box)
+{
+    struct rtc_time was = ls.shown;
+    ls.shown = *t;
+    home_enter();
+    if (s)
+        draw_clock(s, ox, oy);
+    home_boxes(t, mask, box);
+    home_leave();
+    ls.shown = was;
 }
