@@ -349,7 +349,10 @@ static void spring_snap(struct spring *s)
  * them a frame at a time and sets the *_alpha the drawing uses. */
 static struct spring swv, menuv, volv, toastv;
 /* Home edit mode (hold the home screen): wiggling icons, the page zoomed out, a bar of choices. */
-static int edit_on, edit_panel, edit_sel;
+static int edit_on, edit_panel, edit_sel, edit_hide_icons;
+static int ed_app = -1, ed_lift, ed_px, ed_py;       /* an icon dragged: which, lifted yet, where the finger puts it */
+#define BADGE_R 18
+static void draw_badge(int cx, int cy, int r);
 static struct spring edit_sp, panel_sp;
 static struct gfx_rect clk_mask_r, clk_box_r;   /* the clock's digits, and digits + date, page coordinates */
 static void show_toast(const char *text);
@@ -799,42 +802,173 @@ static int home_shown(void)
     return started && !wm_top_visible() && !covered;
 }
 
-/* The dock's apps, in order: only the ones this build has. */
-static const char *const dock_names[] = { "Files", "Browser", "Gallery", "Settings" };   /* Browser (WebKit); the old Web (NetSurf) is in the app grid */
+/* --- where the apps are on the home screen --------------------------------------------------------
+ * Each app is in the dock, on the grid (in order, four to a row) or off the home screen (still in the
+ * app drawer, and Apps in home edit mode puts it back). Kept by name in settings.txt. */
+enum { W_GRID, W_DOCK, W_HIDDEN };
+#define LAYOUT_MAX 32
+#define LAYOUT_NAME 24
+#define DOCK_MAX 5
+static const char *const dock_names[] = { "Files", "Browser", "Gallery", "Settings" };   /* the first layout's dock */
+static struct { char name[LAYOUT_NAME]; int where; } layout[LAYOUT_MAX];
+static int nlayout, layout_seen = -1, layout_dirty = 1;
+static int dock_idx[DOCK_MAX], n_dock, grid_idx[APPS_MAX], n_grid, hid_idx[APPS_MAX], n_hid;    /* app numbers */
+static int off_x[APPS_MAX], off_y[APPS_MAX];    /* an icon sliding to its place: where it is from there, 1/256 px */
+
+static int app_by_name(const char *n)
+{
+    for (int i = 0; i < builtin_app_count; i++)
+        if (!strcmp(builtin_apps[i].name, n))
+            return i;
+    return -1;
+}
+
+static void layout_add(const char *name, int where)
+{
+    if (nlayout >= LAYOUT_MAX)
+        return;
+    int n = 0;
+    for (; name[n] && n < LAYOUT_NAME - 1; n++)
+        layout[nlayout].name[n] = name[n];
+    layout[nlayout].name[n] = '\0';
+    layout[nlayout].where = where;
+    nlayout++;
+}
+
+static void layout_default(void)
+{
+    nlayout = 0;
+    for (unsigned k = 0; k < sizeof(dock_names) / sizeof(dock_names[0]); k++)
+        if (app_by_name(dock_names[k]) >= 0)
+            layout_add(dock_names[k], W_DOCK);
+    for (int i = 0; i < builtin_app_count; i++) {
+        int in = 0;
+        for (int k = 0; k < nlayout; k++)
+            in |= !strcmp(layout[k].name, builtin_apps[i].name);
+        if (!in)
+            layout_add(builtin_apps[i].name, W_GRID);
+    }
+}
+
+static void layout_sync(void)
+{
+    if (!layout_dirty && layout_seen == builtin_app_count)
+        return;
+    if (nlayout == 0)
+        layout_default();
+    for (int i = 0; i < builtin_app_count; i++) {       /* an app the layout hasn't met: on the grid */
+        int in = 0;
+        for (int k = 0; k < nlayout; k++)
+            in |= !strcmp(layout[k].name, builtin_apps[i].name);
+        if (!in)
+            layout_add(builtin_apps[i].name, W_GRID);
+    }
+    n_dock = n_grid = n_hid = 0;
+    for (int k = 0; k < nlayout; k++) {
+        int i = app_by_name(layout[k].name);
+        if (i < 0)
+            continue;
+        if (layout[k].where == W_DOCK && n_dock < DOCK_MAX)
+            dock_idx[n_dock++] = i;
+        else if (layout[k].where == W_HIDDEN)
+            hid_idx[n_hid++] = i;
+        else
+            grid_idx[n_grid++] = i;
+    }
+    layout_dirty = 0;
+    layout_seen = builtin_app_count;
+    kprintf("home: %d on the grid, %d in the dock, %d off the home screen\n", n_grid, n_dock, n_hid);
+}
+
+/* The three lists are the layout now (after a move). */
+static void layout_from_lists(void)
+{
+    nlayout = 0;
+    for (int k = 0; k < n_dock; k++)
+        layout_add(builtin_apps[dock_idx[k]].name, W_DOCK);
+    for (int k = 0; k < n_grid; k++)
+        layout_add(builtin_apps[grid_idx[k]].name, W_GRID);
+    for (int k = 0; k < n_hid; k++)
+        layout_add(builtin_apps[hid_idx[k]].name, W_HIDDEN);
+    layout_dirty = 1;
+}
 
 static int dock_slot(int i)     /* app i's place in the dock, or -1 */
 {
-    int slot = 0;
-    for (unsigned k = 0; k < sizeof(dock_names) / sizeof(dock_names[0]); k++)
-        for (int a = 0; a < builtin_app_count; a++)
-            if (!strcmp(builtin_apps[a].name, dock_names[k])) {
-                if (a == i)
-                    return slot;
-                slot++;
-            }
+    layout_sync();
+    for (int k = 0; k < n_dock; k++)
+        if (dock_idx[k] == i)
+            return k;
     return -1;
 }
 
 static int dock_count(void)
 {
-    int n = 0;
-    for (int i = 0; i < builtin_app_count; i++)
-        n += dock_slot(i) >= 0;
-    return n;
+    layout_sync();
+    return n_dock;
 }
 
-static int grid_index(int i)    /* app i's place among the icons that aren't in the dock */
+static int grid_index(int i)    /* app i's place among the grid's icons, or -1 */
 {
-    int k = 0;
-    for (int a = 0; a < i; a++)
-        k += dock_slot(a) < 0;
-    return k;
+    layout_sync();
+    for (int k = 0; k < n_grid; k++)
+        if (grid_idx[k] == i)
+            return k;
+    return -1;
+}
+
+static int home_has(int i)      /* on the home screen at all */
+{
+    return dock_slot(i) >= 0 || grid_index(i) >= 0;
 }
 
 static int home_pages(void)
 {
-    int n = builtin_app_count - dock_count();
-    return n > 0 ? (n + HOME_PER_PAGE - 1) / HOME_PER_PAGE : 1;
+    layout_sync();
+    return n_grid > 0 ? (n_grid + HOME_PER_PAGE - 1) / HOME_PER_PAGE : 1;
+}
+
+/* Text for settings.txt: "Files|d;Clock|g;Log|h" */
+int desktop_layout_text(char *out, int max)
+{
+    layout_sync();
+    int n = 0;
+    for (int k = 0; k < nlayout; k++) {
+        for (const char *q = layout[k].name; *q && n < max - 4; q++)
+            out[n++] = *q == '|' || *q == ';' ? ' ' : *q;
+        if (n >= max - 4)
+            break;
+        out[n++] = '|';
+        out[n++] = layout[k].where == W_DOCK ? 'd' : layout[k].where == W_HIDDEN ? 'h' : 'g';
+        if (k + 1 < nlayout)
+            out[n++] = ';';
+    }
+    out[n] = '\0';
+    return n;
+}
+
+void desktop_layout_set(const char *text)
+{
+    nlayout = 0;
+    while (text && *text && nlayout < LAYOUT_MAX) {
+        char name[LAYOUT_NAME];
+        int n = 0;
+        while (*text && *text != '|' && *text != ';' && n < LAYOUT_NAME - 1)
+            name[n++] = *text++;
+        name[n] = '\0';
+        int where = W_GRID;
+        if (*text == '|') {
+            text++;
+            where = *text == 'd' ? W_DOCK : *text == 'h' ? W_HIDDEN : W_GRID;
+            while (*text && *text != ';')
+                text++;
+        }
+        if (*text == ';')
+            text++;
+        if (n)
+            layout_add(name, where);
+    }
+    layout_dirty = 1;
 }
 
 static struct gfx_rect home_dock(void)
@@ -847,7 +981,9 @@ static int page_x(int p)        /* page p's left edge on screen, as turned now *
     return p * S()->w - pager.x / 256;
 }
 
-static struct gfx_rect tile_rect(int i)
+/* Where app i's tile is when it's at rest (a hidden app's: the middle of the screen, where an app that
+ * opens from somewhere else grows from). */
+static struct gfx_rect tile_base(int i)
 {
     const struct theme *t = T();
     int slot = dock_slot(i);
@@ -856,10 +992,23 @@ static struct gfx_rect tile_rect(int i)
         int w = d.w / dock_count();
         return (struct gfx_rect){ d.x + slot * w, d.y, w, d.h };
     }
-    int g = grid_index(i), p = g / HOME_PER_PAGE, k = g % HOME_PER_PAGE;
+    int g = grid_index(i);
+    if (g < 0)
+        return (struct gfx_rect){ (S()->w - t->tile_w) / 2, S()->h / 2 - t->tile_h / 2, t->tile_w, t->tile_h };
+    int p = g / HOME_PER_PAGE, k = g % HOME_PER_PAGE;
     int x0 = page_x(p) + (S()->w - HOME_COLS * t->tile_w) / 2;
     return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, HOME_TOP + (k / HOME_COLS) * t->tile_h,
                               t->tile_w, t->tile_h };
+}
+
+static struct gfx_rect tile_rect(int i)
+{
+    struct gfx_rect r = tile_base(i);
+    if (i >= 0 && i < APPS_MAX) {
+        r.x += off_x[i] / 256;
+        r.y += off_y[i] / 256;
+    }
+    return r;
 }
 
 static struct gfx_rect tile_icon_rect(int i)
@@ -975,7 +1124,7 @@ static struct hit hit_at(int x, int y)
             return (struct hit){ H_NONE, 0 };
         }
         for (int i = 0; i < builtin_app_count; i++)
-            if (inside(tile_rect(i), x, y))
+            if (home_has(i) && inside(tile_rect(i), x, y))
                 return (struct hit){ H_TILE, i };
     }
     return (struct hit){ H_NONE, 0 };
@@ -1056,21 +1205,20 @@ static void draw_icon(const struct app *a, struct gfx_rect r, uint32_t alpha)
     }
 }
 
-/* An icon turned a degree or two about its middle: the wiggle of home edit mode. Each icon has its
- * own beat. */
-static void draw_icon_wiggle(const struct app *a, struct gfx_rect r, int idx)
+/* An icon image (sw x sh, ARGB) drawn dw x dh about (cx, cy) in screen coordinates, turned by sn
+ * (256ths of a radian), smoothly. Opaque pixels take a quick blend of four; the edges, a weighted one. */
+static uint32_t lerp_rgb(uint32_t c0, uint32_t c1, int f)
 {
-    const struct icon *ic = icon_find(a->icon);
-    const uint32_t *sz = ic ? icon_sized(ic, r.w, r.h) : 0;
-    if (!sz) {
-        draw_icon(a, r, 255);
-        return;
-    }
-    uint32_t period = 150 + (uint32_t)(idx * 37 % 80), t = uptime_ms() + (uint32_t)idx * 53;
-    int u = (int)(t % period * 512 / period), tri = u < 256 ? u : 511 - u;      /* 0..255 and back */
-    int sn = (tri * 2 - 255) * 9 / 255 * (idx % 2 ? 1 : -1);                    /* about +-2 degrees, in 256ths */
+    uint32_t rb = ((c0 & 0xff00ff) * (uint32_t)(256 - f) + (c1 & 0xff00ff) * (uint32_t)f) >> 8 & 0xff00ff;
+    uint32_t g = ((c0 & 0x00ff00) * (uint32_t)(256 - f) + (c1 & 0x00ff00) * (uint32_t)f) >> 8 & 0x00ff00;
+    return rb | g;
+}
+
+static void rot_icon(const uint32_t *src, int sw, int sh, int cx, int cy, int dw, int dh, int sn)
+{
     int cs = 256 - sn * sn / 512;
-    int cx = r.x + r.w / 2, cy = r.y + r.h / 2, hw = r.w / 2 + 4, hh = r.h / 2 + 4;
+    int inv = sw * 256 / dw;                    /* source pixels per drawn pixel, 8.8 */
+    int hw = dw / 2 + 4, hh = dh / 2 + 4;
     for (int dy = -hh; dy < hh; dy++) {
         int y = cy + dy - V->oy;
         if (y < 0 || y >= V->s.h)
@@ -1080,16 +1228,68 @@ static void draw_icon_wiggle(const struct app *a, struct gfx_rect r, int idx)
             int x = cx + dx - V->ox;
             if (x < 0 || x >= V->s.w)
                 continue;
-            int sx = (dx * cs + dy * sn) / 256 + r.w / 2, sy = (dy * cs - dx * sn) / 256 + r.h / 2;
-            if (sx < 0 || sy < 0 || sx >= r.w || sy >= r.h)
+            int rx = dx * cs + dy * sn, ry = dy * cs - dx * sn;
+            int su = rx * inv / 256 + sw * 128 - 128, sv = ry * inv / 256 + sh * 128 - 128;
+            int ix = su >> 8, iy = sv >> 8, fx = su & 255, fy = sv & 255;
+            if (ix < -1 || iy < -1 || ix >= sw || iy >= sh)
                 continue;
-            uint32_t px = sz[sy * r.w + sx], al = px >> 24;
-            if (al == 255)
-                row[x] = px & 0xffffff;
-            else if (al)
-                row[x] = gfx_mix(px & 0xffffff, row[x], al);
+            uint32_t t[4];
+            for (int k = 0; k < 4; k++) {
+                int tx = ix + (k & 1), ty = iy + (k >> 1);
+                t[k] = tx < 0 || ty < 0 || tx >= sw || ty >= sh ? 0 : src[ty * sw + tx];
+            }
+            if ((t[0] & t[1] & t[2] & t[3]) >> 24 == 255) {
+                row[x] = lerp_rgb(lerp_rgb(t[0], t[1], fx), lerp_rgb(t[2], t[3], fx), fy);
+                continue;
+            }
+            uint32_t w[4] = { (uint32_t)((256 - fx) * (256 - fy)), (uint32_t)(fx * (256 - fy)),
+                              (uint32_t)((256 - fx) * fy), (uint32_t)(fx * fy) };
+            uint64_t A = 0, R = 0, G = 0, B = 0;
+            for (int k = 0; k < 4; k++) {
+                uint64_t wa = (uint64_t)w[k] * (t[k] >> 24);
+                A += wa;
+                R += wa * (t[k] >> 16 & 255);
+                G += wa * (t[k] >> 8 & 255);
+                B += wa * (t[k] & 255);
+            }
+            if (!A)
+                continue;
+            uint32_t col = (uint32_t)(R / A) << 16 | (uint32_t)(G / A) << 8 | (uint32_t)(B / A);
+            uint32_t al = (uint32_t)(A >> 16);
+            row[x] = al >= 255 ? col : gfx_mix(col, row[x], al);
         }
     }
+}
+
+/* The red minus on an icon in edit mode: tap it to take the app off the home screen. */
+static void draw_badge(int cx, int cy, int r)
+{
+    gfx_fill_circle(VS, VX(cx), VY(cy), r + 2, 0x2a2a2e);
+    gfx_fill_circle(VS, VX(cx), VY(cy), r, 0xff453a);
+    gfx_fill_rect(VS, VX(cx - r / 2), VY(cy - r / 8 - 1), r, r / 4 + 2, WHITE);
+}
+
+/* The wiggle's angle for icon idx now: its own beat, about +-2 degrees, in 256ths. */
+static int wiggle_sn(int idx)
+{
+    uint32_t period = 150 + (uint32_t)(idx * 37 % 80), t = uptime_ms() + (uint32_t)idx * 53;
+    int u = (int)(t % period * 512 / period), tri = u < 256 ? u : 511 - u;
+    return (tri * 2 - 255) * 9 / 255 * (idx % 2 ? 1 : -1);
+}
+
+/* An app's icon wiggling at page size. */
+static void draw_icon_wiggle(const struct app *a, struct gfx_rect r, int idx)
+{
+    const struct icon *ic = icon_find(a->icon);
+    if (!ic) {
+        draw_icon(a, r, 255);
+        return;
+    }
+    const uint32_t *sz = icon_sized(ic, r.w, r.h);
+    if (sz)
+        rot_icon(sz, r.w, r.h, r.x + r.w / 2, r.y + r.h / 2, r.w, r.h, wiggle_sn(idx));
+    else
+        rot_icon(ic->px, ic->w, ic->h, r.x + r.w / 2, r.y + r.h / 2, r.w, r.h, wiggle_sn(idx));
 }
 
 /* The network (kernel/net.h): Wi-Fi as a fan whose arcs light up with the
@@ -1368,23 +1568,32 @@ static void draw_home(void)
         gfx_blend_round_rect(VS, VX(d.x), VY(d.y), d.w, d.h, DOCK_R, 0x1d1d20, 102);     /* 40% */
     for (int i = 0; i < builtin_app_count; i++) {
         struct gfx_rect r = tile_rect(i);
-        if (!visible(r))
+        if (!home_has(i) || !visible(r) || (edit_on && i == ed_app && ed_lift))
             continue;
         struct hit h = { H_TILE, i };
         if (!edit_on && same(h, pressed) && same(h, hover))
             gfx_blend_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
         const struct app *a = &builtin_apps[i];
         struct gfx_rect ir = tile_icon_rect(i);
-        if (edit_on)
+        if (edit_hide_icons)
+            ;                               /* the card's picture: its icons are drawn over it, wiggling */
+        else if (edit_on)
             draw_icon_wiggle(a, ir, i);
         else
             draw_icon(a, ir, 255);
+        if (edit_on && !edit_hide_icons)
+            draw_badge(ir.x + 10, ir.y + 10, BADGE_R);
         if (dock_slot(i) >= 0)
             continue;                       /* the dock's apps have no labels: their icons are enough */
         int ty = ir.y + ir.h + 12, max_w = r.w - 8;
         int tw = text_width(a->name, TEXT_SMALL);
         text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
                       TEXT_SMALL, SHELL_FG);
+    }
+    if (edit_on && ed_lift && ed_app >= 0) {            /* the icon in the finger: bigger, over the rest */
+        int sz = HOME_ICON * 118 / 100;
+        struct gfx_rect r = { ed_px - sz / 2, ed_py - sz / 2, sz, sz };
+        draw_icon(&builtin_apps[ed_app], r, 255);
     }
     /* A handle above the dock: all apps are up there. Dots when there's more than a page. */
     int n = home_pages(), gap = 24, cy = d.y - 24;
@@ -1474,13 +1683,26 @@ static uint32_t last_edit_tick;
 static uint32_t *pg_px;                 /* the page at full size, drawn when it changes */
 static int pg_ok;
 
-enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_SLIDER };
+enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_ICON, D_SLIDER };
+static int panel_kind;                  /* 1 Clock, 2 Apps: the sheet that's up, or sliding away */
 
 static int edit_p(void)                 /* how far zoomed out: 0..256 */
 {
     int p = edit_sp.x / 256;
     return p < 0 ? 0 : p > 256 ? 256 : p;
 }
+
+static int edit_dyn(void)               /* something is moving on the page: the card is drawn whole each frame */
+{
+    if (ed_lift)
+        return 1;
+    for (int i = 0; i < APPS_MAX; i++)
+        if (off_x[i] || off_y[i])
+            return 1;
+    return 0;
+}
+
+static int cc_dyn;                      /* the card's picture was made for dyn / not */
 
 static int edit_zoomed(void)
 {
@@ -1512,10 +1734,21 @@ static void screen_to_page(int sx, int sy, int *px, int *py)
     *py = (sy - c.y) * 256 / edit_zoom();
 }
 
-static void edit_damage(void)
+static uint32_t *cc_px;                 /* the card as it is now, without the icons */
+static int cc_ok;
+static struct gfx_rect cc_rect;         /* where it is */
+
+static void edit_damage(void)           /* the card's picture changes */
 {
     pg_ok = 0;
+    cc_ok = 0;
     damage_all();
+}
+
+static void edit_frame(void)            /* only the wiggle moves */
+{
+    struct gfx_rect c = edit_card();
+    shell_damage(c);
 }
 
 static void edit_enter(void)
@@ -1557,32 +1790,39 @@ static void edit_exit(void)
     edit_damage();
 }
 
-/* One of the page's pixels from four of the page's, so a shrunk icon or letter stays smooth. */
-static void edit_scale_page(struct gfx_rect card)
+/* The page shrunk into the card: each of its pixels from four of the page's, so a shrunk letter stays smooth. */
+static void edit_make_card(struct gfx_rect card)
 {
-    struct gfx_rect vis = gfx_rect_intersect(card, (struct gfx_rect){ V->ox, V->oy, V->s.w, V->s.h });
-    if (gfx_rect_empty(vis) || !pg_px)
+    if (!pg_px)
         return;
     int pw = S()->w, ph = S()->h;
+    if (!cc_px) {
+        uint32_t bytes = (uint32_t)(S()->w * S()->h * 4);
+        cc_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!cc_px)
+            return;
+    }
     uint32_t step = (uint32_t)((uint64_t)65536 * 256 / (uint32_t)edit_zoom());
     static int xmap[4096];
-    if (vis.w > 4096)
+    if (card.w > 4096)
         return;
-    for (int i = 0; i < vis.w; i++) {
-        int sx = (int)((uint32_t)(vis.x + i - card.x) * step >> 16);
+    for (int i = 0; i < card.w; i++) {
+        int sx = (int)((uint32_t)i * step >> 16);
         xmap[i] = sx > pw - 2 ? pw - 2 : sx;
     }
-    for (int y = vis.y; y < vis.y + vis.h; y++) {
-        int sy = (int)((uint32_t)(y - card.y) * step >> 16);
+    for (int y = 0; y < card.h; y++) {
+        int sy = (int)((uint32_t)y * step >> 16);
         sy = sy > ph - 2 ? ph - 2 : sy;
         const uint32_t *r0 = pg_px + (size_t)sy * (size_t)pw, *r1 = r0 + pw;
-        uint32_t *dp = VS->px + (size_t)VY(y) * (size_t)VS->stride + VX(vis.x);
-        for (int i = 0; i < vis.w; i++) {
+        uint32_t *dp = cc_px + (size_t)y * (size_t)card.w;
+        for (int i = 0; i < card.w; i++) {
             int sx = xmap[i];
             uint32_t a = r0[sx], b = r0[sx + 1], c = r1[sx], d = r1[sx + 1];
             dp[i] = (a >> 2 & 0x3f3f3f) + (b >> 2 & 0x3f3f3f) + (c >> 2 & 0x3f3f3f) + (d >> 2 & 0x3f3f3f);
         }
     }
+    cc_rect = card;
+    cc_ok = 1;
 }
 
 static void edit_render_page(void)
@@ -1597,7 +1837,10 @@ static void edit_render_page(void)
     struct gfx_view *outer = V;
     V = &v;
     wallpaper_draw(VS, 0, 0, 0);
+    edit_hide_icons = !edit_dyn();
+    cc_dyn = edit_dyn();
     draw_home();
+    edit_hide_icons = 0;
     V = outer;
     pg_ok = 1;
 }
@@ -1681,6 +1924,35 @@ static void draw_handles(void)
     }
 }
 
+static struct gfx_rect pn_app(int k)    /* the Apps sheet's k-th tile */
+{
+    int w = (S()->w - 2 * PANEL_SIDE) / 4;
+    return (struct gfx_rect){ PANEL_SIDE + k % 4 * w, panel_top() + 96 + k / 4 * 130, w, 130 };
+}
+
+static void draw_apps_panel(void)
+{
+    const struct theme *t = T();
+    int top = panel_top();
+    layout_sync();
+    text_draw(VS, VX(PANEL_SIDE), VY(top + 20), "Apps", TEXT_HEADING, t->fg);
+    ed_chip(pn_reset(), "Reset", 0, 0);
+    ed_chip(pn_close(), "Close", 0, 0);
+    if (!n_hid) {
+        const char *m = "Every app is on the home screen";
+        text_draw(VS, VX((S()->w - text_width(m, TEXT_BODY)) / 2), VY(top + 200), m, TEXT_BODY, t->fg);
+        return;
+    }
+    for (int k = 0; k < n_hid && k < 12; k++) {
+        struct gfx_rect r = pn_app(k);
+        struct gfx_rect ir = { r.x + (r.w - 64) / 2, r.y + 4, 64, 64 };
+        draw_icon(&builtin_apps[hid_idx[k]], ir, 255);
+        const char *nm = builtin_apps[hid_idx[k]].name;
+        int tw = text_width(nm, TEXT_SMALL), mw = r.w - 8;
+        text_draw_fit(VS, VX(r.x + (r.w - (tw < mw ? tw : mw)) / 2), VY(ir.y + 64 + 8), nm, mw, TEXT_SMALL, t->fg);
+    }
+}
+
 static void draw_panel(void)
 {
     int top = panel_top();
@@ -1690,6 +1962,10 @@ static void draw_panel(void)
     const struct home_clock *h = lockscreen_home_clock();
     gfx_shadow(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, 28, 110);
     gfx_fill_round_rect(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, t->window_bg);
+    if (panel_kind == 2) {
+        draw_apps_panel();
+        return;
+    }
     text_draw(VS, VX(PANEL_SIDE), VY(top + 20), "Clock", TEXT_HEADING, t->fg);
     ed_chip(pn_reset(), "Reset", 0, 0);
     ed_chip(pn_close(), "Close", 0, 0);
@@ -1711,13 +1987,55 @@ static void draw_panel(void)
 static void draw_edit(void)
 {
     int p = edit_p();
-    wallpaper_draw(VS, V->ox, V->oy, (uint32_t)(150 * p / 256));
     struct gfx_rect card = edit_card();
-    if (!pg_ok)
-        edit_render_page();
-    gfx_shadow(VS, VX(card.x), VY(card.y), card.w, card.h, 0, 26, (uint32_t)(130 * p / 256));
-    edit_scale_page(card);
-    gfx_rect_outline(VS, VX(card.x) - 1, VY(card.y) - 1, card.w + 2, card.h + 2, gfx_mix(WHITE, 0, (uint32_t)(60 * p / 256)));
+    struct gfx_rect view = { V->ox, V->oy, V->s.w, V->s.h };
+    struct gfx_rect vis = gfx_rect_intersect(card, view);
+    int inside_card = vis.x == view.x && vis.y == view.y && vis.w == view.w && vis.h == view.h;
+    if (!inside_card) {                 /* the wiggle's frames are all inside it: no need to draw the rest */
+        wallpaper_draw(VS, V->ox, V->oy, (uint32_t)(150 * p / 256));
+        gfx_shadow(VS, VX(card.x), VY(card.y), card.w, card.h, 0, 26, (uint32_t)(130 * p / 256));
+    }
+    if (!cc_ok || cc_rect.w != card.w || cc_rect.h != card.h || cc_dyn != edit_dyn()) {
+        if (!pg_ok || cc_dyn != edit_dyn())
+            edit_render_page();
+        edit_make_card(card);
+    }
+    if (cc_px && !gfx_rect_empty(vis)) {
+        struct gfx_surface cc = { cc_px, card.w, card.h, card.w };
+        gfx_blit(VS, VX(vis.x), VY(vis.y), &cc, vis.x - card.x, vis.y - card.y, vis.w, vis.h);
+    }
+    if (!inside_card)
+        gfx_rect_outline(VS, VX(card.x) - 1, VY(card.y) - 1, card.w + 2, card.h + 2,
+                         gfx_mix(WHITE, 0, (uint32_t)(60 * p / 256)));
+    /* The icons, wiggling, at the card's scale (while one's being dragged, or sliding, they're in the card). */
+    int z = edit_zoom();
+    for (int i = 0; i < builtin_app_count && !edit_dyn(); i++) {
+        if (!home_has(i))
+            continue;
+        struct gfx_rect ir = tile_icon_rect(i);
+        int sx, sy, sz_w = ir.w * z / 256, sz_h = ir.h * z / 256;
+        page_to_screen(ir.x + ir.w / 2, ir.y + ir.h / 2, &sx, &sy);
+        struct gfx_rect box = { sx - sz_w / 2 - 6, sy - sz_h / 2 - 6, sz_w + 12, sz_h + 12 };
+        if (!visible(box))
+            continue;
+        const struct icon *ic = icon_find(builtin_apps[i].icon);
+        int sn = edit_on ? wiggle_sn(i) : 0;
+        if (!ic) {
+            struct gfx_rect r = { sx - sz_w / 2, sy - sz_h / 2, sz_w, sz_h };
+            draw_icon(&builtin_apps[i], r, 255);
+            continue;
+        }
+        const uint32_t *sz = icon_sized(ic, ir.w, ir.h);
+        if (sz)
+            rot_icon(sz, ir.w, ir.h, sx, sy, sz_w, sz_h, sn);
+        else
+            rot_icon(ic->px, ic->w, ic->h, sx, sy, sz_w, sz_h, sn);
+        if (edit_on && p > 200) {
+            int bx, by;
+            page_to_screen(ir.x + 10, ir.y + 10, &bx, &by);
+            draw_badge(bx, by, BADGE_R * z / 256);
+        }
+    }
     draw_handles();
     if (panel_sp.x < FX(PANEL_H) && p > 8) {
         for (int i = 0; i < 4; i++) {
@@ -1782,15 +2100,88 @@ static void slider_to(int k, int x)
     home_clock_set(&h, 0);
 }
 
-static void edit_open_panel(int open)
+static void edit_open_panel(int kind)   /* 0 closes it */
 {
-    edit_panel = open;
-    panel_sp.t = open ? FX(PANEL_H) : 0;
+    edit_panel = kind;
+    if (kind)
+        panel_kind = kind;
+    panel_sp.t = kind ? FX(PANEL_H) : 0;
     edit_moving = 1;
     last_edit_tick = uptime_ms();
-    if (open)
-        edit_sel = 1;
+    edit_sel = kind == 1;
     edit_damage();
+}
+
+/* Moves app a to the list `where`, at place idx, and lets the other icons slide to their new places. */
+static void layout_place(int a, int where, int idx)
+{
+    layout_sync();
+    struct gfx_rect before[APPS_MAX];
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)
+        before[i] = tile_rect(i);
+    int *lists[3] = { grid_idx, dock_idx, hid_idx };
+    int *counts[3] = { &n_grid, &n_dock, &n_hid };
+    for (int w = 0; w < 3; w++) {                       /* out of wherever it was */
+        int *n = counts[w], k = 0;
+        for (int j = 0; j < *n; j++)
+            if (lists[w][j] != a)
+                lists[w][k++] = lists[w][j];
+        *n = k;
+    }
+    int *n = counts[where];
+    if (where == W_DOCK && *n >= DOCK_MAX) {
+        where = W_GRID;
+        n = counts[where];
+    }
+    idx = idx < 0 ? 0 : idx > *n ? *n : idx;
+    for (int j = *n; j > idx; j--)
+        lists[where][j] = lists[where][j - 1];
+    lists[where][idx] = a;
+    (*n)++;
+    layout_from_lists();
+    layout_sync();
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++) {
+        if (i == a && ed_lift) {
+            off_x[i] = off_y[i] = 0;
+            continue;
+        }
+        struct gfx_rect now = tile_base(i);
+        off_x[i] = home_has(i) ? (before[i].x - now.x) * 256 : 0;
+        off_y[i] = home_has(i) ? (before[i].y - now.y) * 256 : 0;
+    }
+    edit_damage();
+}
+
+/* Where the dragged icon would go: in the dock or on the grid, and at which place. */
+static void drop_target(int a, int px, int py, int *where, int *idx)
+{
+    layout_sync();
+    int in_dock = 0, in_grid = 0;
+    for (int k = 0; k < n_dock; k++)
+        in_dock += dock_idx[k] != a;
+    for (int k = 0; k < n_grid; k++)
+        in_grid += grid_idx[k] != a;
+    struct gfx_rect d = home_dock();
+    if (py >= d.y - 30 && in_dock < DOCK_MAX) {
+        int count = in_dock + 1, i = (px - d.x) * count / d.w;
+        *where = W_DOCK;
+        *idx = i < 0 ? 0 : i > count - 1 ? count - 1 : i;
+        return;
+    }
+    const struct theme *t = T();
+    int gx0 = (S()->w - HOME_COLS * t->tile_w) / 2;
+    int col = (px - gx0) / t->tile_w, row = (py - HOME_TOP) / t->tile_h;
+    col = col < 0 ? 0 : col > HOME_COLS - 1 ? HOME_COLS - 1 : col;
+    row = row < 0 ? 0 : row > HOME_ROWS - 1 ? HOME_ROWS - 1 : row;
+    int i = row * HOME_COLS + col;
+    *where = W_GRID;
+    *idx = i > in_grid ? in_grid : i;
+}
+
+static void layout_saved(const char *what, int app)
+{
+    kprintf("shell: home layout: %s %s\n", what, builtin_apps[app].name);
+    settings_save();
 }
 
 static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
@@ -1806,6 +2197,28 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
     struct home_clock h = *lockscreen_home_clock();
     if (down) {
         ed_drag = D_NONE;
+        if (panel_top() < S()->h && y >= panel_top() && panel_kind == 2) {      /* the Apps sheet */
+            if (inside(pn_close(), x, y)) {
+                edit_open_panel(0);
+            } else if (inside(pn_reset(), x, y)) {
+                layout_default();
+                layout_dirty = 1;
+                memset(off_x, 0, sizeof(off_x));
+                memset(off_y, 0, sizeof(off_y));
+                kprintf("shell: home layout reset\n");
+                settings_save();
+                edit_damage();
+            } else {
+                for (int k = 0; k < n_hid && k < 12; k++)
+                    if (inside(pn_app(k), x, y)) {
+                        int a = hid_idx[k];
+                        layout_place(a, W_GRID, 1000);
+                        layout_saved("added", a);
+                        break;
+                    }
+            }
+            return 1;
+        }
         if (panel_top() < S()->h && y >= panel_top()) {         /* the popup */
             if (inside(pn_close(), x, y)) {
                 edit_open_panel(0);
@@ -1836,10 +2249,12 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
                 if (inside(bar_chip(i), x, y)) {
                     if (i == 0)
                         edit_open_panel(1);
+                    else if (i == 2)
+                        edit_open_panel(2);
                     else if (i == 3)
                         edit_exit();
                     else
-                        show_toast(i == 1 ? "Widgets are coming" : "Apps are coming");
+                        show_toast("Widgets are coming");
                     return 1;
                 }
         }
@@ -1851,6 +2266,37 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             h.y = cy * 1000 / S()->h;
             h.x = cx * 1000 / S()->w;
             lockscreen_set_home_clock(&h);
+        }
+        int icon_hit = -1, badge_hit = -1;
+        if (hd < 0) {
+            for (int i = 0; i < builtin_app_count; i++) {
+                if (!home_has(i))
+                    continue;
+                struct gfx_rect ir = tile_icon_rect(i);
+                int bx = ir.x + 10, by = ir.y + 10;
+                if ((px - bx) * (px - bx) + (py - by) * (py - by) <= 36 * 36)
+                    badge_hit = i;
+                else if (inside(tile_rect(i), px, py))
+                    icon_hit = i;
+            }
+        }
+        if (badge_hit >= 0) {                                   /* the minus: off the home screen */
+            layout_place(badge_hit, W_HIDDEN, 1000);
+            layout_saved("removed", badge_hit);
+            return 1;
+        }
+        if (icon_hit >= 0) {                                    /* held: it may be dragged */
+            struct gfx_rect ir = tile_icon_rect(icon_hit);
+            ed_app = icon_hit;
+            ed_lift = 0;
+            ed_drag = D_ICON;
+            ed_grab_x = ir.x + ir.w / 2 - px;
+            ed_grab_y = ir.y + ir.h / 2 - py;
+            ed_px = px + ed_grab_x;
+            ed_py = py + ed_grab_y;
+            hold_x = px;                /* where it went down, page coordinates */
+            hold_y = py;
+            return 1;
         }
         if (hd >= 0) {
             ed_size0 = h.size;
@@ -1883,6 +2329,23 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
         if (ed_drag >= D_SLIDER) {
             slider_to(ed_drag - D_SLIDER, x);
+        } else if (ed_drag == D_ICON) {
+            if (!ed_lift && (px - hold_x) * (px - hold_x) + (py - hold_y) * (py - hold_y) > 24 * 24) {
+                ed_lift = 1;            /* picked up */
+                off_x[ed_app] = off_y[ed_app] = 0;
+                edit_damage();
+            }
+            if (ed_lift) {
+                ed_px = px + ed_grab_x;
+                ed_py = py + ed_grab_y;
+                int where, idx;
+                drop_target(ed_app, ed_px, ed_py, &where, &idx);
+                int cw = dock_slot(ed_app) >= 0 ? W_DOCK : W_GRID;
+                int ci = cw == W_DOCK ? dock_slot(ed_app) : grid_index(ed_app);
+                if (where != cw || idx != ci)
+                    layout_place(ed_app, where, idx);
+                edit_damage();
+            }
         } else if (ed_drag == D_MOVE) {
             int nx = (px + ed_grab_x) * 1000 / S()->w, ny = (py + ed_grab_y) * 1000 / S()->h;
             h.x = nx < 0 ? 0 : nx > 1000 ? 1000 : nx;
@@ -1901,6 +2364,23 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             h.stretch = v < 100 ? 100 : v > 250 ? 250 : v;
             home_clock_set(&h, 0);
         }
+        return 1;
+    }
+    if (ed_drag == D_ICON) {            /* let go: it settles into its place */
+        if (ed_lift) {
+            struct gfx_rect base = tile_base(ed_app), ir = { 0 };
+            ir.x = ed_px - HOME_ICON / 2;
+            ir.y = ed_py - HOME_ICON / 2;
+            int slot_x = base.x + (base.w - HOME_ICON) / 2;
+            int slot_y = base.y + (dock_slot(ed_app) >= 0 ? (base.h - HOME_ICON) / 2 : 16);
+            off_x[ed_app] = (ir.x - slot_x) * 256;
+            off_y[ed_app] = (ir.y - slot_y) * 256;
+            ed_lift = 0;
+            layout_saved("moved", ed_app);
+        }
+        ed_app = -1;
+        ed_drag = D_NONE;
+        edit_damage();
         return 1;
     }
     if (ed_drag != D_NONE) {            /* let go: keep it */
@@ -1935,19 +2415,40 @@ static void edit_tick(void)
             last_edit_tick = now;
             if (edit_on && edit_sp.t == 0 && now - edit_start_ms >= EDIT_ZOOM_DELAY_MS)
                 edit_sp.t = FX(256);
-            int a = 1, b = 1;
+            int a = 1, b = 1, was_x = edit_sp.x;
             for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++) {
                 if (!(edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS))
                     a = spring_step(&edit_sp, 30, 150);
                 b = spring_step(&panel_sp, 36, 150);
             }
             edit_moving = a || b || (edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS);
-            edit_damage();
+            if (edit_sp.x != was_x)
+                edit_damage();          /* the zoom moved: the card's picture is made again */
+            else
+                damage_all();           /* only the sheet slid */
         }
+    }
+    int sliding = 0;
+    for (int i = 0; i < APPS_MAX; i++)
+        if (off_x[i] || off_y[i]) {
+            sliding = 1;
+            off_x[i] = off_x[i] / 2 + off_x[i] / 8;     /* about 60% of it left each step */
+            off_y[i] = off_y[i] / 2 + off_y[i] / 8;
+            if (off_x[i] > -512 && off_x[i] < 512)
+                off_x[i] = 0;
+            if (off_y[i] > -512 && off_y[i] < 512)
+                off_y[i] = 0;
+        }
+    if (sliding || ed_lift) {
+        edit_moving = 1;
+        edit_damage();
     }
     if (edit_on && now - last_wiggle >= EDIT_FRAME_MS) {        /* the wiggle: a frame at a time */
         last_wiggle = now;
-        edit_damage();
+        if (edit_p() > 0)
+            edit_frame();
+        else
+            damage_all();
     }
     if (edit_on || edit_moving)
         shell_flush();

@@ -33,6 +33,11 @@ struct wm_window;
 /* After boot: the apps, the clock and the wallpaper, then the desktop. */
 void desktop_start(void);
 
+/* Which apps are on the home screen, in the dock, in order, or off it: "Files|d;Clock|g;Log|h"
+ * (d dock, g grid, h hidden). Kept in settings.txt; "" is the first layout. */
+void desktop_layout_set(const char *text);
+int desktop_layout_text(char *out, int max);
+
 /* 1 once desktop_start() has finished. */
 int desktop_started(void);
 

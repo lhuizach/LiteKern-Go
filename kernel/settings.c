@@ -22,7 +22,7 @@
 #define PIXEL_FILE  "wallpaper.lkxw"
 #define LOCK_FILE   "lock.lkxw"
 #define LAST_FILE   "last-user.txt"
-#define TEXT_MAX    1024
+#define TEXT_MAX    2048
 
 static int loaded;                  /* settings.txt was there */
 static char wallpaper[32];          /* what it said ("" = it didn't say) */
@@ -194,6 +194,8 @@ static int apply(int top, int at_boot)
     uint32_t saver = 0xffffffffu;
     struct lock_settings lock = *lockscreen_settings();
     struct home_clock home = *lockscreen_home_clock();
+    static char layout_text[400];
+    layout_text[0] = '\0';
     wallpaper[0] = '\0';
     for (char *line = text; *line;) {
         char *end = line;
@@ -235,6 +237,11 @@ static int apply(int top, int at_boot)
         } else if (!strcmp(line, "lock-clock-y")) {
             uint32_t n;
             lock.clock_y = number(value, &n) ? -1 : (int)n;
+        } else if (!strcmp(line, "home-layout")) {
+            int k = 0;
+            for (; value[k] && k < (int)sizeof(layout_text) - 1; k++)
+                layout_text[k] = value[k];
+            layout_text[k] = '\0';
         } else if (strlen(line) > 11 && !memcmp(line, "home-clock-", 11)) {
             uint32_t n;
             if (!strcmp(line, "home-clock-y"))
@@ -284,6 +291,7 @@ static int apply(int top, int at_boot)
         memcpy(lock.wallpaper, "desktop", 8);   /* its picture is gone: the desktop's */
     lockscreen_configure(&lock);
     lockscreen_set_home_clock(&home);
+    desktop_layout_set(layout_text);
     if (!at_boot) {
         const char *wp = settings_wallpaper("");
         if (!strcmp(wp, WALLPAPER_CUSTOM)) {
@@ -383,6 +391,8 @@ void settings_save(void)
     const char *wp = wallpaper_current();
     const struct lock_settings *lock = lockscreen_settings();
     char clock_y[12], home_y[12];
+    static char layout_text[400];
+    desktop_layout_text(layout_text, sizeof(layout_text));
     const struct home_clock *home = lockscreen_home_clock();
     if (home->y < 0)
         memcpy(home_y, "auto", 5);
@@ -398,12 +408,12 @@ void settings_save(void)
               "lock-clock-font %d\nlock-clock-style %d\nlock-clock-opacity %d\n"
               "lock-clock-stretch %d\nlock-clock-x %d\nlock-clock-y %s\n"
               "home-clock-show %d\nhome-clock-font %d\nhome-clock-style %d\nhome-clock-opacity %d\n"
-              "home-clock-stretch %d\nhome-clock-size %d\nhome-clock-x %d\nhome-clock-y %s\n",
+              "home-clock-stretch %d\nhome-clock-size %d\nhome-clock-x %d\nhome-clock-y %s\nhome-layout %s\n",
               theme_is_light() ? "light" : "dark", theme_accent(theme_accent_index(), 0),
               wp[0] ? wp : "none", screensaver_timeout(), lock->wallpaper, lock->clock24 ? "24" : "12",
               lock->on_wake ? "yes" : "no", lock->clock_font, lock->clock_style, lock->clock_opacity,
               lock->clock_stretch, lock->clock_x, clock_y, home->show, home->font, home->style, home->opacity,
-              home->stretch, home->size, home->x, home_y);
+              home->stretch, home->size, home->x, home_y, layout_text);
     int err = save_file(TEXT_FILE, text, (uint32_t)strlen(text));
     if (err && err != -ENODEV)
         kprintf("settings: couldn't save (%d)\n", err);
