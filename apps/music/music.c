@@ -420,9 +420,11 @@ static int load(int i)
     return 0;
 }
 
+static int mic_state;                           /* the mic test (below) */
+
 static void set_timer(void)
 {
-    k86_timer_set(playing ? 40 : wg_list_gliding(&list) ? 16 : 0);
+    k86_timer_set(playing || mic_state ? 40 : wg_list_gliding(&list) ? 16 : 0);
 }
 
 static void start(int i)
@@ -518,6 +520,106 @@ static int feed(void)
     }
 }
 
+/* --- mic test: records 4 seconds from the phone's microphone, then plays them back ------------- */
+
+#define MIC_RATE 48000
+#define MIC_SECS 4
+static int16_t mic_buf[MIC_RATE * MIC_SECS];
+static int mic_state;                           /* 0 idle, 1 recording, 2 playing it back */
+static int mic_len, mic_pos, mic_peak, mic_gain;
+static uint32_t mic_t0;
+static struct wg_button b_mic;
+
+static void mic_stop(void)
+{
+    k86_mic_close();
+    k86_audio_close();
+    mic_state = 0;
+}
+
+static void mic_start(void)
+{
+    if (playing) {                              /* the song is paused for the test */
+        uint64_t q = queued_src();
+        pos = pos > q ? pos - q : 0;
+    }
+    stop_sound();
+    int e = k86_mic_open(MIC_RATE);
+    if (e) {
+        snprintf(note, sizeof(note), "Mic failed (%d)", e);
+        return;
+    }
+    mic_len = mic_pos = mic_peak = 0;
+    mic_t0 = k86_uptime_ms();
+    mic_state = 1;
+    snprintf(note, sizeof(note), "Recording... speak");
+}
+
+static void mic_tick(void)
+{
+    if (mic_state == 1) {
+        int want = MIC_RATE * MIC_SECS - mic_len;
+        int n = k86_mic_read(mic_buf + mic_len, want < 4096 ? want : 4096);
+        if (n < 0) {
+            snprintf(note, sizeof(note), "Mic read failed (%d)", n);
+            mic_stop();
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            int v = mic_buf[mic_len + i];
+            v = v < 0 ? -v : v;
+            if (v > mic_peak)
+                mic_peak = v;
+        }
+        mic_len += n;
+        if (!mic_len && k86_uptime_ms() - mic_t0 > 1500) {
+            snprintf(note, sizeof(note), "Mic gives no sound data");
+            mic_stop();
+            return;
+        }
+        if (mic_len >= MIC_RATE * MIC_SECS) {
+            k86_mic_close();
+            if (k86_audio_open(MIC_RATE)) {
+                snprintf(note, sizeof(note), "No sound card");
+                mic_state = 0;
+                return;
+            }
+            k86_audio_flush();
+            mic_gain = mic_peak > 0 ? 16000 * 256 / mic_peak : 256;     /* brought up to a good level */
+            if (mic_gain > 256 * 64)
+                mic_gain = 256 * 64;
+            mic_state = 2;
+            snprintf(note, sizeof(note), "Mic level %d%%: playing back", mic_peak * 100 / 32768);
+        }
+    } else if (mic_state == 2) {
+        int16_t out[512 * 2];
+        for (;;) {
+            int space = k86_audio_space();
+            int left = mic_len - mic_pos;
+            if (left <= 0) {
+                if (space >= k86_audio_buffer() - 64) {
+                    mic_stop();
+                    snprintf(note, sizeof(note), "Mic level %d%%", mic_peak * 100 / 32768);
+                }
+                return;
+            }
+            int n = space < 512 ? space : 512;
+            n = n < left ? n : left;
+            if (n < 256 && left >= 256)
+                return;
+            for (int i = 0; i < n; i++) {
+                int v = mic_buf[mic_pos + i] * mic_gain / 256;
+                v = v > 32767 ? 32767 : v < -32768 ? -32768 : v;
+                out[i * 2] = out[i * 2 + 1] = (int16_t)v;
+            }
+            int w = k86_audio_write(out, n);
+            if (w <= 0)
+                return;
+            mic_pos += w;
+        }
+    }
+}
+
 /* --- drawing ---------------------------------------------------------------------------------- */
 
 static struct gfx_rect bar_rect(void)
@@ -534,6 +636,8 @@ static void layout(void)
     b_play = (struct wg_button){ .r = { 24 + w + gap, y, w, bh }, .label = playing ? "Pause" : "Play",
                                  .style = WG_BUTTON_SUGGESTED };
     b_next = (struct wg_button){ .r = { 24 + 2 * (w + gap), y, w, bh }, .label = "Next" };
+    b_mic = (struct wg_button){ .r = { canvas.w - 24 - 160 - 12 - 160, 20, 160, t->button_size },
+                               .label = mic_state ? "Stop" : "Mic test", .style = WG_BUTTON_FLAT };
     b_refresh = (struct wg_button){ .r = { canvas.w - 24 - 160, 20, 160, t->button_size }, .label = "Refresh",
                                     .style = WG_BUTTON_FLAT };
     int top = 20 + t->button_size + 20;
@@ -615,6 +719,8 @@ static void draw_all(void)
     const struct theme *t = theme_get();
     gfx_fill_rect(&canvas, 0, 0, canvas.w, list.r.y, t->window_bg);
     wg_label(&canvas, 24, 24, "Music", WG_TEXT_HEADING);
+    b_mic.label = mic_state ? "Stop" : "Mic test";
+    wg_button_draw(&canvas, &b_mic);
     wg_button_draw(&canvas, &b_refresh);
     draw_list();
     draw_player();
@@ -635,6 +741,16 @@ static void present_list(void)
 
 static void on_timer(void)
 {
+    if (mic_state) {
+        static char last_note[64];
+        int was = mic_state;
+        mic_tick();
+        if (was != mic_state || strcmp(last_note, note)) {
+            snprintf(last_note, sizeof(last_note), "%s", note);
+            layout();
+            draw_all();
+        }
+    }
     if (wg_list_gliding(&list)) {
         wg_list_tick(&list, k86_uptime_ms());
         draw_list();
@@ -694,6 +810,16 @@ static void on_pointer(const struct k86_event *ev)
             layout();
             draw_all();
             k86_present(0, 0, canvas.w, canvas.h);
+            set_timer();
+            return;
+        }
+        if (wg_button_pointer(&b_mic, &p)) {
+            if (mic_state)
+                mic_stop();
+            else
+                mic_start();
+            layout();
+            draw_all();
             set_timer();
             return;
         }
@@ -773,7 +899,7 @@ int main(void)
             break;
         case K86_EVENT_CLOSE:
             stop_sound();
-            k86_audio_close();
+            mic_stop();
             return 0;
         default:
             break;
