@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define SHADING 230                     /* the brightening at the corners, 8.8 */
 #define SATURATION 282                  /* 8.8: 1.10, on top of the matrix */
@@ -596,9 +597,14 @@ static void *compress_part(void *arg)
     return 0;
 }
 
+/* The encode thread must not talk to the shell (the app has one socket, and its own thread uses it): a
+ * call from here at the same moment as the main thread's would mix the two up, and the app would end
+ * (libk86's broken()). So its clock is Linux's own. */
 static uint32_t ms_now(void)
 {
-    return k86_uptime_ms();
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)((uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u);
 }
 
 static void *encode_thread(void *arg)
@@ -720,6 +726,7 @@ int photo_encode_finish(struct photo_job *j, char *name)
     char dir[K86_PATH_MAX];
     struct k86_time t;
     int err = -1;
+    k86_logf("camera: finishing a photo (zoom %d, err %d, %u bytes)", (uint32_t)j->zoom, (uint32_t)j->err, (uint32_t)j->png_len);
     if (j->started)
         pthread_join(j->th, 0);
     if (!j->err) {
@@ -727,6 +734,7 @@ int photo_encode_finish(struct photo_job *j, char *name)
         int vol = folder(dir);
         if (vol >= 0) {
             k86_write(vol, dir, THUMB_FILE, j->thumb, sizeof(j->thumb));
+            k86_log("camera: the thumbnail is written");
             if (k86_time(&t))
                 memset(&t, 0, sizeof(t));
             snprintf(name, 64, "IMG-%04u%02u%02u-%02u%02u%02u.png", t.year, t.month, t.day, t.hour, t.minute, t.second);

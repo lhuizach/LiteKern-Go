@@ -171,6 +171,7 @@ static void take(const uint8_t *frame)
     k86_logf("camera: the frame took %u ms (%s)", k86_uptime_ms() - job_began, still ? "photo mode" : "live frame");
     if (still) {
         free(live);
+        k86_logf("camera: making a photo from %dx%d, zoom %d", (uint32_t)w, (uint32_t)h, (uint32_t)zoom);
         job = photo_encode_start(still, w, h, rb, red, blue, zoom);
     } else if (live) {
         job = photo_encode_start(live, CAM_W, CAM_H, live_stride, red, blue, zoom);
