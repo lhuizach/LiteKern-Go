@@ -674,6 +674,35 @@ check "the widget is kept across a restart" \
     '^home: 1 widgets$' \
     '!crashed|PANIC'
 
+# Home edit: a widget (Date) selected and made wider by the dot on its left side.
+path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 223 1196; click; add sleep:1.2
+go 117 870; click; add sleep:0.8; go 630 783; click; add sleep:0.8
+go 480 688; click; add sleep:0.5
+go 365 688; add sleep:0.2 press:1 sleep:0.2; go 300 688; add sleep:0.1; go 239 688; add sleep:0.3 release sleep:0.8
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "home edit: a widget is selected and a dot on its frame makes it wider" \
+    '^shell: home widget: Date is 3x1$' \
+    '^shell: home widget: resized Date$' \
+    '!crashed|PANIC'
+run $SHELL_BIN build-linux/test/disk.img "sleep:1"
+check "the widget's size is kept across a restart" \
+    '^home: widget Date 3x1 at cell [0-9]+$' \
+    '!crashed|PANIC'
+
+# The cover screen (a fake failing boot): a long hold on the control centre's flashlight tile starts it; Power,
+# Home and the volume keys then do nothing (no lock, no screen off); a held Power ends it like a restart.
+path; add keydown:phone_home sleep:0.8 keyup:phone_home sleep:1.0; go 105 760; add sleep:0.2 press:1 sleep:1.6 release sleep:1.0
+add keydown:phone_power sleep:0.2 keyup:phone_power keydown:phone_home sleep:0.2 keyup:phone_home keydown:vol_up sleep:0.2 keyup:vol_up sleep:0.6
+add keydown:phone_power sleep:1.6 keyup:phone_power sleep:3.0
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "the cover screen: held flashlight tile starts it, keys do nothing, held Power ends it" \
+    '^shell: cover screen on$' \
+    '^shell: cover screen: restarting$' \
+    '^shell: cover screen off$' \
+    '!^shell: lock' \
+    '!^shell: Home$' \
+    '!crashed|PANIC'
+
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do
     run build-linux/selftest-$t/lkx-shell build-linux/test/disk.img "sleep:0.5"

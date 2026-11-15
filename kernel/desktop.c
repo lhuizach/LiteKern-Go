@@ -17,6 +17,8 @@
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
 #include "kernel/lockscreen.h"
+#include "kernel/panicscreen.h"
+#include "kernel/screensaver.h"
 #include "kernel/machine.h"
 #include "kernel/net.h"
 #include "kernel/settings.h"
@@ -166,6 +168,9 @@ static void draw_toast(void);
 static int edit_zoomed(void);           /* home edit mode: the page is a card (see "home edit mode") */
 static void draw_edit(void);
 static void edit_note_flush(uint32_t ms);
+/* The cover screen (a fake failing boot, from the control centre): over everything, and every key and touch is ignored. */
+static int panic_on;
+static uint32_t panic_restart_until, panic_power_ms, panic_arm_ms, panic_frame_ms;
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
@@ -221,6 +226,14 @@ static void compose(struct gfx_rect r)
     struct gfx_view v = { gfx_sub(S(), r), r.x, r.y };
     struct gfx_view *outer = V;
     V = &v;
+    if (started && panic_on) {          /* nothing else shows: no status bar, no volume, no pop-ups */
+        if (panic_restart_until)
+            panicscreen_draw_restart(VS, v.ox, v.oy);
+        else
+            panicscreen_draw(VS, v.ox, v.oy, uptime_ms());
+        V = outer;
+        return;
+    }
     if (started && qs_shown() && !qs_taken) {
         qs_taken = 1;
         backdrop_take(0);
@@ -358,6 +371,7 @@ static int home_shape, home_icon_px = 112, home_labels = 1, home_pages_n = 1;   
 static void shaped_flush(void);
 static void open_named(const char *name, struct gfx_rect from);
 static struct gfx_rect wg_rect(int w);
+static void draw_wg_handles(void);
 static int ed_app = -1, ed_wg = -1, ed_lift, ed_px, ed_py;
 static int act_x, act_y;               /* where the finger lifted: a tap on a widget's button */
 static uint32_t weather_last;            /* when the Weather widget last looked (0: look now) */
@@ -826,7 +840,7 @@ enum { W_GRID, W_DOCK, W_HIDDEN };
 #define DOCK_MAX 5
 #define CELLS_MAX 64
 static const char *const dock_names[] = { "Files", "Browser", "Gallery", "Settings" };   /* the first layout's dock */
-static struct { char name[LAYOUT_NAME]; int where; int cell; } layout[LAYOUT_MAX];
+static struct { char name[LAYOUT_NAME]; int where; int cell; int size; } layout[LAYOUT_MAX];     /* size: a widget's cw * 10 + ch */
 static int nlayout, layout_seen = -1, layout_dirty = 1;
 static int dock_idx[DOCK_MAX], n_dock, hid_idx[APPS_MAX], n_hid;        /* app numbers */
 static int cell_of[APPS_MAX];           /* an app's cell on the grid, -1: not on it */
@@ -836,11 +850,14 @@ static int off_x[APPS_MAX], off_y[APPS_MAX];    /* an icon sliding to its place:
  * One of each kind. wg_cell is the top left cell it covers (-1: not on the home screen). They are in the
  * layout like apps ("@Date|g5"), and apps keep out of the cells they cover. */
 enum { WG_DATE, WG_BATTERY, WG_CLOCK, WG_MUSIC, WG_WEATHER, WG_COUNT };
-static const struct { const char *name, *app; int cw, ch; } wg_info[WG_COUNT] = {
+static struct { const char *name, *app; int cw, ch; } wg_info[WG_COUNT] = {     /* cw, ch: its size in cells now */
     { "Date", "Clock", 2, 1 }, { "Battery", "Settings", 2, 1 }, { "Clock", "Clock", 2, 2 },
     { "Music", "Music", 4, 1 }, { "Weather", "Weather", 2, 2 },
 };
 static int wg_cell[WG_COUNT] = { -1, -1, -1, -1, -1 };
+/* How big each can be, in cells: least width, most width, least height, most height. */
+static const signed char wg_lim[WG_COUNT][4] = { { 1, 4, 1, 2 }, { 1, 4, 1, 2 }, { 1, 4, 1, 4 }, { 2, 4, 1, 2 }, { 2, 4, 1, 2 } };
+static int wg_sel = -1;                 /* the widget with a frame and dots (edit mode): drag a dot to resize it */
 
 static int wg_by_name(const char *n)            /* "@Date" -> its number */
 {
@@ -903,6 +920,7 @@ static void layout_add(const char *name, int where, int cell)
     layout[nlayout].name[n] = '\0';
     layout[nlayout].where = where;
     layout[nlayout].cell = cell;
+    layout[nlayout].size = 0;
     nlayout++;
 }
 
@@ -948,6 +966,13 @@ static void layout_sync(void)
         wg_cell[w] = -1;
     for (int k = 0; k < nlayout; k++) {                 /* the widgets first: their cells are theirs */
         int w = wg_by_name(layout[k].name);
+        if (w >= 0 && layout[k].size) {
+            int cw = layout[k].size / 10, ch = layout[k].size % 10;
+            if (cw >= wg_lim[w][0] && cw <= wg_lim[w][1] && ch >= wg_lim[w][2] && ch <= wg_lim[w][3]) {
+                wg_info[w].cw = cw;
+                wg_info[w].ch = ch;
+            }
+        }
         if (w >= 0 && layout[k].where == W_GRID && wg_fits(w, layout[k].cell, taken)) {
             wg_cell[w] = layout[k].cell;
             wg_mark(w, taken);
@@ -992,6 +1017,7 @@ static void layout_sync(void)
         if (w >= 0) {
             layout[k].where = wg_cell[w] >= 0 ? W_GRID : W_HIDDEN;
             layout[k].cell = wg_cell[w];
+            layout[k].size = wg_info[w].cw * 10 + wg_info[w].ch;
         }
     }
     layout_dirty = 0;
@@ -1004,6 +1030,9 @@ static void layout_sync(void)
     for (int w = 0; w < WG_COUNT; w++)
         widgets += wg_cell[w] >= 0;
     kprintf("home: %d widgets\n", widgets);
+    for (int w = 0; w < WG_COUNT; w++)
+        if (wg_cell[w] >= 0)
+            kprintf("home: widget %s %dx%d at cell %d\n", wg_info[w].name, wg_info[w].cw, wg_info[w].ch, wg_cell[w]);
 }
 
 /* The dock list, the cells and the hidden list are the layout now (after a move). */
@@ -1023,6 +1052,7 @@ static void layout_rebuild(void)
         nm[0] = '@';
         memcpy(nm + 1, wg_info[w].name, strlen(wg_info[w].name) + 1);
         layout_add(nm, wg_cell[w] >= 0 ? W_GRID : W_HIDDEN, wg_cell[w]);
+        layout[nlayout - 1].size = wg_info[w].cw * 10 + wg_info[w].ch;
     }
     layout_dirty = 1;
 }
@@ -1120,6 +1150,11 @@ int desktop_layout_text(char *out, int max)
                 out[n++] = (char)('0' + layout[k].cell / 10);
             out[n++] = (char)('0' + layout[k].cell % 10);
         }
+        if (layout[k].size) {           /* a widget's size: s, its width, its height */
+            out[n++] = 's';
+            out[n++] = (char)('0' + layout[k].size / 10);
+            out[n++] = (char)('0' + layout[k].size % 10);
+        }
         if (k + 1 < nlayout)
             out[n++] = ';';
     }
@@ -1136,7 +1171,7 @@ void desktop_layout_set(const char *text)
         while (*text && *text != '|' && *text != ';' && n < LAYOUT_NAME - 1)
             name[n++] = *text++;
         name[n] = '\0';
-        int where = W_GRID, cell = -1;
+        int where = W_GRID, cell = -1, size = 0;
         if (*text == '|') {
             text++;
             where = *text == 'd' ? W_DOCK : *text == 'h' ? W_HIDDEN : W_GRID;
@@ -1147,13 +1182,20 @@ void desktop_layout_set(const char *text)
                 while (*text >= '0' && *text <= '9')
                     cell = cell * 10 + (*text++ - '0');
             }
+            if (*text == 's' && text[1] >= '0' && text[1] <= '9' && text[2] >= '0' && text[2] <= '9') {
+                size = (text[1] - '0') * 10 + (text[2] - '0');
+                text += 3;
+            }
             while (*text && *text != ';')
                 text++;
         }
         if (*text == ';')
             text++;
-        if (n)
+        if (n) {
             layout_add(name, where, cell);
+            if (nlayout)
+                layout[nlayout - 1].size = size;
+        }
     }
     layout_dirty = 1;
 }
@@ -1875,6 +1917,11 @@ static void draw_menu(void)
 static void music_button_at(struct gfx_rect wr, int k, int *cx, int *cy)
 {
     struct gfx_rect c = { wr.x + 8, wr.y + 8, wr.w - 16, wr.h - 16 };
+    if (c.w < 500) {                    /* narrower: the title on top, the buttons under it, in the middle */
+        *cx = c.x + c.w / 2 + (k - 2) * 90;
+        *cy = c.y + c.h - 56;
+        return;
+    }
     *cx = c.x + c.w - 56 - (3 - k) * 92;
     *cy = c.y + c.h / 2;
 }
@@ -1908,14 +1955,18 @@ static void draw_widget_app(int w, struct gfx_rect c)
             ai = i;
     int ix = c.x + 24, iy = c.y + (c.h < 200 ? (c.h - 96) / 2 : 24);
     uint32_t dim = gfx_mix(SHELL_FG, 0x1d1d20, 170);
-    if (ai >= 0 && !(w == WG_WEATHER && weather.city[0]))
+    if (ai >= 0 && !(w == WG_WEATHER && weather.city[0]) && !(w == WG_MUSIC && c.w < 500))
         draw_icon(&builtin_apps[ai], (struct gfx_rect){ ix, iy, 96, 96 }, 255);
     if (w == WG_MUSIC) {
         const char *name = music_state && music_title[0] ? music_title : "Music";
-        text_draw_fit(VS, VX(ix + 116), VY(c.y + c.h / 2 - text_height(TEXT_HEADING) + 4), name, c.w - 116 - 24 - 3 * 92 - 24,
-                      TEXT_HEADING, SHELL_FG);
-        text_draw(VS, VX(ix + 116), VY(c.y + c.h / 2 + 8), music_state == 1 ? "Playing" : music_state == 2 ? "Paused" : "Tap to open",
-                  TEXT_BODY, dim);
+        if (c.w < 500) {
+            text_draw_fit(VS, VX(c.x + 24), VY(c.y + 18), name, c.w - 48, TEXT_BOLD, SHELL_FG);
+        } else {
+            text_draw_fit(VS, VX(ix + 116), VY(c.y + c.h / 2 - text_height(TEXT_HEADING) + 4), name,
+                          c.w - 116 - 24 - 3 * 92 - 24, TEXT_HEADING, SHELL_FG);
+            text_draw(VS, VX(ix + 116), VY(c.y + c.h / 2 + 8), music_state == 1 ? "Playing" : music_state == 2 ? "Paused" : "Tap to open",
+                      TEXT_BODY, dim);
+        }
         for (int k = 1; k <= 3; k++) {
             int cx, cy;
             music_button_at((struct gfx_rect){ c.x - 8, c.y - 8, c.w + 16, c.h + 16 }, k, &cx, &cy);
@@ -1938,6 +1989,14 @@ static void draw_widget_app(int w, struct gfx_rect c)
     }
     if (w == WG_WEATHER && weather.city[0]) {
         int cat = wx_category(weather.code), whole = weather.temp >= 0 ? (weather.temp + 5) / 10 : -((-weather.temp + 5) / 10);
+        if (c.h < 240) {                /* one row: the city, then the picture and the temperature side by side */
+            char cn[12];
+            ksnprintf(cn, sizeof(cn), "%d\xb0", whole);
+            text_draw_fit(VS, VX(c.x + 28), VY(c.y + 14), weather.city, c.w - 56, TEXT_BOLD, t->accent_bg);
+            wx_draw(&V->s, c.x + 86 - V->ox, c.y + 104 - V->oy, 44, cat, !weather.day);
+            text_draw(VS, VX(c.x + 160), VY(c.y + 62), cn, TEXT_LARGE, SHELL_FG);
+            return;
+        }
         char num[12], hl[24];
         ksnprintf(num, sizeof(num), "%d\xb0", whole);
         ksnprintf(hl, sizeof(hl), "H %d\xb0  L %d\xb0", (weather.hi + (weather.hi >= 0 ? 5 : -5)) / 10,
@@ -1995,10 +2054,16 @@ static void draw_widget(int w, struct gfx_rect r)
             day[len++] = (char)('0' + n.day / 10);
         day[len++] = (char)('0' + n.day % 10);
         day[len] = '\0';
-        text_draw(VS, VX(c.x + 28), VY(c.y + 16), days[n.weekday % 7], TEXT_BOLD, t->accent_bg);
+        int narrow = c.w < 220;
+        char wd[12];
+        memcpy(wd, days[n.weekday % 7], strlen(days[n.weekday % 7]) + 1);
+        if (narrow)
+            wd[3] = '\0';
+        text_draw(VS, VX(c.x + 28), VY(c.y + 16), wd, TEXT_BOLD, t->accent_bg);
         text_draw(VS, VX(c.x + 28), VY(c.y + 16 + text_height(TEXT_BOLD) - 4), day, TEXT_LARGE, SHELL_FG);
-        text_draw(VS, VX(c.x + 28 + text_width(day, TEXT_LARGE) + 20), VY(c.y + c.h - 24 - text_height(TEXT_BODY)),
-                  months[(n.month + 11) % 12], TEXT_BODY, gfx_mix(SHELL_FG, 0x1d1d20, 200));
+        if (!narrow)
+            text_draw(VS, VX(c.x + 28 + text_width(day, TEXT_LARGE) + 20), VY(c.y + c.h - 24 - text_height(TEXT_BODY)),
+                      months[(n.month + 11) % 12], TEXT_BODY, gfx_mix(SHELL_FG, 0x1d1d20, 200));
     } else if (w == WG_BATTERY) {
         int pct = machine_shown.battery;
         text_draw(VS, VX(c.x + 28), VY(c.y + 16), "Battery", TEXT_BOLD, t->accent_bg);
@@ -2015,7 +2080,7 @@ static void draw_widget(int w, struct gfx_rect r)
             gfx_fill_round_rect(VS, VX(bx), VY(by), bw, 14, 7, 0x3a3a40);
             if (pct > 0)
                 gfx_fill_round_rect(VS, VX(bx), VY(by), bw * pct / 100 < 14 ? 14 : bw * pct / 100, 14, 7, col);
-            if (machine_shown.charging == K86_BATTERY_CHARGING)
+            if (machine_shown.charging == K86_BATTERY_CHARGING && c.w >= 300)
                 text_draw(VS, VX(c.x + c.w - 28 - text_width("Charging", TEXT_SMALL)), VY(c.y + 30), "Charging", TEXT_SMALL,
                           gfx_mix(SHELL_FG, 0x1d1d20, 200));
         }
@@ -2184,7 +2249,7 @@ static uint32_t last_edit_tick;
 static uint32_t *pg_px;                 /* the page at full size, drawn when it changes */
 static int pg_ok;
 
-enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_ICON, D_PAGE, D_WIDGET, D_SLIDER };
+enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_ICON, D_PAGE, D_WIDGET, D_WGSIZE, D_SLIDER };
 static int panel_kind;                  /* 1 Clock, 2 Apps: the sheet that's up, or sliding away */
 
 static int edit_p(void)                 /* how far zoomed out: 0..256 */
@@ -2350,6 +2415,7 @@ static void edit_exit(void)
 {
     if (!edit_on)
         return;
+    wg_sel = -1;
     kprintf("shell: home edit done: %u frames, %u ms each on average, the slowest %u ms\n", ef_frames,
             ef_frames ? ef_total / ef_frames : 0, ef_slowest);
     ef_frames = ef_total = ef_slowest = 0;
@@ -2826,6 +2892,7 @@ static void draw_edit(void)
         draw_badge(bx, by, BADGE_R * z / 256);
     }
     draw_handles();
+    draw_wg_handles();
     if (panel_sp.x < FX(PANEL_H) && p > 8) {
         for (int i = 0; i < 5; i++) {
             struct gfx_rect r = bar_chip(i);
@@ -2914,6 +2981,8 @@ static void edit_open_panel(int kind)   /* 0 closes it */
     edit_moving = 1;
     last_edit_tick = uptime_ms();
     edit_sel = kind == 1;
+    if (kind == 1)
+        wg_sel = -1;
     edit_damage();
 }
 
@@ -2943,6 +3012,48 @@ static void edit_turn(int p)
     turn_to(p, 1);
     edit_sel = 0;
     edit_damage();
+}
+
+/* The eight dots of a widget's frame, on screen: corners and middles of the sides, clockwise from the top left. */
+static void wg_handle_points(int w, int *hx, int *hy)
+{
+    struct gfx_rect r = wg_rect(w);
+    int x0, y0, x1, y1;
+    page_to_screen(r.x + 8, r.y + 8, &x0, &y0);
+    page_to_screen(r.x + r.w - 8, r.y + r.h - 8, &x1, &y1);
+    int xm = (x0 + x1) / 2, ym = (y0 + y1) / 2;
+    const int px[8] = { x0, xm, x1, x1, x1, xm, x0, x0 }, py[8] = { y0, y0, y0, ym, y1, y1, y1, ym };
+    for (int i = 0; i < 8; i++) {
+        hx[i] = px[i];
+        hy[i] = py[i];
+    }
+}
+
+static int wg_handle_at(int w, int x, int y)
+{
+    if (wg_sel != w || wg_cell[w] < 0 || edit_p() < 240)
+        return -1;
+    int hx[8], hy[8];
+    wg_handle_points(w, hx, hy);
+    for (int i = 0; i < 8; i++)
+        if ((x - hx[i]) * (x - hx[i]) + (y - hy[i]) * (y - hy[i]) <= 32 * 32)
+            return i;
+    return -1;
+}
+
+static void draw_wg_handles(void)
+{
+    if (wg_sel < 0 || wg_cell[wg_sel] < 0 || !edit_on || edit_p() < 240)
+        return;
+    const struct theme *t = T();
+    int hx[8], hy[8];
+    wg_handle_points(wg_sel, hx, hy);
+    gfx_rect_outline(VS, VX(hx[0]), VY(hy[0]), hx[4] - hx[0], hy[4] - hy[0], WHITE);
+    gfx_rect_outline(VS, VX(hx[0] + 1), VY(hy[0] + 1), hx[4] - hx[0] - 2, hy[4] - hy[0] - 2, WHITE);
+    for (int i = 0; i < 8; i++) {
+        gfx_fill_circle(VS, VX(hx[i]), VY(hy[i]), HANDLE_R + 3, t->accent_bg);
+        gfx_fill_circle(VS, VX(hx[i]), VY(hy[i]), HANDLE_R, WHITE);
+    }
 }
 
 /* A widget to a cell (its top left): the apps in the cells it covers go to free ones. */
@@ -2987,6 +3098,76 @@ static void wg_place(int w, int cell)
     if (old.w)
         edit_dirty(old);
     edit_dirty(wg_rect(w));
+}
+
+/* A dot dragged: the widget's edge goes to the nearest line between cells (within what it can be), the apps
+ * it covers move to free cells. */
+static void wg_resize_to(int w, int hnd, int px, int py)
+{
+    const struct theme *t = T();
+    int gx0 = (S()->w - HOME_COLS * t->tile_w) / 2;
+    int cell = wg_cell[w], c0 = cell % HOME_COLS, r0 = cell % HOME_PER_PAGE / HOME_COLS;
+    int c1 = c0 + wg_info[w].cw, r1 = r0 + wg_info[w].ch;
+    int ex = px - gx0 + t->tile_w / 2, ey = py - HOME_TOP + t->tile_h / 2;
+    int ec = ex < 0 ? 0 : ex / t->tile_w, er = ey < 0 ? 0 : ey / t->tile_h;
+    ec = ec > HOME_COLS ? HOME_COLS : ec;
+    er = er > HOME_ROWS ? HOME_ROWS : er;
+    int left = hnd == 0 || hnd == 6 || hnd == 7, right = hnd == 2 || hnd == 3 || hnd == 4;
+    int top = hnd == 0 || hnd == 1 || hnd == 2, bottom = hnd == 4 || hnd == 5 || hnd == 6;
+    if (left)
+        c0 = ec < c1 ? ec : c1 - 1;
+    if (right)
+        c1 = ec > c0 ? ec : c0 + 1;
+    if (top)
+        r0 = er < r1 ? er : r1 - 1;
+    if (bottom)
+        r1 = er > r0 ? er : r0 + 1;
+    int minw = wg_lim[w][0], maxw = wg_lim[w][1], minh = wg_lim[w][2], maxh = wg_lim[w][3];
+    if (c1 - c0 < minw) {
+        if (left)
+            c0 = c1 - minw;
+        else
+            c1 = c0 + minw;
+    }
+    if (c1 - c0 > maxw) {
+        if (left)
+            c0 = c1 - maxw;
+        else
+            c1 = c0 + maxw;
+    }
+    if (r1 - r0 < minh) {
+        if (top)
+            r0 = r1 - minh;
+        else
+            r1 = r0 + minh;
+    }
+    if (r1 - r0 > maxh) {
+        if (top)
+            r0 = r1 - maxh;
+        else
+            r1 = r0 + maxh;
+    }
+    if (c0 < 0 || r0 < 0 || c1 > HOME_COLS || r1 > HOME_ROWS)
+        return;
+    int ncell = page * HOME_PER_PAGE + r0 * HOME_COLS + c0, ncw = c1 - c0, nch = r1 - r0;
+    if (ncell == cell && ncw == wg_info[w].cw && nch == wg_info[w].ch)
+        return;
+    struct gfx_rect old = wg_rect(w);
+    int ocw = wg_info[w].cw, och = wg_info[w].ch;
+    wg_info[w].cw = ncw;
+    wg_info[w].ch = nch;
+    uint8_t taken[CELLS_MAX];
+    memset(taken, 0, sizeof(taken));
+    for (int k = 0; k < WG_COUNT; k++)
+        if (k != w && wg_cell[k] >= 0)
+            wg_mark(k, taken);
+    if (!wg_fits(w, ncell, taken)) {                    /* another widget is there: not this size */
+        wg_info[w].cw = ocw;
+        wg_info[w].ch = och;
+        return;
+    }
+    wg_place(w, ncell);
+    edit_dirty((struct gfx_rect){ old.x - 24, old.y - 24, old.w + 48, old.h + 48 });
 }
 
 /* Where a dragged widget with its middle at (cx, cy) would sit: its top left cell on this page. */
@@ -3344,6 +3525,13 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         int hd = handle_at(x, y);
         int px, py;
         screen_to_page(x, y, &px, &py);
+        int on_wg = 0;
+        for (int w = 0; w < WG_COUNT; w++)
+            on_wg |= wg_cell[w] >= 0 && inside(wg_rect(w), px, py);
+        if (wg_sel >= 0 && !on_wg && wg_handle_at(wg_sel, x, y) < 0) {      /* a touch elsewhere: no widget selected */
+            wg_sel = -1;
+            edit_damage();
+        }
         int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
         if (page == 0 && (hd >= 0 || (clk_box_r.w && inside(clk_box_r, px, py))) && h.y < 0) {   /* from here on it's where it is */
             h.y = cy * 1000 / S()->h;
@@ -3373,8 +3561,24 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             wg_saved("removed", wg_badge);
             return 1;
         }
+        if (wg_sel >= 0 && hd < 0) {                            /* a dot of the selected widget's frame */
+            int hh = wg_handle_at(wg_sel, x, y);
+            if (hh >= 0) {
+                ed_wg = wg_sel;
+                ed_app = -1;
+                ed_lift = 0;
+                ed_drag = D_WGSIZE;
+                ed_grab_x = hh;
+                return 1;
+            }
+        }
         if (wg_hit >= 0) {                                      /* held: it may be dragged */
             struct gfx_rect wr = wg_rect(wg_hit);
+            if (wg_sel != wg_hit) {                             /* the first touch selects it: its frame shows */
+                wg_sel = wg_hit;
+                edit_sel = 0;
+                edit_damage();
+            }
             ed_wg = wg_hit;
             ed_app = -1;
             ed_lift = 0;
@@ -3452,6 +3656,8 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
         if (ed_drag >= D_SLIDER) {
             slider_to(ed_drag - D_SLIDER, x);
+        } else if (ed_drag == D_WGSIZE) {
+            wg_resize_to(ed_wg, ed_grab_x, px, py);
         } else if (ed_drag == D_WIDGET) {
             if (!ed_lift && (px - hold_x) * (px - hold_x) + (py - hold_y) * (py - hold_y) > 24 * 24) {
                 ed_lift = 1;            /* picked up */
@@ -3530,6 +3736,13 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         ed_app = -1;
         ed_drag = D_NONE;
         edit_damage();
+        return 1;
+    }
+    if (ed_drag == D_WGSIZE) {          /* let go of a dot: keep the size */
+        kprintf("shell: home widget: %s is %dx%d\n", wg_info[ed_wg].name, wg_info[ed_wg].cw, wg_info[ed_wg].ch);
+        wg_saved("resized", ed_wg);
+        ed_wg = -1;
+        ed_drag = D_NONE;
         return 1;
     }
     if (ed_drag == D_WIDGET) {          /* let go: it settles where it is */
@@ -5350,6 +5563,7 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
             for (int i = 0; i < QS_NTILES; i++)
                 if (inside(qs_tile_rect(i), x, y))
                     qs_held = i;
+            panic_arm_ms = qs_held == T_FLASH ? (uptime_ms() | 1) : 0;     /* held long, it starts the cover screen */
             damage_all();
             for (int k = 0; k < notes_shown(); k++)
                 if (inside(note_rect(k), x, y)) {
@@ -5422,6 +5636,7 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
         }
         qs_finger = QF_NONE;
         qs_held = -1;
+        panic_arm_ms = 0;
         damage_all();
         if (dy < -SWIPE_SLOP) {
             qs_set(qs.x > FX(h) * 2 / 3, 0);
@@ -5460,6 +5675,8 @@ static int qs_pointer(int x, int y, uint8_t buttons, int down)
 
 void desktop_input_scroll(int x, int y, int notches)
 {
+    if (panic_on)
+        return;
     if (started && (menu_open || grid_open || hit_at(x, y).kind != H_NONE))
         return;                 /* the shell's own parts don't scroll */
     wm_input_scroll(x, y, notches);
@@ -5556,6 +5773,10 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
     if (!started) {             /* the self-tests: just the windows */
         wm_input_mouse(x, y, buttons);
         shell_flush();
+        return;
+    }
+    if (panic_on) {             /* the cover screen: touches go nowhere */
+        last_buttons = buttons;
         return;
     }
     int down = (buttons & MOUSE_LEFT) && !(last_buttons & MOUSE_LEFT);
@@ -5865,8 +6086,87 @@ static void fx_tick(void)
     }
 }
 
+/* --- the cover screen -------------------------------------------------------------------------- */
+
+#define PANIC_HOLD_MS 1200              /* Power held this long ends it, like a restart */
+#define PANIC_RESTART_MS 2200           /* the black "Restarting..." before the home screen */
+
+static void panic_start(void)
+{
+    kprintf("shell: cover screen on\n");
+    qs_finger = QF_NONE;
+    qs_held = -1;
+    panic_arm_ms = 0;
+    menu_set(0);
+    set_grid(0);
+    sw_set(0);
+    qs_set(0, 1);
+    if (drw_shown())
+        drw_set(0);
+    panic_on = 1;
+    panic_restart_until = panic_power_ms = 0;
+    panicscreen_start(uptime_ms());
+    damage_all();
+    shell_flush();
+}
+
+static void panic_end(void)
+{
+    kprintf("shell: cover screen off\n");
+    panic_on = 0;
+    panic_restart_until = panic_power_ms = 0;
+    show_desktop();
+    turn_to(0, 0);
+    damage_all();
+    shell_flush();
+}
+
+/* Every key is taken and ignored, but Power: held, it ends the cover like a restart. No lock, no screen off,
+ * no volume pop-up, no Home, Back or Recent apps. */
+static int panic_key(const struct key_event *k)
+{
+    if (k->key == KEY_PHONE_POWER) {
+        if (k->pressed && !panic_power_ms)
+            panic_power_ms = uptime_ms() | 1;
+        else if (!k->pressed)
+            panic_power_ms = 0;
+    }
+    return 1;
+}
+
+static void panic_tick(void)
+{
+    uint32_t now = uptime_ms();
+    if (!panic_on) {
+        if (panic_arm_ms && qs_finger == QF_PANEL && qs_held == T_FLASH && now - panic_arm_ms >= 1000)
+            panic_start();
+        return;
+    }
+    screensaver_input();                /* the screen saver never starts, and the screen stays on */
+    if (panic_restart_until) {
+        if ((int32_t)(now - panic_restart_until) >= 0)
+            panic_end();
+        return;
+    }
+    if (panic_power_ms && now - panic_power_ms >= PANIC_HOLD_MS) {
+        kprintf("shell: cover screen: restarting\n");
+        panic_power_ms = 0;
+        panic_restart_until = (now + PANIC_RESTART_MS) | 1;
+        damage_all();
+        shell_flush();
+        return;
+    }
+    if (now - panic_frame_ms >= 125) {  /* the picture changes a few times a second */
+        panic_frame_ms = now;
+        damage_all();
+        shell_flush();
+    }
+}
+
 static int phone_key(const struct key_event *k)
 {
+    if (panic_on)
+        return panic_key(k);
     if (k->key == KEY_PHONE_HOME) {
         if (k->pressed && !home_down_ms) {
             home_down_ms = uptime_ms() | 1;
@@ -5966,6 +6266,8 @@ static int phone_key(const struct key_event *k)
  * its window shrunk above it. */
 void shell_osk_key(const struct key_event *k)
 {
+    if (panic_on)
+        return;
     if (wm_focused())
         wm_input_key(k);
 }
@@ -6000,6 +6302,8 @@ static void power_tick(void)
 
 int desktop_input_key(const struct key_event *k)
 {
+    if (panic_on && !(k->key & KEY_PHONE))
+        return 1;
     if (k->key & KEY_PHONE)
         return phone_key(k);
     /* Super+L locks, as in GNOME and Windows. */
@@ -6046,6 +6350,7 @@ void desktop_tick(void)
 {
     if (!started)
         return;
+    panic_tick();
     if (open_later >= 0) {
         int i = open_later;
         open_later = -1;
@@ -6115,7 +6420,7 @@ void desktop_tick(void)
 int desktop_busy(void)
 {
     /* A key held: its long press (or repeat) is timed, so no sleeping. */
-    return hold_since || edit_on || edit_moving || dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
+    return panic_on || hold_since || edit_on || edit_moving || dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
            fx_moving || osk_moving();
 }
 

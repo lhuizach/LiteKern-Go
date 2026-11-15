@@ -15,6 +15,8 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "kernel/text.h"
@@ -23,6 +25,7 @@
 #include "sdk/audio.h"
 #include "sdk/kern86.h"
 #include "apps/music/mp3dec.h"
+#include "apps/music/online.h"
 
 #define MAX_TRACKS 128
 #define MUSIC_DIR "/extras/music"
@@ -39,8 +42,20 @@ struct track {
     char name[K86_NAME_MAX];
     uint32_t size;
 };
-static struct track files[MAX_TRACKS];          /* the .wav files, sorted */
+static struct track files[MAX_TRACKS + 1];      /* the last is the song that's streaming (the Online tab) */
+#define STREAM_SLOT MAX_TRACKS
+#define STREAM_FILE "/dev/shm/lkx-music-stream.mp3"          /* the .wav files, sorted */
 static int ntracks;
+static int view;                                /* 0: the files, 1: the Online tab */
+static struct wg_button b_tab_lib, b_tab_online;
+static pid_t dl_pid;                            /* the helper downloading the streaming song, or 0 */
+static int stream_state;                        /* 0 none, 1 getting the first part, 2 playing it */
+static int stream_done, stream_stalled, stream_final;
+static long stall_size;
+static struct online_pick stream_pick;
+static int mp3_starved;                         /* the next part of the streaming song hasn't come yet */
+static int mp3_kbps;
+static void stream_kill(void);
 static struct wg_list list;
 static struct wg_button b_prev, b_play, b_next, b_refresh;
 
@@ -242,8 +257,13 @@ static int mp3_refill(void)
         mp3_in_pos = 0;
     }
     size_t got = fread(mp3_in + mp3_in_len, 1, sizeof(mp3_in) - (size_t)mp3_in_len, fp);
-    if (got == 0)
+    if (got == 0) {
+        if (cur == STREAM_SLOT && !stream_done) {       /* more is on its way */
+            clearerr(fp);
+            return 0;
+        }
         mp3_eof = 1;
+    }
     mp3_in_len += (int)got;
     return (int)got;
 }
@@ -319,6 +339,7 @@ static int parse_mp3(FILE *f, uint32_t size)
     if (mi.hz < 8000 || mi.hz > 48000 || mi.kbps <= 0 || (mi.channels != 1 && mi.channels != 2))
         return -2;
     src_rate = (uint32_t)mi.hz;
+    mp3_kbps = mi.kbps;
     src_channels = mi.channels;
     src_bits = 16;
     nframes = (uint32_t)((uint64_t)mp3_bytes * 8 * src_rate / ((uint64_t)mi.kbps * 1000));
@@ -342,8 +363,11 @@ static void mp3_frame_at(uint32_t i, int *l, int *r)
         fseek(fp, (long)(mp3_start + off), SEEK_SET);
     }
     while (i >= mp3_first + (uint32_t)mp3_count)
-        if (!mp3_next())
+        if (!mp3_next()) {
+            if (cur == STREAM_SLOT && !stream_done)
+                mp3_starved = 1;
             break;
+        }
     if (i < mp3_first || i >= mp3_first + (uint32_t)mp3_count) {
         *l = *r = 0;
         return;
@@ -397,13 +421,24 @@ static int load(int i)
         fp = 0;
     }
     char path[K86_PATH_MAX + K86_NAME_MAX + 8];
-    snprintf(path, sizeof(path), "%s/%s", folder, files[i].name);
+    if (i == STREAM_SLOT)
+        snprintf(path, sizeof(path), "%s", STREAM_FILE);
+    else
+        snprintf(path, sizeof(path), "%s/%s", folder, files[i].name);
     fp = fopen(path, "rb");
     is_mp3 = 0;
     size_t fl = strlen(files[i].name);
     int bad = !fp;
-    if (!bad)
+    if (!bad && i == STREAM_SLOT) {             /* a song that's still coming: its length is what Audius said */
+        struct stat sb;
+        bad = fstat(fileno(fp), &sb) || parse_mp3(fp, (uint32_t)sb.st_size);
+        if (!bad) {
+            nframes = (uint32_t)((uint64_t)stream_pick.dur * src_rate);
+            mp3_bytes = (uint32_t)((uint64_t)stream_pick.dur * (uint32_t)mp3_kbps * 125);
+        }
+    } else if (!bad) {
         bad = !strcasecmp(files[i].name + fl - 4, ".mp3") ? parse_mp3(fp, files[i].size) : parse_wav(fp, files[i].size);
+    }
     if (bad) {
         if (fp) {
             fclose(fp);
@@ -453,13 +488,18 @@ static void set_timer(void)
 {
     publish();
     /* Idle it still wakes now and then, to take a command from the widget. */
-    k86_timer_set(playing || mic_state ? 40 : wg_list_gliding(&list) ? 16 : 300);
+    int ms = playing || mic_state ? 40 : wg_list_gliding(&list) ? 16 : (stream_state == 1 || stream_stalled || (view == 1 && online_busy())) ? 100 : 300;
+    k86_timer_set((uint32_t)ms);
 }
 
 static void start(int i)
 {
-    if (i < 0 || i >= ntracks)
+    if (i < 0 || (i >= ntracks && i != STREAM_SLOT))
         return;
+    if (i != STREAM_SLOT) {             /* a file: no streaming song any more */
+        stream_kill();
+        stream_state = 0;
+    }
     if (load(i)) {
         set_timer();
         return;
@@ -470,7 +510,8 @@ static void start(int i)
     }
     k86_audio_flush();
     playing = 1;
-    wg_list_select(&list, i);
+    if (i != STREAM_SLOT)
+        wg_list_select(&list, i);
     k86_logf("music: playing %s (%u Hz, %d ch, %d bit)", files[i].name, (unsigned)src_rate, src_channels, src_bits);
     set_timer();
 }
@@ -494,8 +535,21 @@ static void pause_play(void)
     set_timer();
 }
 
+static void stream_begin(const struct online_pick *pk);
+
 static void go_next(int dir)
 {
+    if (cur == STREAM_SLOT) {           /* the song before or after in the Online results */
+        struct online_pick pk;
+        if (online_neighbour(stream_pick.id, dir, &pk)) {
+            stream_begin(&pk);
+        } else {
+            playing = 0;
+            pos = 0;
+            stop_sound();
+        }
+        return;
+    }
     if (!ntracks)
         return;
     int i = cur < 0 ? 0 : (cur + dir + ntracks) % ntracks;
@@ -517,6 +571,7 @@ static void seek_to(int x, int x0, int w)
 static int feed(void)
 {
     int16_t buf[CHUNK * 2];
+    mp3_starved = 0;
     for (;;) {
         int space = k86_audio_space();
         if (space < 256)
@@ -533,6 +588,8 @@ static int feed(void)
             int l0, r0, l1, r1;
             frame_at(i, &l0, &r0);
             frame_at(i + 1 < nframes ? i + 1 : i, &l1, &r1);
+            if (mp3_starved)
+                break;                          /* the song hasn't come this far: wait for it */
             int frac = (int)((pos >> 16) & 0xffff);
             buf[made * 2] = (int16_t)(l0 + (int)(((int64_t)(l1 - l0) * frac) >> 16));
             buf[made * 2 + 1] = (int16_t)(r0 + (int)(((int64_t)(r1 - r0) * frac) >> 16));
@@ -546,6 +603,8 @@ static int feed(void)
             pos -= (uint64_t)(made - w) * step;
             return 0;
         }
+        if (mp3_starved)
+            return 0;
     }
 }
 
@@ -677,12 +736,17 @@ static void layout(void)
     b_play = (struct wg_button){ .r = { 24 + w + gap, y, w, bh }, .label = playing ? "Pause" : "Play",
                                  .style = WG_BUTTON_SUGGESTED };
     b_next = (struct wg_button){ .r = { 24 + 2 * (w + gap), y, w, bh }, .label = "Next" };
-    b_mic = (struct wg_button){ .r = { canvas.w - 24 - 160 - 12 - 160, 20, 160, t->button_size },
+    b_mic = (struct wg_button){ .r = { canvas.w - 24 - 140 - 12 - 140, 20, 140, t->button_size },
                                .label = mic_state ? "Stop" : "Mic test", .style = WG_BUTTON_FLAT };
-    b_refresh = (struct wg_button){ .r = { canvas.w - 24 - 160, 20, 160, t->button_size }, .label = "Refresh",
+    b_refresh = (struct wg_button){ .r = { canvas.w - 24 - 140, 20, 140, t->button_size }, .label = "Refresh",
                                     .style = WG_BUTTON_FLAT };
+    b_tab_lib = (struct wg_button){ .r = { 24, 20, 150, t->button_size }, .label = "Library",
+                                    .style = view == 0 ? WG_BUTTON_SUGGESTED : WG_BUTTON_FLAT };
+    b_tab_online = (struct wg_button){ .r = { 24 + 150 + 12, 20, 150, t->button_size }, .label = "Online",
+                                       .style = view == 1 ? WG_BUTTON_SUGGESTED : WG_BUTTON_FLAT };
     int top = 20 + t->button_size + 20;
     list.r = (struct gfx_rect){ 24, top, canvas.w - 48, canvas.h - PLAYER_H - top - 8 };
+    online_layout(top, canvas.h - PLAYER_H - 8);
 }
 
 static void fmt_time(char *out, int max, uint32_t sec)
@@ -746,7 +810,9 @@ static void draw_list(void)
     const struct theme *t = theme_get();
     int top = list.r.y;
     gfx_fill_rect(&canvas, 0, top, canvas.w, canvas.h - PLAYER_H - top, t->window_bg);
-    if (ntracks) {
+    if (view == 1) {
+        online_draw();
+    } else if (ntracks) {
         wg_list_draw(&canvas, &list);
     } else {
         wg_label_centred(&canvas, canvas.w / 2, top + 80, "No music yet", WG_TEXT_TITLE);
@@ -759,10 +825,13 @@ static void draw_all(void)
 {
     const struct theme *t = theme_get();
     gfx_fill_rect(&canvas, 0, 0, canvas.w, list.r.y, t->window_bg);
-    wg_label(&canvas, 24, 24, "Music", WG_TEXT_HEADING);
-    b_mic.label = mic_state ? "Stop" : "Mic test";
-    wg_button_draw(&canvas, &b_mic);
-    wg_button_draw(&canvas, &b_refresh);
+    wg_button_draw(&canvas, &b_tab_lib);
+    wg_button_draw(&canvas, &b_tab_online);
+    if (view == 0) {
+        b_mic.label = mic_state ? "Stop" : "Mic test";
+        wg_button_draw(&canvas, &b_mic);
+        wg_button_draw(&canvas, &b_refresh);
+    }
     draw_list();
     draw_player();
     k86_present(0, 0, canvas.w, canvas.h);
@@ -811,10 +880,91 @@ static int poll_commands(void)
     return 1;
 }
 
+/* --- the Online tab's song: downloaded into a file as it plays ---------------------------------------- */
+
+static void stream_kill(void)
+{
+    if (dl_pid > 0) {
+        kill(dl_pid, SIGKILL);
+        waitpid(dl_pid, 0, 0);
+        dl_pid = 0;
+    }
+}
+
+static void stream_begin(const struct online_pick *pk)
+{
+    stop_sound();
+    if (fp) {
+        fclose(fp);
+        fp = 0;
+    }
+    stream_kill();
+    unlink(STREAM_FILE);
+    stream_pick = *pk;
+    snprintf(files[STREAM_SLOT].name, sizeof(files[STREAM_SLOT].name), "%.34s - %.20s.mp3", pk->title, pk->artist);
+    files[STREAM_SLOT].size = 0;
+    dl_pid = online_download(pk->id, STREAM_FILE);
+    stream_done = stream_stalled = stream_final = 0;
+    playing = draining = 0;
+    pos = 0;
+    nframes = 0;
+    src_rate = 0;
+    cur = dl_pid > 0 ? STREAM_SLOT : -1;
+    stream_state = dl_pid > 0 ? 1 : 0;
+    snprintf(note, sizeof(note), dl_pid > 0 ? "Loading..." : "Can't start the download");
+    shown_sec = ~0u;
+    set_timer();
+}
+
+/* Called often: the download ending, the first part arriving, a stall ending. 1 if the screen changed. */
+static int stream_tick(void)
+{
+    int changed = 0;
+    if (dl_pid > 0) {
+        int st = 0;
+        if (waitpid(dl_pid, &st, WNOHANG) == dl_pid) {
+            dl_pid = 0;
+            stream_done = 1;
+            if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0) && stream_state == 1) {
+                snprintf(note, sizeof(note), "Can't load this song");
+                stream_state = 0;
+                cur = -1;
+                changed = 1;
+            }
+        }
+    }
+    struct stat sb;
+    int have = !stat(STREAM_FILE, &sb);
+    if (stream_state == 1 && cur == STREAM_SLOT && have && sb.st_size >= 49152) {
+        stream_state = 2;
+        start(STREAM_SLOT);
+        changed = 1;
+    }
+    if (stream_state == 2 && stream_done && !stream_final && cur == STREAM_SLOT && have && is_mp3 && mp3_kbps > 0) {
+        stream_final = 1;               /* all of it is here: the real length, from its size */
+        mp3_bytes = (uint32_t)sb.st_size > mp3_start ? (uint32_t)sb.st_size - mp3_start : 1;
+        nframes = (uint32_t)((uint64_t)mp3_bytes * 8 * src_rate / ((uint64_t)mp3_kbps * 1000));
+    }
+    if (stream_state == 2 && stream_stalled && have && (stream_done || sb.st_size > stall_size + 32768)) {
+        if (!k86_audio_open(OUT_RATE)) {        /* enough has come: on again */
+            k86_audio_flush();
+            stream_stalled = 0;
+            playing = 1;
+            note[0] = '\0';
+            changed = 1;
+        }
+    }
+    return changed;
+}
+
 static void on_timer(void)
 {
     if (poll_commands())
         return;
+    if (stream_tick() || (view == 1 && online_tick())) {
+        layout();
+        draw_all();
+    }
     if (mic_state) {
         static char last_note[64];
         int was = mic_state;
@@ -834,9 +984,22 @@ static void on_timer(void)
         if (!draining && feed()) {
             draining = 1;                       /* all of it is in the ring: wait for it to play */
         }
+        if (mp3_starved && !stream_stalled && k86_audio_buffer() - k86_audio_space() < 2048) {
+            struct stat sb;                     /* the song hasn't come as far as this and the sound ran out: stop, and wait */
+            stall_size = !stat(STREAM_FILE, &sb) ? (long)sb.st_size : 0;
+            k86_audio_close();
+            playing = 0;
+            stream_stalled = 1;
+            snprintf(note, sizeof(note), "Buffering...");
+            layout();
+            draw_player();
+            present_player();
+            set_timer();
+            return;
+        }
         if (draining && k86_audio_space() >= k86_audio_buffer() - 64) {
             draining = 0;
-            if (ntracks > 1) {
+            if (cur == STREAM_SLOT || ntracks > 1) {
                 go_next(1);
             } else {
                 playing = 0;
@@ -879,7 +1042,26 @@ static void on_pointer(const struct k86_event *ev)
         }
         redraw_player = 1;
     } else {
-        if (wg_button_pointer(&b_refresh, &p)) {
+        if (wg_button_pointer(&b_tab_lib, &p)) {
+            if (view != 0) {
+                view = 0;
+                k86_keyboard_wanted(0);
+                layout();
+                draw_all();
+            }
+            set_timer();
+            return;
+        }
+        if (wg_button_pointer(&b_tab_online, &p)) {
+            if (view != 1) {
+                view = 1;
+                layout();
+                draw_all();
+            }
+            set_timer();
+            return;
+        }
+        if (view == 0 && wg_button_pointer(&b_refresh, &p)) {
             scan();
             layout();
             draw_all();
@@ -887,7 +1069,7 @@ static void on_pointer(const struct k86_event *ev)
             set_timer();
             return;
         }
-        if (wg_button_pointer(&b_mic, &p)) {
+        if (view == 0 && wg_button_pointer(&b_mic, &p)) {
             if (mic_state)
                 mic_stop();
             else
@@ -910,7 +1092,15 @@ static void on_pointer(const struct k86_event *ev)
             go_next(1);
             redraw_player = redraw_list = 1;
         }
-        if (ntracks) {
+        if (view == 1) {
+            if (online_pointer(&p))
+                redraw_list = 1;
+            struct online_pick pk;
+            if (online_take_pick(&pk)) {
+                stream_begin(&pk);
+                redraw_player = redraw_list = 1;
+            }
+        } else if (ntracks) {
             enum wg_list_result r = wg_list_pointer(&list, &p);
             if (r == WG_LIST_ACTIVATE && list.selected >= 0) {
                 start(list.selected);
@@ -933,12 +1123,16 @@ static void on_pointer(const struct k86_event *ev)
     set_timer();
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    int helper = online_helper_main(argc, argv);
+    if (helper >= 0)
+        return helper;                  /* `music --api ...` / `music --dl ...`: no window */
     if (k86_window_open(&win))
         return 1;
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
     list = (struct wg_list){ .selected = -1, .hover = -1, .row = row, .last_click_row = -1 };
+    online_init(&canvas);
     layout();
     scan();
     layout();
@@ -947,17 +1141,24 @@ int main(void)
     set_timer();                        /* publishes the state, and wakes now and then for the widget */
     for (;;) {
         struct k86_event ev;
+        k86_keyboard_wanted(view == 1 && online_wants_keyboard());
         if (k86_wait_event(&ev))
             return 1;
         switch (ev.type) {
         case K86_EVENT_POINTER:
             on_pointer(&ev);
             break;
+        case K86_EVENT_KEY:
+            if (view == 1 && online_key(&ev.key)) {
+                draw_list();
+                present_list();
+            }
+            break;
         case K86_EVENT_TIMER:
             on_timer();
             break;
         case K86_EVENT_SCROLL:
-            if (ntracks && wg_list_scroll(&list, ev.x, ev.y, ev.id)) {
+            if (view == 1 ? online_scroll(ev.x, ev.y, ev.id) : ntracks && wg_list_scroll(&list, ev.x, ev.y, ev.id)) {
                 draw_list();
                 present_list();
             }
@@ -975,6 +1176,8 @@ int main(void)
         case K86_EVENT_CLOSE:
             stop_sound();
             mic_stop();
+            stream_kill();
+            unlink(STREAM_FILE);
             unlink(STATE_FILE);
             return 0;
         default:
