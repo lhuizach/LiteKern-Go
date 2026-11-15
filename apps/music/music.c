@@ -530,7 +530,15 @@ static int mic_len, mic_pos, mic_peak, mic_gain;
 static uint32_t mic_t0;
 static struct wg_button b_mic;
 
+static void mic_stop_now(void);
+
 static void mic_stop(void)
+{
+    k86_logf("music: mic test: stop (state %d)", mic_state);
+    mic_stop_now();
+}
+
+static void mic_stop_now(void)
 {
     k86_mic_close();
     k86_audio_close();
@@ -552,6 +560,7 @@ static void mic_start(void)
     mic_len = mic_pos = mic_peak = 0;
     mic_t0 = k86_uptime_ms();
     mic_state = 1;
+    k86_log("music: mic test: recording");
     snprintf(note, sizeof(note), "Recording... speak");
 }
 
@@ -589,6 +598,7 @@ static void mic_tick(void)
             if (mic_gain > 256 * 64)
                 mic_gain = 256 * 64;
             mic_state = 2;
+            k86_logf("music: mic test: recorded %d frames, peak %d, gain %d; playing back", mic_len, mic_peak, mic_gain);
             snprintf(note, sizeof(note), "Mic level %d%%: playing back", mic_peak * 100 / 32768);
         }
     } else if (mic_state == 2) {
@@ -613,6 +623,8 @@ static void mic_tick(void)
                 out[i * 2] = out[i * 2 + 1] = (int16_t)v;
             }
             int w = k86_audio_write(out, n);
+            if (w <= 0)
+                k86_logf("music: mic test: write gave %d (space %d, at %d of %d)", w, space, mic_pos, mic_len);
             if (w <= 0)
                 return;
             mic_pos += w;

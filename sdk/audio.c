@@ -335,7 +335,7 @@ void k86_audio_beep(int hz1, int ms1, int hz2, int ms2)
 /* ---- The microphone (the phone's own mic, "Tertiary MI2S" capture, device 1) ---- */
 #define MIC_DEV 1
 
-static int mic = -1, mic_ch;
+static int mic = -1, mic_ch, mic_skip;       /* mic_skip: frames still to throw away (the start-up pop) */
 
 int k86_mic_open(int rate)
 {
@@ -344,7 +344,7 @@ int k86_mic_open(int rate)
     if (ctl < 0)
         ctl_open();
     if (ctl >= 0) {                             /* the codec's analog mic path */
-        ctl_set("CIC1 MUX", 1);                 /* AMIC */
+        ctl_set("CIC1 MUX", 0);                 /* AMIC (item 0; 1 is DMIC) */
         ctl_set("DEC1 MUX", 1);                 /* ADC1 */
         ctl_set("ADC1 Volume", 6);
         ctl_set("TX1 Digital Volume", 84);
@@ -396,6 +396,7 @@ int k86_mic_open(int rate)
         mic = fd;
         mic_ch = ch;
         ioctl(mic, SNDRV_PCM_IOCTL_START);
+        mic_skip = rate / 5;                    /* the first 200 ms is a loud pop, not sound */
         return 0;
     }
     close(fd);
@@ -420,6 +421,10 @@ int k86_mic_read(int16_t *frames, int count)
             if (errno == EAGAIN || errno == EINTR)
                 break;
             return done ? done : -errno;
+        }
+        if (mic_skip > 0) {                     /* drop the start-up pop */
+            mic_skip -= (int)x.result;
+            continue;
         }
         for (int i = 0; i < (int)x.result; i++)
             frames[done + i] = tmp[i * mic_ch];     /* the first channel */
