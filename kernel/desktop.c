@@ -164,6 +164,7 @@ static int volume;
 static void draw_toast(void);
 static int edit_zoomed(void);           /* home edit mode: the page is a card (see "home edit mode") */
 static void draw_edit(void);
+static void edit_note_flush(uint32_t ms);
 /* The overlays' fades (fx_tick): 0 gone .. 255 all there. */
 static int sw_alpha, menu_alpha, vol_alpha, toast_alpha;
 
@@ -286,6 +287,8 @@ void shell_flush(void)
     }
     screen_present();
     flushing = 0;
+    if (drew)
+        edit_note_flush(uptime_ms() - t0);
     /* How a drag (or resize) went, for measuring on the EeePC: logged when
      * it ends. */
     static uint32_t drag_redraws, drag_slowest;
@@ -803,16 +806,19 @@ static int home_shown(void)
 }
 
 /* --- where the apps are on the home screen --------------------------------------------------------
- * Each app is in the dock, on the grid (in order, four to a row) or off the home screen (still in the
- * app drawer, and Apps in home edit mode puts it back). Kept by name in settings.txt. */
+ * Each app is in the dock, in a cell of the grid (any cell, empty ones too: four to a row, sixteen a
+ * page), or off the home screen (still in the app drawer, and Apps in home edit mode puts it back).
+ * Kept by name in settings.txt. */
 enum { W_GRID, W_DOCK, W_HIDDEN };
 #define LAYOUT_MAX 32
 #define LAYOUT_NAME 24
 #define DOCK_MAX 5
+#define CELLS_MAX 64
 static const char *const dock_names[] = { "Files", "Browser", "Gallery", "Settings" };   /* the first layout's dock */
-static struct { char name[LAYOUT_NAME]; int where; } layout[LAYOUT_MAX];
+static struct { char name[LAYOUT_NAME]; int where; int cell; } layout[LAYOUT_MAX];
 static int nlayout, layout_seen = -1, layout_dirty = 1;
-static int dock_idx[DOCK_MAX], n_dock, grid_idx[APPS_MAX], n_grid, hid_idx[APPS_MAX], n_hid;    /* app numbers */
+static int dock_idx[DOCK_MAX], n_dock, hid_idx[APPS_MAX], n_hid;        /* app numbers */
+static int cell_of[APPS_MAX];           /* an app's cell on the grid, -1: not on it */
 static int off_x[APPS_MAX], off_y[APPS_MAX];    /* an icon sliding to its place: where it is from there, 1/256 px */
 
 static int app_by_name(const char *n)
@@ -823,7 +829,7 @@ static int app_by_name(const char *n)
     return -1;
 }
 
-static void layout_add(const char *name, int where)
+static void layout_add(const char *name, int where, int cell)
 {
     if (nlayout >= LAYOUT_MAX)
         return;
@@ -832,6 +838,7 @@ static void layout_add(const char *name, int where)
         layout[nlayout].name[n] = name[n];
     layout[nlayout].name[n] = '\0';
     layout[nlayout].where = where;
+    layout[nlayout].cell = cell;
     nlayout++;
 }
 
@@ -840,14 +847,22 @@ static void layout_default(void)
     nlayout = 0;
     for (unsigned k = 0; k < sizeof(dock_names) / sizeof(dock_names[0]); k++)
         if (app_by_name(dock_names[k]) >= 0)
-            layout_add(dock_names[k], W_DOCK);
+            layout_add(dock_names[k], W_DOCK, -1);
     for (int i = 0; i < builtin_app_count; i++) {
         int in = 0;
         for (int k = 0; k < nlayout; k++)
             in |= !strcmp(layout[k].name, builtin_apps[i].name);
         if (!in)
-            layout_add(builtin_apps[i].name, W_GRID);
+            layout_add(builtin_apps[i].name, W_GRID, -1);      /* the first free cell, in order */
     }
+}
+
+static int first_free_cell(const uint8_t *taken)
+{
+    for (int c = 0; c < CELLS_MAX; c++)
+        if (!taken[c])
+            return c;
+    return CELLS_MAX - 1;
 }
 
 static void layout_sync(void)
@@ -861,35 +876,64 @@ static void layout_sync(void)
         for (int k = 0; k < nlayout; k++)
             in |= !strcmp(layout[k].name, builtin_apps[i].name);
         if (!in)
-            layout_add(builtin_apps[i].name, W_GRID);
+            layout_add(builtin_apps[i].name, W_GRID, -1);
     }
-    n_dock = n_grid = n_hid = 0;
+    uint8_t taken[CELLS_MAX];
+    memset(taken, 0, sizeof(taken));
+    n_dock = n_hid = 0;
+    for (int i = 0; i < APPS_MAX; i++)
+        cell_of[i] = -1;
+    int pending[LAYOUT_MAX], npending = 0;
     for (int k = 0; k < nlayout; k++) {
         int i = app_by_name(layout[k].name);
         if (i < 0)
             continue;
-        if (layout[k].where == W_DOCK && n_dock < DOCK_MAX)
+        if (layout[k].where == W_DOCK && n_dock < DOCK_MAX) {
             dock_idx[n_dock++] = i;
-        else if (layout[k].where == W_HIDDEN)
+        } else if (layout[k].where == W_HIDDEN) {
             hid_idx[n_hid++] = i;
-        else
-            grid_idx[n_grid++] = i;
+        } else {                                        /* the grid (or a dock that's full) */
+            int c = layout[k].where == W_GRID ? layout[k].cell : -1;
+            if (c >= 0 && c < CELLS_MAX && !taken[c]) {
+                cell_of[i] = c;
+                taken[c] = 1;
+            } else {
+                pending[npending++] = k;
+            }
+        }
+    }
+    for (int j = 0; j < npending; j++) {                /* no cell yet, or its cell's taken: the first free one */
+        int i = app_by_name(layout[pending[j]].name), c = first_free_cell(taken);
+        cell_of[i] = c;
+        taken[c] = 1;
+    }
+    for (int k = 0; k < nlayout; k++) {                 /* the layout says where everything is now */
+        int i = app_by_name(layout[k].name);
+        if (i >= 0 && cell_of[i] >= 0) {
+            layout[k].where = W_GRID;
+            layout[k].cell = cell_of[i];
+        }
     }
     layout_dirty = 0;
     layout_seen = builtin_app_count;
-    kprintf("home: %d on the grid, %d in the dock, %d off the home screen\n", n_grid, n_dock, n_hid);
+    int on_grid = 0;
+    for (int i = 0; i < APPS_MAX; i++)
+        on_grid += cell_of[i] >= 0;
+    kprintf("home: %d on the grid, %d in the dock, %d off the home screen\n", on_grid, n_dock, n_hid);
 }
 
-/* The three lists are the layout now (after a move). */
-static void layout_from_lists(void)
+/* The dock list, the cells and the hidden list are the layout now (after a move). */
+static void layout_rebuild(void)
 {
     nlayout = 0;
     for (int k = 0; k < n_dock; k++)
-        layout_add(builtin_apps[dock_idx[k]].name, W_DOCK);
-    for (int k = 0; k < n_grid; k++)
-        layout_add(builtin_apps[grid_idx[k]].name, W_GRID);
+        layout_add(builtin_apps[dock_idx[k]].name, W_DOCK, -1);
+    for (int c = 0; c < CELLS_MAX; c++)
+        for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)
+            if (cell_of[i] == c)
+                layout_add(builtin_apps[i].name, W_GRID, c);
     for (int k = 0; k < n_hid; k++)
-        layout_add(builtin_apps[hid_idx[k]].name, W_HIDDEN);
+        layout_add(builtin_apps[hid_idx[k]].name, W_HIDDEN, -1);
     layout_dirty = 1;
 }
 
@@ -908,13 +952,10 @@ static int dock_count(void)
     return n_dock;
 }
 
-static int grid_index(int i)    /* app i's place among the grid's icons, or -1 */
+static int grid_index(int i)    /* app i's cell on the grid, or -1 */
 {
     layout_sync();
-    for (int k = 0; k < n_grid; k++)
-        if (grid_idx[k] == i)
-            return k;
-    return -1;
+    return i >= 0 && i < APPS_MAX ? cell_of[i] : -1;
 }
 
 static int home_has(int i)      /* on the home screen at all */
@@ -925,21 +966,29 @@ static int home_has(int i)      /* on the home screen at all */
 static int home_pages(void)
 {
     layout_sync();
-    return n_grid > 0 ? (n_grid + HOME_PER_PAGE - 1) / HOME_PER_PAGE : 1;
+    int top = 0;
+    for (int i = 0; i < APPS_MAX; i++)
+        top = cell_of[i] > top ? cell_of[i] : top;
+    return top / HOME_PER_PAGE + 1;
 }
 
-/* Text for settings.txt: "Files|d;Clock|g;Log|h" */
+/* Text for settings.txt: "Files|d;Clock|g3;Log|h" (d dock, g and its cell, h hidden). */
 int desktop_layout_text(char *out, int max)
 {
     layout_sync();
     int n = 0;
     for (int k = 0; k < nlayout; k++) {
-        for (const char *q = layout[k].name; *q && n < max - 4; q++)
+        for (const char *q = layout[k].name; *q && n < max - 8; q++)
             out[n++] = *q == '|' || *q == ';' ? ' ' : *q;
-        if (n >= max - 4)
+        if (n >= max - 8)
             break;
         out[n++] = '|';
         out[n++] = layout[k].where == W_DOCK ? 'd' : layout[k].where == W_HIDDEN ? 'h' : 'g';
+        if (layout[k].where == W_GRID && layout[k].cell >= 0) {
+            if (layout[k].cell >= 10)
+                out[n++] = (char)('0' + layout[k].cell / 10);
+            out[n++] = (char)('0' + layout[k].cell % 10);
+        }
         if (k + 1 < nlayout)
             out[n++] = ';';
     }
@@ -956,17 +1005,24 @@ void desktop_layout_set(const char *text)
         while (*text && *text != '|' && *text != ';' && n < LAYOUT_NAME - 1)
             name[n++] = *text++;
         name[n] = '\0';
-        int where = W_GRID;
+        int where = W_GRID, cell = -1;
         if (*text == '|') {
             text++;
             where = *text == 'd' ? W_DOCK : *text == 'h' ? W_HIDDEN : W_GRID;
+            if (*text)
+                text++;
+            if (where == W_GRID && *text >= '0' && *text <= '9') {
+                cell = 0;
+                while (*text >= '0' && *text <= '9')
+                    cell = cell * 10 + (*text++ - '0');
+            }
             while (*text && *text != ';')
                 text++;
         }
         if (*text == ';')
             text++;
         if (n)
-            layout_add(name, where);
+            layout_add(name, where, cell);
     }
     layout_dirty = 1;
 }
@@ -1704,6 +1760,16 @@ static int edit_dyn(void)               /* something is moving on the page: the 
 
 static int cc_dyn;                      /* the card's picture was made for dyn / not */
 
+static uint32_t ef_frames, ef_total, ef_slowest;
+static void edit_note_flush(uint32_t ms)        /* how fast the edit mode's frames are: logged when it ends */
+{
+    if (!edit_on)
+        return;
+    ef_frames++;
+    ef_total += ms;
+    ef_slowest = ms > ef_slowest ? ms : ef_slowest;
+}
+
 static int edit_zoomed(void)
 {
     return started && home_shown() && edit_p() > 0;
@@ -1745,10 +1811,18 @@ static void edit_damage(void)           /* the card's picture changes */
     damage_all();
 }
 
-static void edit_frame(void)            /* only the wiggle moves */
+static void edit_frame(void)            /* only the wiggle moves: each icon's own box, so little has to be drawn and sent */
 {
-    struct gfx_rect c = edit_card();
-    shell_damage(c);
+    layout_sync();
+    for (int i = 0; i < builtin_app_count; i++) {
+        if (!home_has(i))
+            continue;
+        struct gfx_rect ir = tile_icon_rect(i);
+        int x0, y0, x1, y1;
+        page_to_screen(ir.x - 16, ir.y - 16, &x0, &y0);
+        page_to_screen(ir.x + ir.w + 16, ir.y + ir.h + 16, &x1, &y1);
+        shell_damage((struct gfx_rect){ x0, y0, x1 - x0, y1 - y0 });
+    }
 }
 
 static void edit_enter(void)
@@ -1778,7 +1852,9 @@ static void edit_exit(void)
 {
     if (!edit_on)
         return;
-    kprintf("shell: home edit done\n");
+    kprintf("shell: home edit done: %u frames, %u ms each on average, the slowest %u ms\n", ef_frames,
+            ef_frames ? ef_total / ef_frames : 0, ef_slowest);
+    ef_frames = ef_total = ef_slowest = 0;
     edit_on = 0;
     edit_panel = 0;
     edit_sel = 0;
@@ -2112,33 +2188,57 @@ static void edit_open_panel(int kind)   /* 0 closes it */
     edit_damage();
 }
 
-/* Moves app a to the list `where`, at place idx, and lets the other icons slide to their new places. */
+/* Moves app a to the dock (at place idx), to a cell of the grid (idx; 1000: the first free one) or off the
+ * home screen. An app already in that cell takes the one a left, and the icons slide to their places. */
 static void layout_place(int a, int where, int idx)
 {
     layout_sync();
     struct gfx_rect before[APPS_MAX];
     for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)
         before[i] = tile_rect(i);
-    int *lists[3] = { grid_idx, dock_idx, hid_idx };
-    int *counts[3] = { &n_grid, &n_dock, &n_hid };
-    for (int w = 0; w < 3; w++) {                       /* out of wherever it was */
-        int *n = counts[w], k = 0;
-        for (int j = 0; j < *n; j++)
-            if (lists[w][j] != a)
-                lists[w][k++] = lists[w][j];
-        *n = k;
-    }
-    int *n = counts[where];
-    if (where == W_DOCK && *n >= DOCK_MAX) {
+    int old_cell = cell_of[a];
+    int keep = 0;
+    for (int k = 0; k < n_dock; k++)                    /* out of the dock and the hidden list */
+        if (dock_idx[k] != a)
+            dock_idx[keep++] = dock_idx[k];
+    n_dock = keep;
+    keep = 0;
+    for (int k = 0; k < n_hid; k++)
+        if (hid_idx[k] != a)
+            hid_idx[keep++] = hid_idx[k];
+    n_hid = keep;
+    cell_of[a] = -1;
+    if (where == W_DOCK && n_dock >= DOCK_MAX) {
         where = W_GRID;
-        n = counts[where];
+        idx = 1000;
     }
-    idx = idx < 0 ? 0 : idx > *n ? *n : idx;
-    for (int j = *n; j > idx; j--)
-        lists[where][j] = lists[where][j - 1];
-    lists[where][idx] = a;
-    (*n)++;
-    layout_from_lists();
+    if (where == W_DOCK) {
+        idx = idx < 0 ? 0 : idx > n_dock ? n_dock : idx;
+        for (int j = n_dock; j > idx; j--)
+            dock_idx[j] = dock_idx[j - 1];
+        dock_idx[idx] = a;
+        n_dock++;
+    } else if (where == W_HIDDEN) {
+        hid_idx[n_hid++] = a;
+    } else {
+        uint8_t taken[CELLS_MAX];
+        memset(taken, 0, sizeof(taken));
+        for (int i = 0; i < APPS_MAX; i++)
+            if (cell_of[i] >= 0)
+                taken[cell_of[i]] = 1;
+        int cell = idx >= 1000 ? first_free_cell(taken) : idx < 0 ? 0 : idx > CELLS_MAX - 1 ? CELLS_MAX - 1 : idx;
+        for (int b = 0; b < APPS_MAX; b++)
+            if (b != a && cell_of[b] == cell) {         /* whoever's there goes where this one was */
+                if (old_cell >= 0) {
+                    cell_of[b] = old_cell;
+                } else {
+                    taken[cell] = 1;
+                    cell_of[b] = first_free_cell(taken);
+                }
+            }
+        cell_of[a] = cell;
+    }
+    layout_rebuild();
     layout_sync();
     for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++) {
         if (i == a && ed_lift) {
@@ -2152,15 +2252,13 @@ static void layout_place(int a, int where, int idx)
     edit_damage();
 }
 
-/* Where the dragged icon would go: in the dock or on the grid, and at which place. */
+/* Where the dragged icon would go: in the dock or on the grid, and at which place (a cell). */
 static void drop_target(int a, int px, int py, int *where, int *idx)
 {
     layout_sync();
-    int in_dock = 0, in_grid = 0;
+    int in_dock = 0;
     for (int k = 0; k < n_dock; k++)
         in_dock += dock_idx[k] != a;
-    for (int k = 0; k < n_grid; k++)
-        in_grid += grid_idx[k] != a;
     struct gfx_rect d = home_dock();
     if (py >= d.y - 30 && in_dock < DOCK_MAX) {
         int count = in_dock + 1, i = (px - d.x) * count / d.w;
@@ -2173,9 +2271,8 @@ static void drop_target(int a, int px, int py, int *where, int *idx)
     int col = (px - gx0) / t->tile_w, row = (py - HOME_TOP) / t->tile_h;
     col = col < 0 ? 0 : col > HOME_COLS - 1 ? HOME_COLS - 1 : col;
     row = row < 0 ? 0 : row > HOME_ROWS - 1 ? HOME_ROWS - 1 : row;
-    int i = row * HOME_COLS + col;
     *where = W_GRID;
-    *idx = i > in_grid ? in_grid : i;
+    *idx = row * HOME_COLS + col;
 }
 
 static void layout_saved(const char *what, int app)
@@ -2203,6 +2300,7 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             } else if (inside(pn_reset(), x, y)) {
                 layout_default();
                 layout_dirty = 1;
+                layout_sync();
                 memset(off_x, 0, sizeof(off_x));
                 memset(off_y, 0, sizeof(off_y));
                 kprintf("shell: home layout reset\n");
@@ -2422,10 +2520,12 @@ static void edit_tick(void)
                 b = spring_step(&panel_sp, 36, 150);
             }
             edit_moving = a || b || (edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS);
-            if (edit_sp.x != was_x)
-                edit_damage();          /* the zoom moved: the card's picture is made again */
-            else
+            if (edit_sp.x != was_x) {
+                cc_ok = 0;              /* the zoom moved: the card is scaled again from the page, drawn once */
+                damage_all();
+            } else {
                 damage_all();           /* only the sheet slid */
+            }
         }
     }
     int sliding = 0;
@@ -2445,10 +2545,10 @@ static void edit_tick(void)
     }
     if (edit_on && now - last_wiggle >= EDIT_FRAME_MS) {        /* the wiggle: a frame at a time */
         last_wiggle = now;
-        if (edit_p() > 0)
-            edit_frame();
+        if (edit_dyn())
+            edit_damage();
         else
-            damage_all();
+            edit_frame();
     }
     if (edit_on || edit_moving)
         shell_flush();

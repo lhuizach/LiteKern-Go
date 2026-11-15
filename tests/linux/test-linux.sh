@@ -642,13 +642,13 @@ run $SHELL_BIN build-linux/test/disk.img "$P"
 check "home edit: hold, the Clock popup, a style, a drag, Done" \
     '^shell: home edit$' \
     '^shell: home clock font 0 style 3 .* at [0-9]+,[0-9]+$' \
-    '^shell: home edit done$' \
+    '^shell: home edit done' \
     '!crashed|PANIC'
 
 # Home edit mode: an app taken off the home screen with its minus, kept across a restart.
 path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 146 640; click; add sleep:0.8; go 615 1200; click; add sleep:1.2
 run $SHELL_BIN build-linux/test/disk.img "$P"
-check "home edit: an app's minus takes it off the home screen"     '^shell: home layout: removed '     '^shell: home edit done$'     '!crashed|PANIC'
+check "home edit: an app's minus takes it off the home screen"     '^shell: home layout: removed '     '^shell: home edit done'     '!crashed|PANIC'
 run $SHELL_BIN build-linux/test/disk.img "sleep:1"
 check "the home screen's layout is kept across a restart"     '^home: [0-9]+ on the grid, [0-9]+ in the dock, [1-9][0-9]* off the home screen$'     '!crashed|PANIC'
 
