@@ -24,6 +24,7 @@
 #include "kernel/string.h"
 #include "kernel/theme.h"
 #include "kernel/wallpaper.h"
+#include "kernel/wxicon.h"
 #include "kernel/ramdisk.h"
 #include "kernel/splash.h"
 #include "kernel/cursor.h"
@@ -355,7 +356,14 @@ static struct spring swv, menuv, volv, toastv;
 static int edit_on, edit_panel, edit_sel, edit_hide_icons;
 static int home_shape, home_icon_px = 112, home_labels = 1, home_pages_n = 1;   /* the home screen's looks */
 static void shaped_flush(void);
-static int ed_app = -1, ed_lift, ed_px, ed_py;       /* an icon dragged: which, lifted yet, where the finger puts it */
+static void open_named(const char *name, struct gfx_rect from);
+static struct gfx_rect wg_rect(int w);
+static int ed_app = -1, ed_wg = -1, ed_lift, ed_px, ed_py;
+static int act_x, act_y;               /* where the finger lifted: a tap on a widget's button */
+static uint32_t weather_last;            /* when the Weather widget last looked (0: look now) */
+static struct weather_now weather;       /* the Weather widget: what the helper left; weather.city[0] is 0 without */
+static int music_state;                /* the Music widget: 0 the app isn't running, 1 playing, 2 paused */
+static char music_title[64];       /* an icon dragged: which, lifted yet, where the finger puts it */
 #define BADGE_R 18
 static void draw_badge(int cx, int cy, int r);
 static struct spring edit_sp, panel_sp;
@@ -634,6 +642,7 @@ static struct gfx_rect dock_icon_rect(int i)
 
 enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_BATTERY, H_WBTN, H_WCTL, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_LIST,     /* a row of All apps */
+                H_WIDGET,   /* a widget on the home screen */
                 H_BAR };
 
 static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_SHUTDOWN, H_RESTART, H_LOCK, H_LOGOUT };
@@ -823,6 +832,59 @@ static int dock_idx[DOCK_MAX], n_dock, hid_idx[APPS_MAX], n_hid;        /* app n
 static int cell_of[APPS_MAX];           /* an app's cell on the grid, -1: not on it */
 static int off_x[APPS_MAX], off_y[APPS_MAX];    /* an icon sliding to its place: where it is from there, 1/256 px */
 
+/* --- widgets: cards on the home grid, each covering several cells ---------------------------------
+ * One of each kind. wg_cell is the top left cell it covers (-1: not on the home screen). They are in the
+ * layout like apps ("@Date|g5"), and apps keep out of the cells they cover. */
+enum { WG_DATE, WG_BATTERY, WG_CLOCK, WG_MUSIC, WG_WEATHER, WG_COUNT };
+static const struct { const char *name, *app; int cw, ch; } wg_info[WG_COUNT] = {
+    { "Date", "Clock", 2, 1 }, { "Battery", "Settings", 2, 1 }, { "Clock", "Clock", 2, 2 },
+    { "Music", "Music", 4, 1 }, { "Weather", "Weather", 2, 2 },
+};
+static int wg_cell[WG_COUNT] = { -1, -1, -1, -1, -1 };
+
+static int wg_by_name(const char *n)            /* "@Date" -> its number */
+{
+    if (n[0] != '@')
+        return -1;
+    for (int w = 0; w < WG_COUNT; w++)
+        if (!strcmp(n + 1, wg_info[w].name))
+            return w;
+    return -1;
+}
+
+static int wg_fits(int w, int cell, const uint8_t *taken)
+{
+    if (cell < 0 || cell >= CELLS_MAX)
+        return 0;
+    int col = cell % HOME_COLS, row = cell % HOME_PER_PAGE / HOME_COLS;
+    if (col + wg_info[w].cw > HOME_COLS || row + wg_info[w].ch > HOME_ROWS)
+        return 0;
+    for (int r = 0; r < wg_info[w].ch; r++)
+        for (int c = 0; c < wg_info[w].cw; c++)
+            if (taken[cell + r * HOME_COLS + c])
+                return 0;
+    return 1;
+}
+
+static void wg_mark(int w, uint8_t *taken)
+{
+    for (int r = 0; r < wg_info[w].ch; r++)
+        for (int c = 0; c < wg_info[w].cw; c++)
+            taken[wg_cell[w] + r * HOME_COLS + c] = 1;
+}
+
+static int wg_covers(int cell)                  /* the widget over this cell, or -1 */
+{
+    for (int w = 0; w < WG_COUNT; w++) {
+        if (wg_cell[w] < 0 || wg_cell[w] / HOME_PER_PAGE != cell / HOME_PER_PAGE)
+            continue;
+        int dc = cell % HOME_COLS - wg_cell[w] % HOME_COLS, dr = cell % HOME_PER_PAGE / HOME_COLS - wg_cell[w] % HOME_PER_PAGE / HOME_COLS;
+        if (dc >= 0 && dc < wg_info[w].cw && dr >= 0 && dr < wg_info[w].ch)
+            return w;
+    }
+    return -1;
+}
+
 static int app_by_name(const char *n)
 {
     for (int i = 0; i < builtin_app_count; i++)
@@ -882,6 +944,15 @@ static void layout_sync(void)
     }
     uint8_t taken[CELLS_MAX];
     memset(taken, 0, sizeof(taken));
+    for (int w = 0; w < WG_COUNT; w++)
+        wg_cell[w] = -1;
+    for (int k = 0; k < nlayout; k++) {                 /* the widgets first: their cells are theirs */
+        int w = wg_by_name(layout[k].name);
+        if (w >= 0 && layout[k].where == W_GRID && wg_fits(w, layout[k].cell, taken)) {
+            wg_cell[w] = layout[k].cell;
+            wg_mark(w, taken);
+        }
+    }
     n_dock = n_hid = 0;
     for (int i = 0; i < APPS_MAX; i++)
         cell_of[i] = -1;
@@ -916,12 +987,23 @@ static void layout_sync(void)
             layout[k].cell = cell_of[i];
         }
     }
+    for (int k = 0; k < nlayout; k++) {
+        int w = wg_by_name(layout[k].name);
+        if (w >= 0) {
+            layout[k].where = wg_cell[w] >= 0 ? W_GRID : W_HIDDEN;
+            layout[k].cell = wg_cell[w];
+        }
+    }
     layout_dirty = 0;
     layout_seen = builtin_app_count;
     int on_grid = 0;
     for (int i = 0; i < APPS_MAX; i++)
         on_grid += cell_of[i] >= 0;
     kprintf("home: %d on the grid, %d in the dock, %d off the home screen\n", on_grid, n_dock, n_hid);
+    int widgets = 0;
+    for (int w = 0; w < WG_COUNT; w++)
+        widgets += wg_cell[w] >= 0;
+    kprintf("home: %d widgets\n", widgets);
 }
 
 /* The dock list, the cells and the hidden list are the layout now (after a move). */
@@ -936,7 +1018,25 @@ static void layout_rebuild(void)
                 layout_add(builtin_apps[i].name, W_GRID, c);
     for (int k = 0; k < n_hid; k++)
         layout_add(builtin_apps[hid_idx[k]].name, W_HIDDEN, -1);
+    for (int w = 0; w < WG_COUNT; w++) {
+        char nm[LAYOUT_NAME];
+        nm[0] = '@';
+        memcpy(nm + 1, wg_info[w].name, strlen(wg_info[w].name) + 1);
+        layout_add(nm, wg_cell[w] >= 0 ? W_GRID : W_HIDDEN, wg_cell[w]);
+    }
     layout_dirty = 1;
+}
+
+/* Cells with an app or a widget in them. */
+static void fill_taken(uint8_t *taken)
+{
+    memset(taken, 0, CELLS_MAX);
+    for (int i = 0; i < APPS_MAX; i++)
+        if (cell_of[i] >= 0)
+            taken[cell_of[i]] = 1;
+    for (int w = 0; w < WG_COUNT; w++)
+        if (wg_cell[w] >= 0)
+            wg_mark(w, taken);
 }
 
 static int dock_slot(int i)     /* app i's place in the dock, or -1 */
@@ -1217,6 +1317,10 @@ static struct hit hit_at(int x, int y)
         for (int i = 0; i < builtin_app_count; i++)
             if (home_has(i) && inside(tile_rect(i), x, y))
                 return (struct hit){ H_TILE, i };
+        layout_sync();
+        for (int w = 0; w < WG_COUNT; w++)
+            if (wg_cell[w] >= 0 && inside(wg_rect(w), x, y))
+                return (struct hit){ H_WIDGET, w };
     }
     return (struct hit){ H_NONE, 0 };
 }
@@ -1237,6 +1341,7 @@ static void damage_hit(struct hit h)
     case H_DOCK:
     case H_APPS:     shell_damage(dock_band()); break;
     case H_TILE:     shell_damage(tile_rect(h.app)); break;
+    case H_WIDGET:   shell_damage(wg_rect(h.app)); break;
     case H_LIST:     shell_damage(list_rect(h.app)); break;
     default:         break;
     }
@@ -1766,6 +1871,175 @@ static void draw_menu(void)
     }
 }
 
+/* The Music card's three round buttons (1 previous, 2 play/pause, 3 next): their middles. */
+static void music_button_at(struct gfx_rect wr, int k, int *cx, int *cy)
+{
+    struct gfx_rect c = { wr.x + 8, wr.y + 8, wr.w - 16, wr.h - 16 };
+    *cx = c.x + c.w - 56 - (3 - k) * 92;
+    *cy = c.y + c.h / 2;
+}
+
+static int music_button(struct gfx_rect wr, int x, int y)
+{
+    for (int k = 1; k <= 3; k++) {
+        int cx, cy;
+        music_button_at(wr, k, &cx, &cy);
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= 46 * 46)
+            return k;
+    }
+    return 0;
+}
+
+static void tri(int cx, int cy, int h, int dir, uint32_t col)      /* a triangle pointing right (dir 1) or left */
+{
+    for (int dy = -h; dy <= h; dy++) {
+        int len = (h - (dy < 0 ? -dy : dy)) * 3 / 2 + 1;
+        gfx_fill_rect(VS, VX(dir > 0 ? cx - h / 2 : cx + h / 2 - len), VY(cy + dy), len, 1, col);
+    }
+}
+
+/* Music and Weather: the app's icon, and what it can tell. */
+static void draw_widget_app(int w, struct gfx_rect c)
+{
+    const struct theme *t = T();
+    int ai = -1;
+    for (int i = 0; i < builtin_app_count; i++)
+        if (!strcmp(builtin_apps[i].name, wg_info[w].name))
+            ai = i;
+    int ix = c.x + 24, iy = c.y + (c.h < 200 ? (c.h - 96) / 2 : 24);
+    uint32_t dim = gfx_mix(SHELL_FG, 0x1d1d20, 170);
+    if (ai >= 0 && !(w == WG_WEATHER && weather.city[0]))
+        draw_icon(&builtin_apps[ai], (struct gfx_rect){ ix, iy, 96, 96 }, 255);
+    if (w == WG_MUSIC) {
+        const char *name = music_state && music_title[0] ? music_title : "Music";
+        text_draw_fit(VS, VX(ix + 116), VY(c.y + c.h / 2 - text_height(TEXT_HEADING) + 4), name, c.w - 116 - 24 - 3 * 92 - 24,
+                      TEXT_HEADING, SHELL_FG);
+        text_draw(VS, VX(ix + 116), VY(c.y + c.h / 2 + 8), music_state == 1 ? "Playing" : music_state == 2 ? "Paused" : "Tap to open",
+                  TEXT_BODY, dim);
+        for (int k = 1; k <= 3; k++) {
+            int cx, cy;
+            music_button_at((struct gfx_rect){ c.x - 8, c.y - 8, c.w + 16, c.h + 16 }, k, &cx, &cy);
+            gfx_fill_circle(VS, VX(cx), VY(cy), 38, k == 2 ? t->accent_bg : 0x34343a);
+            uint32_t fg = k == 2 ? t->accent_fg : SHELL_FG;
+            if (k == 2 && music_state == 1) {                       /* pause */
+                gfx_fill_rect(VS, VX(cx - 13), VY(cy - 15), 9, 30, fg);
+                gfx_fill_rect(VS, VX(cx + 4), VY(cy - 15), 9, 30, fg);
+            } else if (k == 2) {                                    /* play */
+                tri(cx + 2, cy, 16, 1, fg);
+            } else if (k == 1) {                                    /* previous */
+                gfx_fill_rect(VS, VX(cx - 14), VY(cy - 14), 4, 28, fg);
+                tri(cx + 4, cy, 14, -1, fg);
+            } else {                                                /* next */
+                tri(cx - 4, cy, 14, 1, fg);
+                gfx_fill_rect(VS, VX(cx + 10), VY(cy - 14), 4, 28, fg);
+            }
+        }
+        return;
+    }
+    if (w == WG_WEATHER && weather.city[0]) {
+        int cat = wx_category(weather.code), whole = weather.temp >= 0 ? (weather.temp + 5) / 10 : -((-weather.temp + 5) / 10);
+        char num[12], hl[24];
+        ksnprintf(num, sizeof(num), "%d\xb0", whole);
+        ksnprintf(hl, sizeof(hl), "H %d\xb0  L %d\xb0", (weather.hi + (weather.hi >= 0 ? 5 : -5)) / 10,
+                  (weather.lo + (weather.lo >= 0 ? 5 : -5)) / 10);
+        text_draw_fit(VS, VX(c.x + 28), VY(c.y + 16), weather.city, c.w - 56, TEXT_BOLD, t->accent_bg);
+        wx_draw(&V->s, c.x + 100 - V->ox, c.y + 160 - V->oy, 62, cat, !weather.day);
+        text_draw(VS, VX(c.x + 190), VY(c.y + 106), num, TEXT_LARGE, SHELL_FG);
+        text_draw(VS, VX(c.x + 28), VY(c.y + c.h - 24 - text_height(TEXT_BODY) * 2 - 6), wx_text(cat), TEXT_BODY, SHELL_FG);
+        text_draw(VS, VX(c.x + 28), VY(c.y + c.h - 24 - text_height(TEXT_BODY)), hl, TEXT_BODY, dim);
+        return;
+    }
+    text_draw(VS, VX(ix + 116), VY(iy + 8), wg_info[w].name, TEXT_HEADING, SHELL_FG);
+    text_draw(VS, VX(ix + 116), VY(iy + 8 + text_height(TEXT_HEADING)), w == WG_WEATHER ? "Getting the weather..." : "Tap to open", TEXT_BODY, dim);
+}
+
+/* A widget's card on the page (the cells it covers, with a margin). */
+static struct gfx_rect wg_rect(int w)
+{
+    const struct theme *t = T();
+    int cell = wg_cell[w] < 0 ? 0 : wg_cell[w];
+    int col = cell % HOME_COLS, row = cell % HOME_PER_PAGE / HOME_COLS, p = cell / HOME_PER_PAGE;
+    int x0 = page_x(p) + (S()->w - HOME_COLS * t->tile_w) / 2;
+    return (struct gfx_rect){ x0 + col * t->tile_w, HOME_TOP + row * t->tile_h, wg_info[w].cw * t->tile_w,
+                              wg_info[w].ch * t->tile_h };
+}
+
+static const int16_t sin60[60] = {
+    0, 107, 213, 316, 416, 512, 602, 685, 761, 828, 887, 935, 974, 1002, 1018, 1024, 1018, 1002, 974, 935, 887,
+    828, 761, 685, 602, 512, 416, 316, 213, 107, 0, -107, -213, -316, -416, -512, -602, -685, -761, -828, -887,
+    -935, -974, -1002, -1018, -1024, -1018, -1002, -974, -935, -887, -828, -761, -685, -602, -512, -416, -316,
+    -213, -107
+};
+
+/* A point len away from (cx, cy) at minute-mark m (0-59, 0 at the top, clockwise). */
+static void polar(int cx, int cy, int len, int m, int *x, int *y)
+{
+    m = (m % 60 + 60) % 60;
+    *x = cx + len * sin60[m] / 1024;
+    *y = cy - len * sin60[(m + 15) % 60] / 1024;
+}
+
+static void draw_widget(int w, struct gfx_rect r)
+{
+    static const char *const days[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+    static const char *const months[] = { "January", "February", "March", "April", "May", "June", "July", "August",
+                                          "September", "October", "November", "December" };
+    const struct theme *t = T();
+    struct gfx_rect c = { r.x + 8, r.y + 8, r.w - 16, r.h - 16 };
+    gfx_blend_round_rect(VS, VX(c.x), VY(c.y), c.w, c.h, 36, 0x1d1d20, 200);
+    struct rtc_time n = clock_shown;
+    if (w == WG_DATE) {
+        char day[4];
+        int len = 0;
+        if (n.day >= 10)
+            day[len++] = (char)('0' + n.day / 10);
+        day[len++] = (char)('0' + n.day % 10);
+        day[len] = '\0';
+        text_draw(VS, VX(c.x + 28), VY(c.y + 16), days[n.weekday % 7], TEXT_BOLD, t->accent_bg);
+        text_draw(VS, VX(c.x + 28), VY(c.y + 16 + text_height(TEXT_BOLD) - 4), day, TEXT_LARGE, SHELL_FG);
+        text_draw(VS, VX(c.x + 28 + text_width(day, TEXT_LARGE) + 20), VY(c.y + c.h - 24 - text_height(TEXT_BODY)),
+                  months[(n.month + 11) % 12], TEXT_BODY, gfx_mix(SHELL_FG, 0x1d1d20, 200));
+    } else if (w == WG_BATTERY) {
+        int pct = machine_shown.battery;
+        text_draw(VS, VX(c.x + 28), VY(c.y + 16), "Battery", TEXT_BOLD, t->accent_bg);
+        char num[8];
+        if (pct < 0) {
+            ksnprintf(num, sizeof(num), "--");
+        } else {
+            ksnprintf(num, sizeof(num), "%d%%", pct);
+        }
+        text_draw(VS, VX(c.x + 28), VY(c.y + 16 + text_height(TEXT_BOLD) - 4), num, TEXT_LARGE, SHELL_FG);
+        if (pct >= 0) {
+            int bx = c.x + 28, by = c.y + c.h - 36, bw = c.w - 56;
+            uint32_t col = machine_shown.charging == K86_BATTERY_CHARGING ? t->accent_bg : pct <= 15 ? 0xff6b6b : 0x57e389;
+            gfx_fill_round_rect(VS, VX(bx), VY(by), bw, 14, 7, 0x3a3a40);
+            if (pct > 0)
+                gfx_fill_round_rect(VS, VX(bx), VY(by), bw * pct / 100 < 14 ? 14 : bw * pct / 100, 14, 7, col);
+            if (machine_shown.charging == K86_BATTERY_CHARGING)
+                text_draw(VS, VX(c.x + c.w - 28 - text_width("Charging", TEXT_SMALL)), VY(c.y + 30), "Charging", TEXT_SMALL,
+                          gfx_mix(SHELL_FG, 0x1d1d20, 200));
+        }
+    } else if (w == WG_CLOCK) {
+        int cx = c.x + c.w / 2, cy = c.y + c.h / 2, R = (c.w < c.h ? c.w : c.h) / 2 - 22;
+        gfx_fill_circle(VS, VX(cx), VY(cy), R + 5, 0x3a3a40);
+        gfx_fill_circle(VS, VX(cx), VY(cy), R, 0x16161a);
+        for (int m = 0; m < 60; m += 5) {
+            int x0, y0, x1, y1;
+            polar(cx, cy, R - 6, m, &x0, &y0);
+            polar(cx, cy, R - (m % 15 ? 18 : 26), m, &x1, &y1);
+            gfx_thick_line(VS, VX(x0), VY(y0), VX(x1), VY(y1), m % 15 ? 3 : 5, SHELL_FG);
+        }
+        int hx, hy, mx, my;
+        polar(cx, cy, R * 52 / 100, n.hour % 12 * 5 + n.minute / 12, &hx, &hy);
+        polar(cx, cy, R * 78 / 100, n.minute, &mx, &my);
+        gfx_thick_line(VS, VX(cx), VY(cy), VX(hx), VY(hy), 10, SHELL_FG);
+        gfx_thick_line(VS, VX(cx), VY(cy), VX(mx), VY(my), 7, SHELL_FG);
+        gfx_fill_circle(VS, VX(cx), VY(cy), 9, t->accent_bg);
+    } else {                            /* Music, Weather: drawn by their own code (below) */
+        draw_widget_app(w, c);
+    }
+}
+
 static void draw_home(void)
 {
     /* The clock and date: on the first page, turning with it. The same clock as the lock screen's,
@@ -1799,6 +2073,23 @@ static void draw_home(void)
         int tw = text_width(a->name, TEXT_SMALL);
         text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
                       TEXT_SMALL, SHELL_FG);
+    }
+    layout_sync();
+    for (int w = 0; w < WG_COUNT; w++) {
+        if (wg_cell[w] < 0 || (edit_on && ed_lift && ed_wg == w))
+            continue;
+        struct gfx_rect wr = wg_rect(w);
+        if (!visible(wr))
+            continue;
+        draw_widget(w, wr);
+        if (edit_on && !edit_hide_icons)
+            draw_badge(wr.x + 18, wr.y + 18, BADGE_R);
+    }
+    if (edit_on && ed_lift && ed_wg >= 0) {             /* the widget in the finger */
+        struct gfx_rect wr = wg_rect(ed_wg);
+        wr.x = ed_px - wr.w / 2;
+        wr.y = ed_py - wr.h / 2;
+        draw_widget(ed_wg, wr);
     }
     if (edit_on && ed_lift && ed_app >= 0) {            /* the icon in the finger: bigger, over the rest */
         int sz = home_icon_px * 118 / 100;
@@ -1893,7 +2184,7 @@ static uint32_t last_edit_tick;
 static uint32_t *pg_px;                 /* the page at full size, drawn when it changes */
 static int pg_ok;
 
-enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_ICON, D_PAGE, D_SLIDER };
+enum { D_NONE, D_MOVE, D_CORNER, D_STRETCH, D_ICON, D_PAGE, D_WIDGET, D_SLIDER };
 static int panel_kind;                  /* 1 Clock, 2 Apps: the sheet that's up, or sliding away */
 
 static int edit_p(void)                 /* how far zoomed out: 0..256 */
@@ -2176,7 +2467,7 @@ static struct gfx_rect bar_chip(int i)
     return (struct gfx_rect){ 24 + i * (w + 10), S()->h - 24 - EDIT_BAR_H + 16 + slide, w, 88 };
 }
 
-static const char *const bar_names[5] = { "Clock", "Apps", "Icons", "Pages", "Done" };
+static const char *const bar_names[5] = { "Clock", "Add", "Icons", "Pages", "Done" };
 
 #define PANEL_SIDE 36
 #define CHIP_H 56
@@ -2250,24 +2541,64 @@ static struct gfx_rect pn_app(int k)    /* the Apps sheet's k-th tile */
     return (struct gfx_rect){ PANEL_SIDE + k % 4 * w, panel_top() + 96 + k / 4 * 130, w, 130 };
 }
 
+/* The Add sheet's tiles: the widgets that aren't on the home screen, then the apps that aren't. */
+static int add_count(void)
+{
+    layout_sync();
+    int n = n_hid;
+    for (int w = 0; w < WG_COUNT; w++)
+        n += wg_cell[w] < 0;
+    return n;
+}
+
+static void add_item(int k, int *widget, int *id)
+{
+    for (int w = 0; w < WG_COUNT; w++)
+        if (wg_cell[w] < 0) {
+            if (k-- == 0) {
+                *widget = 1;
+                *id = w;
+                return;
+            }
+        }
+    *widget = 0;
+    *id = hid_idx[k];
+}
+
 static void draw_apps_panel(void)
 {
     const struct theme *t = T();
     int top = panel_top();
     layout_sync();
-    text_draw(VS, VX(PANEL_SIDE), VY(top + 20), "Apps", TEXT_HEADING, t->fg);
+    text_draw(VS, VX(PANEL_SIDE), VY(top + 20), "Add", TEXT_HEADING, t->fg);
     ed_chip(pn_reset(), "Reset", 0, 0);
     ed_chip(pn_close(), "Close", 0, 0);
-    if (!n_hid) {
-        const char *m = "Every app is on the home screen";
+    int n = add_count();
+    if (!n) {
+        const char *m = "Everything is on the home screen";
         text_draw(VS, VX((S()->w - text_width(m, TEXT_BODY)) / 2), VY(top + 200), m, TEXT_BODY, t->fg);
         return;
     }
-    for (int k = 0; k < n_hid && k < 12; k++) {
+    for (int k = 0; k < n && k < 12; k++) {
         struct gfx_rect r = pn_app(k);
+        int widget, id;
+        add_item(k, &widget, &id);
+        if (widget) {                   /* a widget: a card with its name and size */
+            struct gfx_rect card = { r.x + 8, r.y + 4, r.w - 16, 64 };
+            gfx_fill_round_rect(VS, VX(card.x), VY(card.y), card.w, card.h, 18, t->button_bg);
+            const char *nm = wg_info[id].name;
+            text_draw(VS, VX(card.x + (card.w - text_width(nm, TEXT_SMALL)) / 2), VY(card.y + 10), nm, TEXT_SMALL, t->fg);
+            char sz[8];
+            ksnprintf(sz, sizeof(sz), "%dx%d", wg_info[id].cw, wg_info[id].ch);
+            text_draw(VS, VX(card.x + (card.w - text_width(sz, TEXT_SMALL)) / 2), VY(card.y + 34), sz, TEXT_SMALL,
+                      gfx_mix(t->fg, t->button_bg, 140));
+            text_draw(VS, VX(r.x + (r.w - text_width("Widget", TEXT_SMALL)) / 2), VY(r.y + 80), "Widget", TEXT_SMALL,
+                      gfx_mix(t->fg, t->window_bg, 150));
+            continue;
+        }
         struct gfx_rect ir = { r.x + (r.w - 64) / 2, r.y + 4, 64, 64 };
-        draw_icon(&builtin_apps[hid_idx[k]], ir, 255);
-        const char *nm = builtin_apps[hid_idx[k]].name;
+        draw_icon(&builtin_apps[id], ir, 255);
+        const char *nm = builtin_apps[id].name;
         int tw = text_width(nm, TEXT_SMALL), mw = r.w - 8;
         text_draw_fit(VS, VX(r.x + (r.w - (tw < mw ? tw : mw)) / 2), VY(ir.y + 64 + 8), nm, mw, TEXT_SMALL, t->fg);
     }
@@ -2311,6 +2642,9 @@ static int page_has_apps(int pg)
     layout_sync();
     for (int i = 0; i < APPS_MAX; i++)
         if (cell_of[i] >= 0 && cell_of[i] / HOME_PER_PAGE == pg)
+            return 1;
+    for (int w = 0; w < WG_COUNT; w++)
+        if (wg_cell[w] >= 0 && wg_cell[w] / HOME_PER_PAGE == pg)
             return 1;
     return 0;
 }
@@ -2481,6 +2815,16 @@ static void draw_edit(void)
             draw_badge(bx, by, BADGE_R * z / 256);
         }
     }
+    for (int w = 0; w < WG_COUNT && !edit_dyn(); w++) {         /* a widget's minus */
+        if (wg_cell[w] < 0 || !edit_on || p <= 200)
+            continue;
+        struct gfx_rect wr = wg_rect(w);
+        if (wr.x + wr.w < 0 || wr.x > S()->w)
+            continue;
+        int bx, by;
+        page_to_screen(wr.x + 18, wr.y + 18, &bx, &by);
+        draw_badge(bx, by, BADGE_R * z / 256);
+    }
     draw_handles();
     if (panel_sp.x < FX(PANEL_H) && p > 8) {
         for (int i = 0; i < 5; i++) {
@@ -2581,6 +2925,8 @@ static int free_cell_on_page(int pg)
         int c = pg * HOME_PER_PAGE + k, used = 0;
         for (int i = 0; i < APPS_MAX; i++)
             used |= cell_of[i] == c;
+        if (wg_covers(c) >= 0)
+            used = 1;
         if (!used)
             return c;
     }
@@ -2597,6 +2943,154 @@ static void edit_turn(int p)
     turn_to(p, 1);
     edit_sel = 0;
     edit_damage();
+}
+
+/* A widget to a cell (its top left): the apps in the cells it covers go to free ones. */
+static void wg_place(int w, int cell)
+{
+    layout_sync();
+    struct gfx_rect before[APPS_MAX], old = wg_cell[w] >= 0 ? wg_rect(w) : (struct gfx_rect){ 0, 0, 0, 0 };
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)
+        before[i] = tile_rect(i);
+    wg_cell[w] = cell;
+    if (w == WG_WEATHER)
+        weather_last = 0;               /* look at its numbers now */
+    uint8_t taken[CELLS_MAX];
+    memset(taken, 0, sizeof(taken));
+    for (int k = 0; k < WG_COUNT; k++)
+        if (wg_cell[k] >= 0)
+            wg_mark(k, taken);
+    int displaced[APPS_MAX], nd = 0;
+    for (int i = 0; i < APPS_MAX; i++) {
+        if (cell_of[i] < 0)
+            continue;
+        if (taken[cell_of[i]])
+            displaced[nd++] = i;
+    }
+    for (int i = 0; i < APPS_MAX; i++)
+        if (cell_of[i] >= 0 && !taken[cell_of[i]])
+            taken[cell_of[i]] = 1;
+    for (int j = 0; j < nd; j++) {
+        int c = first_free_cell(taken);
+        taken[c] = 1;
+        cell_of[displaced[j]] = c;
+    }
+    layout_rebuild();
+    layout_sync();
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++) {
+        struct gfx_rect now = tile_base(i);
+        off_x[i] = home_has(i) ? (before[i].x - now.x) * 256 : 0;
+        off_y[i] = home_has(i) ? (before[i].y - now.y) * 256 : 0;
+        if (home_has(i) && (before[i].x != now.x || before[i].y != now.y))
+            edit_dirty(gfx_rect_union(before[i], now));
+    }
+    if (old.w)
+        edit_dirty(old);
+    edit_dirty(wg_rect(w));
+}
+
+/* Where a dragged widget with its middle at (cx, cy) would sit: its top left cell on this page. */
+static int wg_target(int w, int cx, int cy)
+{
+    const struct theme *t = T();
+    int gx0 = (S()->w - HOME_COLS * t->tile_w) / 2;
+    int left = cx - wg_info[w].cw * t->tile_w / 2, top = cy - wg_info[w].ch * t->tile_h / 2;
+    int col = (left - gx0 + t->tile_w / 2) / t->tile_w, row = (top - HOME_TOP + t->tile_h / 2) / t->tile_h;
+    col = left - gx0 + t->tile_w / 2 < 0 ? 0 : col;
+    row = top - HOME_TOP + t->tile_h / 2 < 0 ? 0 : row;
+    col = col > HOME_COLS - wg_info[w].cw ? HOME_COLS - wg_info[w].cw : col;
+    row = row > HOME_ROWS - wg_info[w].ch ? HOME_ROWS - wg_info[w].ch : row;
+    return page * HOME_PER_PAGE + row * HOME_COLS + col;
+}
+
+static void wg_saved(const char *what, int w)
+{
+    edit_sheet_damage();
+    kprintf("shell: home widget: %s %s\n", what, wg_info[w].name);
+    settings_save();
+}
+
+/* The widgets show the time, the battery: they're drawn again when those change. */
+static void wg_damage_all(void)
+{
+    if (!home_shown())
+        return;
+    layout_sync();
+    for (int w = 0; w < WG_COUNT; w++) {
+        if (wg_cell[w] < 0)
+            continue;
+        struct gfx_rect r = wg_rect(w);
+        shell_damage(r);
+        if (edit_on)
+            edit_dirty(r);
+    }
+}
+
+/* What the Music app plays: read every half second, the widget is drawn again when it changes. */
+static void music_poll(void)
+{
+    static uint32_t last;
+    uint32_t now = uptime_ms();
+    if (now - last < 500)
+        return;
+    last = now;
+    layout_sync();
+    if (wg_cell[WG_MUSIC] < 0 || !home_shown())
+        return;
+    char t[64];
+    int st = machine_music(t, sizeof(t));
+    if (st == music_state && !strcmp(t, music_title))
+        return;
+    music_state = st;
+    memcpy(music_title, t, sizeof(music_title));
+    shell_damage(wg_rect(WG_MUSIC));
+    if (edit_on)
+        edit_dirty(wg_rect(WG_MUSIC));
+    shell_flush();
+}
+
+/* The weather: the helper is started when its numbers are old, and the card is drawn again when they change. */
+static void weather_poll(void)
+{
+    uint32_t now = uptime_ms();
+    if (weather_last && now - weather_last < 20000)
+        return;
+    weather_last = now ? now : 1;
+    layout_sync();
+    if (wg_cell[WG_WEATHER] < 0)
+        return;
+    machine_weather_refresh();
+    struct weather_now w;
+    memset(&w, 0, sizeof(w));
+    if (!machine_weather(&w))
+        w.city[0] = '\0';
+    if (!memcmp(&w, &weather, sizeof(w)))
+        return;
+    weather = w;
+    if (!home_shown())
+        return;
+    shell_damage(wg_rect(WG_WEATHER));
+    if (edit_on)
+        edit_dirty(wg_rect(WG_WEATHER));
+    shell_flush();
+}
+
+/* A widget not on the home screen, put where it fits: this page first, then the others. 0 if there's no room. */
+static int wg_add(int w)
+{
+    layout_sync();
+    uint8_t taken[CELLS_MAX];
+    fill_taken(taken);
+    for (int pg = 0; pg < home_pages(); pg++) {
+        int p = (page + pg) % home_pages();
+        for (int k = 0; k < HOME_PER_PAGE; k++)
+            if (wg_fits(w, p * HOME_PER_PAGE + k, taken)) {
+                edit_turn(p);
+                wg_place(w, p * HOME_PER_PAGE + k);
+                return 1;
+            }
+    }
+    return 0;
 }
 
 /* Moves app a to the dock (at place idx), to a cell of the grid (idx; 1000: the first free one) or off the
@@ -2633,10 +3127,7 @@ static void layout_place(int a, int where, int idx)
         hid_idx[n_hid++] = a;
     } else {
         uint8_t taken[CELLS_MAX];
-        memset(taken, 0, sizeof(taken));
-        for (int i = 0; i < APPS_MAX; i++)
-            if (cell_of[i] >= 0)
-                taken[cell_of[i]] = 1;
+        fill_taken(taken);
         int cell = idx >= 1000 ? first_free_cell(taken) : idx < 0 ? 0 : idx > CELLS_MAX - 1 ? CELLS_MAX - 1 : idx;
         for (int b = 0; b < APPS_MAX; b++)
             if (b != a && cell_of[b] == cell) {         /* whoever's there goes where this one was */
@@ -2687,6 +3178,15 @@ static void drop_target(int a, int px, int py, int *where, int *idx)
     row = row < 0 ? 0 : row > HOME_ROWS - 1 ? HOME_ROWS - 1 : row;
     *where = W_GRID;
     *idx = page * HOME_PER_PAGE + row * HOME_COLS + col;
+    if (wg_covers(*idx) >= 0) {         /* a widget is there: the icon stays where it is */
+        int cur = grid_index(a);
+        if (cur >= 0) {
+            *idx = cur;
+        } else {
+            *where = W_DOCK;
+            *idx = dock_slot(a) >= 0 ? dock_slot(a) : 0;
+        }
+    }
 }
 
 static void layout_saved(const char *what, int app)
@@ -2726,6 +3226,9 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
                     for (int i = 0; i < APPS_MAX; i++)
                         if (cell_of[i] >= (page + 1) * HOME_PER_PAGE)
                             cell_of[i] -= HOME_PER_PAGE;
+                    for (int w = 0; w < WG_COUNT; w++)
+                        if (wg_cell[w] >= (page + 1) * HOME_PER_PAGE)
+                            wg_cell[w] -= HOME_PER_PAGE;
                     home_pages_n = n - 1;
                     layout_rebuild();
                     layout_sync();
@@ -2780,11 +3283,20 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
                 settings_save();
                 edit_damage();
             } else {
-                for (int k = 0; k < n_hid && k < 12; k++)
+                int n = add_count();
+                for (int k = 0; k < n && k < 12; k++)
                     if (inside(pn_app(k), x, y)) {
-                        int a = hid_idx[k];
-                        layout_place(a, W_GRID, free_cell_on_page(page));
-                        layout_saved("added", a);
+                        int widget, id;
+                        add_item(k, &widget, &id);
+                        if (widget) {
+                            if (wg_add(id))
+                                wg_saved("added", id);
+                            else
+                                show_toast("No room on the home screen for it");
+                        } else {
+                            layout_place(id, W_GRID, free_cell_on_page(page));
+                            layout_saved("added", id);
+                        }
                         break;
                     }
             }
@@ -2838,7 +3350,43 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             h.x = cx * 1000 / S()->w;
             lockscreen_set_home_clock(&h);
         }
-        int icon_hit = -1, badge_hit = -1;
+        int icon_hit = -1, badge_hit = -1, wg_hit = -1, wg_badge = -1;
+        if (hd < 0) {
+            layout_sync();
+            for (int w = 0; w < WG_COUNT; w++) {
+                if (wg_cell[w] < 0)
+                    continue;
+                struct gfx_rect wr = wg_rect(w);
+                int bx = wr.x + 18, by = wr.y + 18;
+                if ((px - bx) * (px - bx) + (py - by) * (py - by) <= 36 * 36)
+                    wg_badge = w;
+                else if (inside(wr, px, py))
+                    wg_hit = w;
+            }
+        }
+        if (wg_badge >= 0) {                                    /* its minus: off the home screen */
+            struct gfx_rect old = wg_rect(wg_badge);
+            wg_cell[wg_badge] = -1;
+            layout_rebuild();
+            layout_sync();
+            edit_dirty(old);
+            wg_saved("removed", wg_badge);
+            return 1;
+        }
+        if (wg_hit >= 0) {                                      /* held: it may be dragged */
+            struct gfx_rect wr = wg_rect(wg_hit);
+            ed_wg = wg_hit;
+            ed_app = -1;
+            ed_lift = 0;
+            ed_drag = D_WIDGET;
+            ed_grab_x = wr.x + wr.w / 2 - px;
+            ed_grab_y = wr.y + wr.h / 2 - py;
+            ed_px = px + ed_grab_x;
+            ed_py = py + ed_grab_y;
+            hold_x = px;
+            hold_y = py;
+            return 1;
+        }
         if (hd < 0) {
             for (int i = 0; i < builtin_app_count; i++) {
                 if (!home_has(i))
@@ -2904,6 +3452,26 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         int cx = clk_mask_r.x + clk_mask_r.w / 2, cy = clk_mask_r.y + clk_mask_r.h / 2;
         if (ed_drag >= D_SLIDER) {
             slider_to(ed_drag - D_SLIDER, x);
+        } else if (ed_drag == D_WIDGET) {
+            if (!ed_lift && (px - hold_x) * (px - hold_x) + (py - hold_y) * (py - hold_y) > 24 * 24) {
+                ed_lift = 1;            /* picked up */
+                edit_damage();
+            }
+            if (ed_lift) {
+                struct gfx_rect wr = wg_rect(ed_wg);
+                edit_dirty((struct gfx_rect){ ed_px - wr.w / 2 - 12, ed_py - wr.h / 2 - 12, wr.w + 24, wr.h + 24 });
+                ed_px = px + ed_grab_x;
+                ed_py = py + ed_grab_y;
+                edit_dirty((struct gfx_rect){ ed_px - wr.w / 2 - 12, ed_py - wr.h / 2 - 12, wr.w + 24, wr.h + 24 });
+                int cell = wg_target(ed_wg, ed_px, ed_py);
+                uint8_t taken[CELLS_MAX];
+                memset(taken, 0, sizeof(taken));
+                for (int k = 0; k < WG_COUNT; k++)
+                    if (k != ed_wg && wg_cell[k] >= 0)
+                        wg_mark(k, taken);
+                if (cell != wg_cell[ed_wg] && wg_fits(ed_wg, cell, taken))
+                    wg_place(ed_wg, cell);
+            }
         } else if (ed_drag == D_PAGE) {
             if (x - ed_grab_x < -70 && page < home_pages() - 1) {
                 edit_turn(page + 1);
@@ -2960,6 +3528,15 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             layout_saved("moved", ed_app);
         }
         ed_app = -1;
+        ed_drag = D_NONE;
+        edit_damage();
+        return 1;
+    }
+    if (ed_drag == D_WIDGET) {          /* let go: it settles where it is */
+        if (ed_lift)
+            wg_saved("moved", ed_wg);
+        ed_lift = 0;
+        ed_wg = -1;
         ed_drag = D_NONE;
         edit_damage();
         return 1;
@@ -3588,6 +4165,26 @@ static void activate(struct hit h)
         kprintf("shell: shut down\n");
         fade_out();
         power_off();
+    case H_WIDGET: {
+        set_grid(0);
+        shell_flush();
+        if (h.app == WG_MUSIC) {
+            int b = music_button(wg_rect(WG_MUSIC), act_x, act_y);
+            if (b) {
+                if (music_state)
+                    machine_music_command(b == 1 ? "prev" : b == 2 ? "toggle" : "next");
+                else if (b == 2) {
+                    machine_music_command("toggle");        /* not running: it starts playing as it opens */
+                    open_named("Music", wg_rect(WG_MUSIC));
+                } else {
+                    open_named("Music", wg_rect(WG_MUSIC));
+                }
+                break;
+            }
+        }
+        open_named(wg_info[h.app].app, wg_rect(h.app));
+        break;
+    }
     case H_TILE:
         set_grid(0);
         shell_flush();
@@ -5023,6 +5620,8 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
             if (was.kind != H_POWER)
                 menu_set(0);
             shell_flush();
+            act_x = x;
+            act_y = y;
             activate(was);
         }
     } else if (!pressed.kind && h.kind == H_NONE && !grid_open) {
@@ -5455,6 +6054,8 @@ void desktop_tick(void)
     dock_tick();
     pager_tick();
     edit_tick();
+    music_poll();
+    weather_poll();
     qs_tick();
     power_tick();
     volume_tick();
@@ -5489,6 +6090,7 @@ void desktop_tick(void)
         machine_shown.brightness = brightness;
         int left = status_left() < from ? status_left() : from;
         shell_damage((struct gfx_rect){ left - 200, 0, power_rect().x - left + 200, T()->topbar_h });
+        wg_damage_all();
         shell_flush();
     }
     struct rtc_time now;
@@ -5506,6 +6108,7 @@ void desktop_tick(void)
         if (edit_on)
             edit_dirty((struct gfx_rect){ 0, box.y - 20, S()->w, box.h + 40 });
     }
+    wg_damage_all();
     shell_flush();
 }
 

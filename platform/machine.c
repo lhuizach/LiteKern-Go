@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -366,6 +367,88 @@ static void write_volume_file(void)
     FILE *f = fopen(VOLUME_FILE, "w");
     if (f) {
         fwrite(t, 1, (size_t)n, f);
+        fclose(f);
+    }
+}
+
+#define WEATHER_STATE "/dev/shm/lkx-weather"
+#define WEATHER_STALE_S 1800
+
+int machine_weather(struct weather_now *w)
+{
+    FILE *f = fopen(WEATHER_STATE, "r");
+    if (!f)
+        return 0;
+    char head[8];
+    long when;
+    int ok = fscanf(f, "%7s %ld\n", head, &when) == 2 && !strcmp(head, "ok") && fgets(w->city, sizeof(w->city), f);
+    if (ok) {
+        size_t n = strlen(w->city);
+        while (n && (w->city[n - 1] == '\n' || w->city[n - 1] == '\r'))
+            w->city[--n] = '\0';
+        ok = fscanf(f, "%d %d %d", &w->temp, &w->code, &w->day) == 3 && fscanf(f, "%d %d", &w->hi, &w->lo) == 2;
+    }
+    fclose(f);
+    return ok;
+}
+
+void machine_weather_refresh(void)
+{
+    static time_t last_try;
+    struct stat st;
+    time_t now = time(0);
+    if (now - last_try < 180)
+        return;                                 /* one try every few minutes at most */
+    if (!stat(WEATHER_STATE, &st) && now - st.st_mtime < WEATHER_STALE_S)
+        return;
+    last_try = now;
+    char path[512];
+    const char *dir = getenv("LKX_APPS");
+    snprintf(path, sizeof(path), "%s/apps/weather/weather", dir ? dir : "build-linux");
+    if (access(path, X_OK))
+        return;
+    pid_t pid = fork();
+    if (pid < 0)
+        return;
+    if (!pid) {
+        pid_t grand = fork();                   /* a grandchild, so nobody has to wait for it */
+        if (!grand) {
+            int null = open("/dev/null", O_RDWR);
+            dup2(null, 0), dup2(null, 1), dup2(null, 2);
+            for (int fd = 3; fd < 64; fd++)
+                close(fd);
+            execl(path, path, "--fetch", (char *)0);
+            _exit(127);
+        }
+        _exit(0);
+    }
+    waitpid(pid, 0, 0);
+}
+
+#define MUSIC_STATE "/dev/shm/lkx-music"
+#define MUSIC_CMD "/dev/shm/lkx-music-cmd"
+
+int machine_music(char *title, int max)
+{
+    title[0] = '\0';
+    FILE *f = fopen(MUSIC_STATE, "r");
+    if (!f)
+        return 0;
+    char state[16] = "";
+    if (fgets(state, sizeof(state), f) && fgets(title, max, f)) {
+        size_t n = strlen(title);
+        while (n && (title[n - 1] == '\n' || title[n - 1] == '\r'))
+            title[--n] = '\0';
+    }
+    fclose(f);
+    return !strncmp(state, "playing", 7) ? 1 : 2;
+}
+
+void machine_music_command(const char *cmd)
+{
+    FILE *f = fopen(MUSIC_CMD, "w");
+    if (f) {
+        fputs(cmd, f);
         fclose(f);
     }
 }

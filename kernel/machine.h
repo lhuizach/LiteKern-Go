@@ -25,6 +25,20 @@ void machine_volume_commit(void);
 void machine_haptic(int ms);
 int machine_set_timezone(int zone);
 int machine_set_touchpad(int speed);
+/* LiteKern Go's Music widget: what the Music app is playing (it shares it in /dev/shm/lkx-music).
+ * 0: it isn't running, 1: playing, 2: paused or stopped; the track's name goes in title. A command
+ * ("toggle", "next", "prev") is left for the app to take. */
+int machine_music(char *title, int max);
+void machine_music_command(const char *cmd);
+/* LiteKern Go's Weather widget: the numbers the Weather helper left in /dev/shm/lkx-weather. Temperatures
+ * are tenths of a degree, code is a WMO weather code. 0: no numbers yet. machine_weather_refresh() starts
+ * the helper (`weather --fetch`) when the numbers are old; call it now and then. */
+struct weather_now {
+    char city[32];
+    int temp, code, day, hi, lo;
+};
+int machine_weather(struct weather_now *out);
+void machine_weather_refresh(void);
 /* The screen (the phone's Power key): off keeps everything as it is, on shows
  * it again. Where the screen can't be turned off these only remember. */
 void machine_screen(int on);

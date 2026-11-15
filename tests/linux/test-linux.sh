@@ -661,6 +661,19 @@ check "home edit: icon shape and app names, a page added"     '^shell: home icon
 run $SHELL_BIN build-linux/test/disk.img "sleep:1"
 check "the icons' shape, the app names and the pages are kept across a restart"     '^home: style shape 2, size 112, names 0, pages 2$'     '!crashed|PANIC'
 
+# Home edit: a widget (Date) added from the Add sheet, kept across a restart.
+path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 223 1196; click; add sleep:1.2
+go 117 870; click; add sleep:0.8; go 630 783; click; add sleep:0.8; go 631 1196; click; add sleep:1.2
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "home edit: a widget is added from the Add sheet" \
+    '^shell: home widget: added Date$' \
+    '^shell: home edit done' \
+    '!crashed|PANIC'
+run $SHELL_BIN build-linux/test/disk.img "sleep:1"
+check "the widget is kept across a restart" \
+    '^home: 1 widgets$' \
+    '!crashed|PANIC'
+
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do
     run build-linux/selftest-$t/lkx-shell build-linux/test/disk.img "sleep:0.5"

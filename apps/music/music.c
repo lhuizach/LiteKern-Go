@@ -15,6 +15,7 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "kernel/text.h"
 #include "kernel/theme.h"
@@ -422,9 +423,37 @@ static int load(int i)
 
 static int mic_state;                           /* the mic test (below) */
 
+/* The home screen's Music widget shows what's playing and sends Previous, Play/Pause and Next: the state is
+ * kept in /dev/shm/lkx-music, and a command from the widget is left in /dev/shm/lkx-music-cmd. */
+#define STATE_FILE "/dev/shm/lkx-music"
+#define STATE_TMP "/dev/shm/lkx-music.tmp"
+#define CMD_FILE "/dev/shm/lkx-music-cmd"
+
+static void title_of(int i, char *out, int max);
+
+static void publish(void)
+{
+    static int last_cur = -2, last_playing = -1;
+    if (cur == last_cur && playing == last_playing)
+        return;                         /* nothing new */
+    last_cur = cur;
+    last_playing = playing;
+    char title[K86_NAME_MAX] = "";
+    if (cur >= 0)
+        title_of(cur, title, sizeof(title));
+    FILE *f = fopen(STATE_TMP, "w");
+    if (!f)
+        return;
+    fprintf(f, "%s\n%s\n", cur < 0 ? "stopped" : playing ? "playing" : "paused", title);
+    fclose(f);
+    rename(STATE_TMP, STATE_FILE);
+}
+
 static void set_timer(void)
 {
-    k86_timer_set(playing || mic_state ? 40 : wg_list_gliding(&list) ? 16 : 0);
+    publish();
+    /* Idle it still wakes now and then, to take a command from the widget. */
+    k86_timer_set(playing || mic_state ? 40 : wg_list_gliding(&list) ? 16 : 300);
 }
 
 static void start(int i)
@@ -751,8 +780,41 @@ static void present_list(void)
 
 /* --- events ----------------------------------------------------------------------------------- */
 
+static void layout(void);
+static void draw_all(void);
+static void go_next(int dir);
+static void pause_play(void);
+
+/* A command the home screen's widget left: 1 if there was one. */
+static int poll_commands(void)
+{
+    FILE *f = fopen(CMD_FILE, "r");
+    if (!f)
+        return 0;
+    char cmd[16] = "";
+    if (!fgets(cmd, sizeof(cmd), f))
+        cmd[0] = '\0';
+    fclose(f);
+    unlink(CMD_FILE);
+    if (!strncmp(cmd, "toggle", 6))
+        pause_play();
+    else if (!strncmp(cmd, "next", 4))
+        go_next(1);
+    else if (!strncmp(cmd, "prev", 4))
+        go_next(-1);
+    else
+        return 0;
+    layout();
+    draw_all();
+    publish();
+    set_timer();
+    return 1;
+}
+
 static void on_timer(void)
 {
+    if (poll_commands())
+        return;
     if (mic_state) {
         static char last_note[64];
         int was = mic_state;
@@ -882,6 +944,7 @@ int main(void)
     layout();
     draw_all();
     k86_log("music: open");
+    set_timer();                        /* publishes the state, and wakes now and then for the widget */
     for (;;) {
         struct k86_event ev;
         if (k86_wait_event(&ev))
@@ -912,6 +975,7 @@ int main(void)
         case K86_EVENT_CLOSE:
             stop_sound();
             mic_stop();
+            unlink(STATE_FILE);
             return 0;
         default:
             break;

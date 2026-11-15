@@ -22,7 +22,7 @@ struct app {
     int pinned;             /* a favourite: always in the dock (kerns.json "pinned") */
 };
 
-#define APPS_MAX 16
+#define APPS_MAX 24
 extern struct app builtin_apps[APPS_MAX];
 extern int builtin_app_count;
 
