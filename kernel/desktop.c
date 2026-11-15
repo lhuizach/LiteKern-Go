@@ -1725,7 +1725,7 @@ static void drw_tick(void)
 #define EDIT_CARD_Y 104                 /* the card's top, under the status bar */
 #define EDIT_BAR_H 120
 #define PANEL_H 540
-#define EDIT_FRAME_MS 45                /* the wiggle's frames */
+#define EDIT_FRAME_MS 24                /* the wiggle's frames */
 #define HANDLE_R 11
 #define HANDLE_HIT 40
 #define KNOB_R 22
