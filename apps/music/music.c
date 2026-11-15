@@ -1,13 +1,13 @@
-/* Music: plays the .wav files in the music folder, /extras/music on the phone (the big storage
+/* Music: plays the .wav and .mp3 files in the music folder, /extras/music on the phone (the big storage
  * area; copy files there over ssh for now). A list of tracks, and below it the player: the title,
  * the time, a bar to tap or drag to seek, Previous / Play-Pause / Next. The next track starts by itself.
  *
  * The sound goes out through sdk/audio.h (the loudspeaker, or the headphones when they're in),
  * at the volume of the volume keys. It keeps playing when you go to another app.
  *
- * Only .wav for now (8 or 16 bit, mono or stereo, any rate: it's resampled to 48 kHz here). A track
- * is read from the file as it plays, so it can be any length. MP3 would take far less space, and is
- * the next step. No floating point, no malloc. */
+ * .wav (8 or 16 bit, mono or stereo, any rate) and .mp3 (minimp3, third_party/minimp3); everything is
+ * resampled to 48 kHz here. A track is read from the file as it plays, so it can be any length. An MP3 is
+ * decoded a frame at a time; its length is estimated from the bit rate. No malloc. */
 #include <dirent.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +21,7 @@
 #include "kernel/widget.h"
 #include "sdk/audio.h"
 #include "sdk/kern86.h"
+#include "apps/music/mp3dec.h"
 
 #define MAX_TRACKS 128
 #define MUSIC_DIR "/extras/music"
@@ -57,10 +58,10 @@ static uint32_t shown_sec = ~0u;                /* the second the player shows *
 
 /* --- the folder ------------------------------------------------------------------------------- */
 
-static int ends_wav(const char *n)
+static int ends_audio(const char *n)
 {
     size_t l = strlen(n);
-    return l > 4 && n[l - 4] == '.' && (n[l - 3] | 32) == 'w' && (n[l - 2] | 32) == 'a' && (n[l - 1] | 32) == 'v';
+    return l > 4 && (!strcasecmp(n + l - 4, ".wav") || !strcasecmp(n + l - 4, ".mp3"));
 }
 
 static void scan(void)
@@ -71,7 +72,7 @@ static void scan(void)
     if (d) {
         struct dirent *e;
         while ((e = readdir(d)) && ntracks < MAX_TRACKS) {
-            if (e->d_name[0] == '.' || !ends_wav(e->d_name) || strlen(e->d_name) >= K86_NAME_MAX)
+            if (e->d_name[0] == '.' || !ends_audio(e->d_name) || strlen(e->d_name) >= K86_NAME_MAX)
                 continue;
             char path[K86_PATH_MAX + K86_NAME_MAX + 8];
             struct stat st;
@@ -195,7 +196,7 @@ static void fill(uint32_t i)
 }
 
 /* One source frame as 16-bit left and right. */
-static void frame_at(uint32_t i, int *l, int *r)
+static void wav_frame_at(uint32_t i, int *l, int *r)
 {
     if (i < rb_first || i >= rb_first + rb_count) {
         fill(i);
@@ -213,6 +214,151 @@ static void frame_at(uint32_t i, int *l, int *r)
         *l = (p[0] - 128) << 8;
         *r = src_channels == 2 ? (p[1] - 128) << 8 : *l;
     }
+}
+
+/* --- an MP3 file ------------------------------------------------------------------------------ */
+/* Decoded a frame at a time into a small window of source frames, read forward as the track plays.
+ * The length is worked out from the first frame's bit rate (a constant-rate file is exact, a
+ * variable-rate one is a little off), and a seek goes to the same share of the file. */
+
+#define MP3_WIN (MP3_FRAME_MAX * 4)
+static int is_mp3;
+static uint32_t mp3_start;                      /* where the sound starts in the file (after any ID3 tag) */
+static uint32_t mp3_bytes;                      /* the sound's bytes */
+static uint8_t mp3_in[16384];                   /* the file as it's read */
+static int mp3_in_pos, mp3_in_len, mp3_eof;
+static int16_t mp3_win[MP3_WIN * 2];
+static uint32_t mp3_first;                      /* the source frame the window starts at */
+static int mp3_count;                           /* frames in the window */
+
+static int mp3_refill(void)
+{
+    if (mp3_eof)
+        return 0;
+    if (mp3_in_pos > 0) {
+        memmove(mp3_in, mp3_in + mp3_in_pos, (size_t)(mp3_in_len - mp3_in_pos));
+        mp3_in_len -= mp3_in_pos;
+        mp3_in_pos = 0;
+    }
+    size_t got = fread(mp3_in + mp3_in_len, 1, sizeof(mp3_in) - (size_t)mp3_in_len, fp);
+    if (got == 0)
+        mp3_eof = 1;
+    mp3_in_len += (int)got;
+    return (int)got;
+}
+
+/* Decodes the next frame and adds it to the window (the oldest frames drop off). 0 at the end. */
+static int mp3_next(void)
+{
+    static int16_t pcm[MP3_FRAME_MAX * 2];
+    for (int tries = 0; tries < 64; tries++) {
+        if (mp3_in_len - mp3_in_pos < 4096 && !mp3_eof)
+            mp3_refill();
+        if (mp3_in_len - mp3_in_pos <= 4)
+            return 0;
+        struct mp3_info mi;
+        int n = mp3_frame(mp3_in + mp3_in_pos, mp3_in_len - mp3_in_pos, pcm, &mi);
+        if (mi.used <= 0)
+            return 0;                           /* nothing that looks like a frame left */
+        mp3_in_pos += mi.used;
+        if (n <= 0)
+            continue;                           /* a tag or junk, skipped */
+        if (mi.channels == 1)                   /* the window is always stereo */
+            for (int i = n - 1; i >= 0; i--)
+                pcm[i * 2] = pcm[i * 2 + 1] = pcm[i];
+        int drop = mp3_count + n - MP3_WIN;
+        if (drop > 0) {
+            memmove(mp3_win, mp3_win + drop * 2, (size_t)(mp3_count - drop) * 4);
+            mp3_count -= drop;
+            mp3_first += (uint32_t)drop;
+        }
+        memcpy(mp3_win + mp3_count * 2, pcm, (size_t)n * 4);
+        mp3_count += n;
+        return 1;
+    }
+    return 0;
+}
+
+/* The file's first frame gives the format; the ID3 tag in front is skipped. */
+static int parse_mp3(FILE *f, uint32_t size)
+{
+    uint8_t h[10];
+    mp3_start = 0;
+    if (fseek(f, 0, SEEK_SET) || fread(h, 1, 10, f) != 10)
+        return -1;
+    if (!memcmp(h, "ID3", 3))
+        mp3_start = 10 + ((uint32_t)(h[6] & 0x7f) << 21 | (uint32_t)(h[7] & 0x7f) << 14 |
+                          (uint32_t)(h[8] & 0x7f) << 7 | (uint32_t)(h[9] & 0x7f));
+    if (mp3_start >= size)
+        return -1;
+    mp3_bytes = size - mp3_start;
+    mp3_reset();
+    is_mp3 = 1;
+    mp3_in_pos = mp3_in_len = mp3_eof = 0;
+    mp3_count = 0;
+    mp3_first = 0;
+    if (fseek(f, (long)mp3_start, SEEK_SET))
+        return -1;
+    /* decode one frame to learn the format and bit rate */
+    static int16_t pcm[MP3_FRAME_MAX * 2];
+    struct mp3_info mi = { 0, 0, 0, 0 };
+    for (int tries = 0; tries < 64; tries++) {
+        if (mp3_in_len - mp3_in_pos < 4096 && !mp3_eof)
+            mp3_refill();
+        if (mp3_in_len - mp3_in_pos <= 4)
+            return -1;
+        int n = mp3_frame(mp3_in + mp3_in_pos, mp3_in_len - mp3_in_pos, pcm, &mi);
+        if (mi.used <= 0)
+            return -1;
+        mp3_in_pos += mi.used;
+        if (n > 0)
+            break;
+        mi.hz = 0;
+    }
+    if (mi.hz < 8000 || mi.hz > 48000 || mi.kbps <= 0 || (mi.channels != 1 && mi.channels != 2))
+        return -2;
+    src_rate = (uint32_t)mi.hz;
+    src_channels = mi.channels;
+    src_bits = 16;
+    nframes = (uint32_t)((uint64_t)mp3_bytes * 8 * src_rate / ((uint64_t)mi.kbps * 1000));
+    /* start over, so the first frame is played too */
+    mp3_reset();
+    mp3_in_pos = mp3_in_len = mp3_eof = 0;
+    mp3_count = 0;
+    mp3_first = 0;
+    fseek(f, (long)mp3_start, SEEK_SET);
+    return nframes ? 0 : -1;
+}
+
+static void mp3_frame_at(uint32_t i, int *l, int *r)
+{
+    if (i < mp3_first || i >= mp3_first + (uint32_t)mp3_count + 44100) {   /* a seek: the same share of the file */
+        uint64_t off = (uint64_t)mp3_bytes * i / (nframes ? nframes : 1);
+        mp3_reset();
+        mp3_in_pos = mp3_in_len = mp3_eof = 0;
+        mp3_count = 0;
+        mp3_first = i;
+        fseek(fp, (long)(mp3_start + off), SEEK_SET);
+    }
+    while (i >= mp3_first + (uint32_t)mp3_count)
+        if (!mp3_next())
+            break;
+    if (i < mp3_first || i >= mp3_first + (uint32_t)mp3_count) {
+        *l = *r = 0;
+        return;
+    }
+    const int16_t *p = mp3_win + (size_t)(i - mp3_first) * 2;
+    *l = p[0];
+    *r = p[1];
+}
+
+/* One source frame as 16-bit left and right, from whichever kind of file this is. */
+static void frame_at(uint32_t i, int *l, int *r)
+{
+    if (is_mp3)
+        mp3_frame_at(i, l, r);
+    else
+        wav_frame_at(i, l, r);
 }
 
 /* --- playing ---------------------------------------------------------------------------------- */
@@ -252,7 +398,12 @@ static int load(int i)
     char path[K86_PATH_MAX + K86_NAME_MAX + 8];
     snprintf(path, sizeof(path), "%s/%s", folder, files[i].name);
     fp = fopen(path, "rb");
-    if (!fp || parse_wav(fp, files[i].size)) {
+    is_mp3 = 0;
+    size_t fl = strlen(files[i].name);
+    int bad = !fp;
+    if (!bad)
+        bad = !strcasecmp(files[i].name + fl - 4, ".mp3") ? parse_mp3(fp, files[i].size) : parse_wav(fp, files[i].size);
+    if (bad) {
         if (fp) {
             fclose(fp);
             fp = 0;
@@ -454,7 +605,7 @@ static void draw_list(void)
         wg_list_draw(&canvas, &list);
     } else {
         wg_label_centred(&canvas, canvas.w / 2, top + 80, "No music yet", WG_TEXT_TITLE);
-        wg_label_centred(&canvas, canvas.w / 2, top + 130, "Put .wav files in", WG_TEXT_DIM);
+        wg_label_centred(&canvas, canvas.w / 2, top + 130, "Put .wav or .mp3 files in", WG_TEXT_DIM);
         wg_label_centred(&canvas, canvas.w / 2, top + 160, MUSIC_DIR, WG_TEXT_DIM);
     }
 }

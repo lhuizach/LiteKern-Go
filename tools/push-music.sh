@@ -5,7 +5,7 @@
 #   bash tools/push-music.sh song.wav "another song.mp3" ...
 #   bash tools/push-music.sh ~/Music/album/*
 #
-# The Music app plays WAV only for now. Anything else (MP3, FLAC, ...) is turned into 16 bit stereo
+# The Music app plays WAV and MP3 as they are. Anything else (FLAC, M4A, ...) is turned into 16 bit stereo
 # 48 kHz WAV first, which needs ffmpeg on this PC (apt install ffmpeg in WSL). No admin on the phone.
 # Songs stay across restarts (they're in the extras area, not the system).
 set -euo pipefail
@@ -19,7 +19,7 @@ for f in "$@"; do
     [ -f "$f" ] || { echo "skip (not a file): $f" >&2; continue; }
     base=$(basename "$f"); ext=${base##*.}; ext=${ext,,}; stem=${base%.*}
     case "$ext" in
-        wav) src=$f; out="$stem.wav" ;;
+        wav|mp3) src=$f; out="$stem.$ext" ;;
         *)
             command -v ffmpeg >/dev/null || { echo "skip (needs ffmpeg to convert): $f" >&2; continue; }
             ffmpeg -loglevel error -y -i "$f" -ac 2 -ar 48000 -c:a pcm_s16le "$tmp/$stem.wav"
