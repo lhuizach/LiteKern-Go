@@ -11,6 +11,8 @@
 #include <string.h>
 #include <sound/asound.h>
 #include <sys/ioctl.h>
+#include <signal.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -307,4 +309,132 @@ void k86_audio_tone(int hz, int ms)
     }
     usleep((unsigned)((uint64_t)2 * period * 1000000ull / (unsigned)rate));   /* the last of it is still in the ring */
     k86_audio_close();
+}
+
+/* A beep that doesn't hold the app up: a small child process plays it and goes. One at a time;
+ * a beep asked for while the last is still playing is dropped (a game's blips are not music). */
+void k86_audio_beep(int hz1, int ms1, int hz2, int ms2)
+{
+    static pid_t child;
+    static int ignoring;
+    if (!ignoring) {
+        signal(SIGCHLD, SIG_IGN);               /* no zombies: nobody waits for the child */
+        ignoring = 1;
+    }
+    if (child > 0 && kill(child, 0) == 0)
+        return;
+    child = fork();
+    if (child != 0)
+        return;
+    k86_audio_tone(hz1, ms1);
+    if (hz2 > 0)
+        k86_audio_tone(hz2, ms2);
+    _exit(0);
+}
+
+/* ---- The microphone (the phone's own mic, "Tertiary MI2S" capture, device 1) ---- */
+#define MIC_DEV 1
+
+static int mic = -1, mic_ch;
+
+int k86_mic_open(int rate)
+{
+    if (mic >= 0)
+        return 0;
+    if (ctl < 0)
+        ctl_open();
+    if (ctl >= 0) {                             /* the codec's analog mic path */
+        ctl_set("CIC1 MUX", 1);                 /* AMIC */
+        ctl_set("DEC1 MUX", 1);                 /* ADC1 */
+        ctl_set("ADC1 Volume", 6);
+        ctl_set("TX1 Digital Volume", 84);
+    }
+    char path[48];
+    int fd = -1;
+    for (int card = 0; card < 4 && fd < 0; card++) {
+        snprintf(path, sizeof(path), "/dev/snd/pcmC%dD%dc", card, MIC_DEV);
+        fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    }
+    if (fd < 0)
+        return -ENODEV;
+    int err = -EINVAL;
+    for (int ch = 1; ch <= 2; ch++) {           /* mono if the hardware does it, else stereo */
+        struct snd_pcm_hw_params hw;
+        memset(&hw, 0xff, sizeof(hw));
+        for (int v = 0; v <= SNDRV_PCM_HW_PARAM_LAST_INTERVAL - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL; v++) {
+            struct snd_interval *i = &hw.intervals[v];
+            memset(i, 0, sizeof(*i));
+            i->max = ~0u;
+        }
+        hw.rmask = ~0u;
+        hw.cmask = 0;
+        hw.info = ~0u;
+        set_mask(&hw, SNDRV_PCM_HW_PARAM_ACCESS, SNDRV_PCM_ACCESS_RW_INTERLEAVED);
+        set_mask(&hw, SNDRV_PCM_HW_PARAM_FORMAT, SNDRV_PCM_FORMAT_S16_LE);
+        set_mask(&hw, SNDRV_PCM_HW_PARAM_SUBFORMAT, SNDRV_PCM_SUBFORMAT_STD);
+        set_interval(&hw, SNDRV_PCM_HW_PARAM_CHANNELS, (unsigned)ch);
+        set_interval(&hw, SNDRV_PCM_HW_PARAM_RATE, (unsigned)rate);
+        if (ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &hw) < 0) {
+            err = -errno;
+            continue;
+        }
+        unsigned per = hw.intervals[SNDRV_PCM_HW_PARAM_PERIOD_SIZE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min;
+        struct snd_pcm_sw_params sw;
+        memset(&sw, 0, sizeof(sw));
+        sw.tstamp_mode = SNDRV_PCM_TSTAMP_NONE;
+        sw.period_step = 1;
+        sw.avail_min = 1;
+        sw.start_threshold = 1;                 /* starts with the first read */
+        sw.stop_threshold = ~0u;                /* an overrun keeps going, it doesn't stop */
+        sw.xfer_align = 1;
+        sw.proto = SNDRV_PCM_VERSION;
+        (void)per;
+        if (ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS, &sw) < 0 || ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) < 0) {
+            err = -errno;
+            continue;
+        }
+        mic = fd;
+        mic_ch = ch;
+        ioctl(mic, SNDRV_PCM_IOCTL_START);
+        return 0;
+    }
+    close(fd);
+    return err;
+}
+
+int k86_mic_read(int16_t *frames, int count)
+{
+    if (mic < 0)
+        return -ENODEV;
+    int16_t tmp[256 * 2];
+    int done = 0;
+    while (done < count) {
+        int n = count - done < 256 ? count - done : 256;
+        struct snd_xferi x = { .buf = tmp, .frames = (snd_pcm_uframes_t)n };
+        if (ioctl(mic, SNDRV_PCM_IOCTL_READI_FRAMES, &x) < 0) {
+            if (errno == EPIPE) {               /* overrun: the app was too slow; carry on */
+                ioctl(mic, SNDRV_PCM_IOCTL_PREPARE);
+                ioctl(mic, SNDRV_PCM_IOCTL_START);
+                continue;
+            }
+            if (errno == EAGAIN || errno == EINTR)
+                break;
+            return done ? done : -errno;
+        }
+        for (int i = 0; i < (int)x.result; i++)
+            frames[done + i] = tmp[i * mic_ch];     /* the first channel */
+        done += (int)x.result;
+        if (x.result < (snd_pcm_sframes_t)n)
+            break;
+    }
+    return done;
+}
+
+void k86_mic_close(void)
+{
+    if (mic < 0)
+        return;
+    ioctl(mic, SNDRV_PCM_IOCTL_DROP);
+    close(mic);
+    mic = -1;
 }

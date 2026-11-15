@@ -41,4 +41,16 @@ int k86_volume(void);
  * for a click or a game's blip, not for music. */
 void k86_audio_tone(int hz, int ms);
 
+/* The same, but it returns at once (a child process plays it): for a game's blips. A second
+ * note (hz2 > 0) follows the first. A beep asked for while the last is still playing is dropped. */
+void k86_audio_beep(int hz1, int ms1, int hz2, int ms2);
+
+/* The microphone: mono, 16 bit, no volume applied. A game or a call reads it from its timer.
+ *   k86_mic_open(48000);  n = k86_mic_read(frames, count);  k86_mic_close();
+ * Read returns how many frames were there (0: none yet, try later), never waits. Close it when
+ * done: it also stops the recording. 0 or -errno from open. */
+int k86_mic_open(int rate);
+int k86_mic_read(int16_t *frames, int count);
+void k86_mic_close(void);
+
 #endif

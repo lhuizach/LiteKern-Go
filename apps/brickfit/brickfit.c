@@ -4,6 +4,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
+#include "sdk/audio.h"
 
 #define BOARD_SIDE 8
 #define OFFER_COUNT 3
@@ -862,6 +863,12 @@ static void drop_piece(void)
     }
     dragging = 0;
     place_active_piece();
+    if (game_over)
+        k86_audio_beep(220, 140, 147, 260);
+    else if (clear_rows || clear_cols)
+        k86_audio_beep(660, 70, 990, 110);
+    else
+        k86_audio_beep(330, 45, 0, 0);
     if (game_over) {
         draw_all();
         draw_modal();
