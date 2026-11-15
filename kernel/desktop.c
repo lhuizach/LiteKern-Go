@@ -1349,7 +1349,26 @@ static const uint32_t *icon_shaped(const struct icon *ic, int w)
             }
         }
     }
-    if (home_shape) {                   /* the shape: a rounded square whose corner radius is a share of the side */
+    if (home_shape) {                   /* solid: the icon over its own tile's colour, so the corners the shape shows are filled */
+        uint32_t sum_r = 0, sum_g = 0, sum_b = 0, n = 0;
+        for (int side = 0; side < 4; side++)
+            for (int off = 2; off <= 10; off += 4) {
+                int sx = side == 0 ? ic->w / 2 : side == 1 ? ic->w / 2 : side == 2 ? off : ic->w - 1 - off;
+                int sy = side == 0 ? off : side == 1 ? ic->h - 1 - off : ic->h / 2;
+                uint32_t e = ic->px[sy * ic->w + sx];
+                if ((e >> 24) >= 230) {
+                    sum_r += e >> 16 & 255;
+                    sum_g += e >> 8 & 255;
+                    sum_b += e & 255;
+                    n++;
+                    break;                  /* the nearest to this edge that is solid */
+                }
+            }
+        uint32_t bgc = n ? (sum_r / n) << 16 | (sum_g / n) << 8 | (sum_b / n) : 0x1c1c20;
+        for (int i = 0; i < w * w; i++) {
+            uint32_t px = out[i], al = px >> 24;
+            out[i] = 0xff000000u | (al == 255 ? px & 0xffffff : gfx_mix(px & 0xffffff, bgc, al));
+        }
         int pct = home_shape == 1 ? 24 : home_shape == 2 ? 50 : 8;
         int rr = w * 16 * pct / 100, half = w * 8 - rr;           /* in sixteenths of a pixel */
         for (int y = 0; y < w; y++)
@@ -1641,8 +1660,9 @@ static void draw_topbar(void)
     struct gfx_rect bar = { 0, 0, S()->w, t->topbar_h };
     if (!visible(bar))
         return;
-    uint32_t bg = t->topbar_bg;             /* black on every screen, as on Phosh */
-    gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
+    uint32_t bg = t->topbar_bg;             /* black on every screen, as on Phosh, but clear over the home screen */
+    if (!home_shown())
+        gfx_fill_rect(VS, VX(0), VY(0), bar.w, bar.h, bg);
     bar_fg = SHELL_FG;
     int ty = (t->topbar_h - text_height(TEXT_BOLD)) / 2;
     char text[24];
@@ -1952,6 +1972,14 @@ static void edit_damage(void)           /* the card's picture changes: all of it
 
 static void edit_dirty(struct gfx_rect r);
 
+static int panel_top(void);
+
+static void edit_sheet_damage(void)     /* the popup sheet, when what it shows changes */
+{
+    if (edit_panel || panel_top() < S()->h)
+        shell_damage((struct gfx_rect){ 0, panel_top() - 40, S()->w, S()->h - panel_top() + 40 });
+}
+
 static void edit_page_rect(struct gfx_rect r)       /* a page rectangle, on screen */
 {
     int x0, y0, x1, y1;
@@ -2154,6 +2182,7 @@ static const char *const bar_names[5] = { "Clock", "Apps", "Icons", "Pages", "Do
 #define CHIP_H 56
 static struct gfx_rect pn_close(void) { return (struct gfx_rect){ S()->w - 24 - 130, panel_top() + 16, 130, CHIP_H }; }
 static struct gfx_rect pn_reset(void) { return (struct gfx_rect){ S()->w - 24 - 130 - 12 - 130, panel_top() + 16, 130, CHIP_H }; }
+static struct gfx_rect pn_date(void) { return (struct gfx_rect){ S()->w - 24 - 3 * 130 - 2 * 12, panel_top() + 16, 130, CHIP_H }; }
 static struct gfx_rect pn_font(int i)
 {
     int w = (S()->w - 2 * PANEL_SIDE - 3 * 10) / 4;
@@ -2348,7 +2377,7 @@ static void draw_panel(void)
     ed_chip(pn_close(), "Close", 0, 0);
     for (int i = 0; i < 7; i++)
         ed_chip(pn_font(i), font_names[i], h->font == i, 0);
-    ed_chip(pn_font(7), h->date ? "Date: on" : "Date: off", h->date, 0);
+    ed_chip(pn_date(), h->date ? "Date: on" : "Date: off", h->date, 0);
     for (int i = 0; i < 4; i++)
         ed_chip(pn_style(i), style_names[i], h->style == i, 0);
     for (int k = 0; k < 3; k++) {
@@ -2468,6 +2497,7 @@ static void home_clock_set(const struct home_clock *h, int save)
 {
     struct gfx_rect old = clk_box_r, fresh;
     lockscreen_set_home_clock(h);
+    edit_sheet_damage();
     if (rtc && clock_shown.month && old.w) {
         lockscreen_home_clock_draw(0, 0, 0, &clock_shown, 0, &fresh);
         edit_dirty(gfx_rect_union((struct gfx_rect){ old.x - 20, old.y - 20, old.w + 40, old.h + 40 },
@@ -2661,6 +2691,7 @@ static void drop_target(int a, int px, int py, int *where, int *idx)
 
 static void layout_saved(const char *what, int app)
 {
+    edit_sheet_damage();
     kprintf("shell: home layout: %s %s\n", what, builtin_apps[app].name);
     settings_save();
 }
@@ -2771,7 +2802,7 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
                         h.font = i;
                         home_clock_set(&h, 1);
                     }
-                if (inside(pn_font(7), x, y)) {
+                if (inside(pn_date(), x, y)) {
                     h.date = !h.date;
                     home_clock_set(&h, 1);
                 }

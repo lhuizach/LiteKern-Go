@@ -288,6 +288,21 @@ static int cur_size = 100;              /* the clock's size, %: 100 on the lock 
 /* src (w x h) to dst (nw x h): each column the average of the ones it covers. */
 static void shrink_cols(const uint8_t *src, int w, int h, uint8_t *dst, int nw)
 {
+    if (nw > w) {                               /* wider: each column between its two nearest, not a copy of one */
+        for (int x = 0; x < nw; x++) {
+            int at = (2 * x + 1) * w * 128 / nw - 128, ix = at >> 8, frac = at & 255;
+            if (at < 0) {
+                ix = 0;
+                frac = 0;
+            }
+            int ix1 = ix + 1 < w ? ix + 1 : ix;
+            for (int y = 0; y < h; y++) {
+                const uint8_t *r = src + (size_t)y * (size_t)w;
+                dst[(size_t)y * (size_t)nw + x] = (uint8_t)((r[ix] * (256 - frac) + r[ix1] * frac) >> 8);
+            }
+        }
+        return;
+    }
     for (int x = 0; x < nw; x++) {
         int a = x * w / nw, b = (x + 1) * w / nw;
         b = b > a ? b : a + 1;
@@ -498,7 +513,7 @@ static void clock_mask(const char *hm)
 
 static int home_mode;                   /* drawing the home screen's clock (home_enter) */
 static struct home_clock home_set;       /* its choices (defined below with their first values) */
-#define HOME_AUTO_Y 108                 /* the home clock's top by itself, under the status bar */
+#define HOME_AUTO_Y 124                 /* the home clock's top by itself, under the status bar */
 
 /* Where the digits go, on the screen. */
 static void clock_place(int *x, int *y)
@@ -515,7 +530,8 @@ static void clock_place(int *x, int *y)
     int left = cx - clk.w / 2;
     left = left < 8 ? 8 : left + clk.w > sw - 8 ? sw - 8 - clk.w : left;
     int date = text_height(TEXT_BOLD) + 12, above = c->clock_style == 3 ? date : 0, under = above ? 0 : date;
-    top = top < 60 + above ? 60 + above : top + clk.h + under > sh - 80 ? sh - 80 - under - clk.h : top;
+    int least = (home_mode ? 84 : 60) + above;      /* clear of the status bar */
+    top = top < least ? least : top + clk.h + under > sh - 80 ? sh - 80 - under - clk.h : top;
     *x = left;
     *y = top;
 }
