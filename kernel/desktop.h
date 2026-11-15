@@ -36,6 +36,9 @@ void desktop_start(void);
 /* Which apps are on the home screen, in the dock, in order, or off it: "Files|d;Clock|g;Log|h"
  * (d dock, g grid, h hidden). Kept in settings.txt; "" is the first layout. */
 void desktop_layout_set(const char *text);
+/* The home screen's looks: the icons' shape and size, the app names, the number of pages: "1 100 1 2". */
+void desktop_style_set(const char *text);
+int desktop_style_text(char *out, int max);
 int desktop_layout_text(char *out, int max);
 
 /* 1 once desktop_start() has finished. */

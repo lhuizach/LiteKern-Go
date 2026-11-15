@@ -77,7 +77,7 @@ int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len);
  * x, y: its middle, in tenths of a percent of the screen; y -1: where it goes by itself.
  * size, opacity, stretch: %. */
 struct home_clock {
-    int show, font, style, opacity, stretch, size, x, y;
+    int show, font, style, opacity, stretch, size, x, y, date;   /* date: the day and month under the digits */
 };
 const struct home_clock *lockscreen_home_clock(void);
 void lockscreen_set_home_clock(const struct home_clock *h);     /* clamps; doesn't save */

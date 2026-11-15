@@ -497,6 +497,7 @@ static void clock_mask(const char *hm)
 }
 
 static int home_mode;                   /* drawing the home screen's clock (home_enter) */
+static struct home_clock home_set;       /* its choices (defined below with their first values) */
 #define HOME_AUTO_Y 108                 /* the home clock's top by itself, under the status bar */
 
 /* Where the digits go, on the screen. */
@@ -654,6 +655,8 @@ static void draw_clock(struct gfx_surface *s, int ox, int oy)
     }
     if (ampm[0])
         text_draw(s, left + clk.w + 12 - ox, top + clk.h - text_height(TEXT_HEADING) - oy, ampm, TEXT_HEADING, WHITE);
+    if (home_mode && !home_set.date)
+        return;
     int dw = text_width(date, TEXT_BOLD), dx = left + clk.w / 2 - dw / 2;
     dx = dx < 8 ? 8 : dx + dw > S()->w - 8 ? S()->w - 8 - dw : dx;
     int dy = ls.set.clock_style == 3 ? top - 12 - text_height(TEXT_BOLD) : top + clk.h + 12;
@@ -1484,7 +1487,7 @@ int lockscreen_pack_picture(uintptr_t *phys, uint32_t *bytes, uint32_t *len)
  * size, place). It's drawn by the same code: home_enter() swaps the lock screen's clock state
  * for the home's, and home_leave() swaps it back. */
 
-static struct home_clock home_set = { 1, 0, 0, 100, 100, 100, 500, -1 };
+static struct home_clock home_set = { 1, 0, 0, 100, 100, 100, 500, -1, 1 };
 static struct clkstate clk_home = { .font = -1, .size = 100 };
 static struct glassstate glass_home = { .gen = -1 };
 static struct glassstate glass_keep;
@@ -1551,6 +1554,7 @@ void lockscreen_set_home_clock(const struct home_clock *h)
     home_set.size = clampi(h->size, 30, 250, 100);
     home_set.x = clampi(h->x, 0, 1000, 500);
     home_set.y = clampi(h->y, 0, 1000, -1);
+    home_set.date = h->date != 0;
 }
 
 void lockscreen_home_changed(void)
@@ -1569,6 +1573,13 @@ static void home_boxes(const struct rtc_time *t, struct gfx_rect *mask, struct g
     clock_mask(hm);
     clock_place(&left, &top);
     int dw = text_width(date, TEXT_BOLD), dh = text_height(TEXT_BOLD);
+    if (!home_set.date) {               /* no date: the box is the digits */
+        if (mask)
+            *mask = (struct gfx_rect){ left, top, clk.w, clk.h };
+        if (box)
+            *box = (struct gfx_rect){ left, top, clk.w, clk.h };
+        return;
+    }
     int dx = left + clk.w / 2 - dw / 2;
     dx = dx < 8 ? 8 : dx + dw > S()->w - 8 ? S()->w - 8 - dw : dx;
     int dy = ls.set.clock_style == 3 ? top - 12 - dh : top + clk.h + 12;

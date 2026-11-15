@@ -652,6 +652,15 @@ check "home edit: an app's minus takes it off the home screen"     '^shell: home
 run $SHELL_BIN build-linux/test/disk.img "sleep:1"
 check "the home screen's layout is kept across a restart"     '^home: [0-9]+ on the grid, [0-9]+ in the dock, [1-9][0-9]* off the home screen$'     '!crashed|PANIC'
 
+# Home edit: the Icons sheet (a shape, no app names), a page added; kept across a restart.
+path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 359 1196; click; add sleep:1.2
+go 441 864; click; add sleep:0.6; go 201 1034; click; add sleep:0.6; go 630 783; click; add sleep:1
+go 495 1196; click; add sleep:1.2; go 186 864; click; add sleep:0.8
+run $SHELL_BIN build-linux/test/disk.img "$P"
+check "home edit: icon shape and app names, a page added"     '^shell: home icons: shape 2, size 112, names off$'     '^shell: home pages: 2$'     '!crashed|PANIC'
+run $SHELL_BIN build-linux/test/disk.img "sleep:1"
+check "the icons' shape, the app names and the pages are kept across a restart"     '^home: style shape 2, size 112, names 0, pages 2$'     '!crashed|PANIC'
+
 # The kernel's own UI self-tests, unchanged, on Linux.
 for t in wm gfx widgets; do
     run build-linux/selftest-$t/lkx-shell build-linux/test/disk.img "sleep:0.5"
