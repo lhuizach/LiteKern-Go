@@ -1801,14 +1801,57 @@ static void screen_to_page(int sx, int sy, int *px, int *py)
 }
 
 static uint32_t *cc_px;                 /* the card as it is now, without the icons */
-static int cc_ok;
+static int cc_ok, cc_fast;              /* cc_fast: made with the quick scaler, while it moves */
 static struct gfx_rect cc_rect;         /* where it is */
+static struct gfx_rect pd[16];          /* what changed on the page since the card was made, page coordinates */
+static int npd;
+static uint32_t *bgd_px;                /* the wallpaper, dimmed, for around the card */
+static int bgd_ok;
 
-static void edit_damage(void)           /* the card's picture changes */
+static void edit_damage(void)           /* the card's picture changes: all of it */
 {
     pg_ok = 0;
     cc_ok = 0;
+    npd = 0;
     damage_all();
+}
+
+static void edit_dirty(struct gfx_rect r);
+
+static void edit_page_rect(struct gfx_rect r)       /* a page rectangle, on screen */
+{
+    int x0, y0, x1, y1;
+    page_to_screen(r.x, r.y, &x0, &y0);
+    page_to_screen(r.x + r.w, r.y + r.h, &x1, &y1);
+    shell_damage((struct gfx_rect){ x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4 });
+}
+
+/* Something in page rectangle r changed (a clock moved, an icon slid): only it is drawn again, scaled again
+ * and sent again. */
+static void edit_dirty(struct gfx_rect r)
+{
+    if (!pg_ok || !cc_ok || cc_dyn != edit_dyn()) {     /* the whole card is made again anyway */
+        damage_all();
+        return;
+    }
+    r = gfx_rect_intersect(r, (struct gfx_rect){ 0, 0, S()->w, S()->h });
+    if (gfx_rect_empty(r))
+        return;
+    for (int i = 0; i < npd;) {
+        if (touches(r, pd[i])) {
+            r = gfx_rect_union(r, pd[i]);
+            pd[i] = pd[--npd];
+            i = 0;
+        } else {
+            i++;
+        }
+    }
+    if (npd == 16) {
+        edit_damage();
+        return;
+    }
+    pd[npd++] = r;
+    edit_page_rect((struct gfx_rect){ r.x - 24, r.y - 24, r.w + 48, r.h + 48 });    /* a margin: the frame's dots */
 }
 
 static void edit_frame(void)            /* only the wiggle moves: each icon's own box, so little has to be drawn and sent */
@@ -1866,39 +1909,74 @@ static void edit_exit(void)
     edit_damage();
 }
 
-/* The page shrunk into the card: each of its pixels from four of the page's, so a shrunk letter stays smooth. */
+/* The page shrunk into the card: each of its pixels from four of the page's, so a shrunk letter stays smooth
+ * (while the zoom moves, from one: quicker). Only the card's rectangle (lx, ly, lw, lh), in the card's own
+ * coordinates. */
+static void edit_scale_part(int lx, int ly, int lw, int lh)
+{
+    if (!pg_px || !cc_px)
+        return;
+    int pw = S()->w, ph = S()->h, cw = cc_rect.w;
+    uint32_t step = (uint32_t)((uint64_t)65536 * 256 / (uint32_t)edit_zoom());
+    static int xmap[4096];
+    if (lw > 4096 || lw <= 0 || lh <= 0)
+        return;
+    for (int i = 0; i < lw; i++) {
+        int sx = (int)((uint32_t)(lx + i) * step >> 16);
+        xmap[i] = sx > pw - 2 ? pw - 2 : sx;
+    }
+    for (int y = ly; y < ly + lh; y++) {
+        int sy = (int)((uint32_t)y * step >> 16);
+        sy = sy > ph - 2 ? ph - 2 : sy;
+        const uint32_t *r0 = pg_px + (size_t)sy * (size_t)pw, *r1 = r0 + pw;
+        uint32_t *dp = cc_px + (size_t)y * (size_t)cw + lx;
+        if (cc_fast) {
+            for (int i = 0; i < lw; i++)
+                dp[i] = r0[xmap[i]];
+        } else {
+            for (int i = 0; i < lw; i++) {
+                int sx = xmap[i];
+                uint32_t a = r0[sx], b = r0[sx + 1], c = r1[sx], d = r1[sx + 1];
+                dp[i] = (a >> 2 & 0x3f3f3f) + (b >> 2 & 0x3f3f3f) + (c >> 2 & 0x3f3f3f) + (d >> 2 & 0x3f3f3f);
+            }
+        }
+    }
+}
+
 static void edit_make_card(struct gfx_rect card)
 {
     if (!pg_px)
         return;
-    int pw = S()->w, ph = S()->h;
     if (!cc_px) {
         uint32_t bytes = (uint32_t)(S()->w * S()->h * 4);
         cc_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
         if (!cc_px)
             return;
     }
-    uint32_t step = (uint32_t)((uint64_t)65536 * 256 / (uint32_t)edit_zoom());
-    static int xmap[4096];
-    if (card.w > 4096)
-        return;
-    for (int i = 0; i < card.w; i++) {
-        int sx = (int)((uint32_t)i * step >> 16);
-        xmap[i] = sx > pw - 2 ? pw - 2 : sx;
-    }
-    for (int y = 0; y < card.h; y++) {
-        int sy = (int)((uint32_t)y * step >> 16);
-        sy = sy > ph - 2 ? ph - 2 : sy;
-        const uint32_t *r0 = pg_px + (size_t)sy * (size_t)pw, *r1 = r0 + pw;
-        uint32_t *dp = cc_px + (size_t)y * (size_t)card.w;
-        for (int i = 0; i < card.w; i++) {
-            int sx = xmap[i];
-            uint32_t a = r0[sx], b = r0[sx + 1], c = r1[sx], d = r1[sx + 1];
-            dp[i] = (a >> 2 & 0x3f3f3f) + (b >> 2 & 0x3f3f3f) + (c >> 2 & 0x3f3f3f) + (d >> 2 & 0x3f3f3f);
-        }
-    }
     cc_rect = card;
+    edit_scale_part(0, 0, card.w, card.h);
     cc_ok = 1;
+}
+
+/* The page's rectangle r drawn again into the page, and scaled into the card again. */
+static void edit_refresh_part(struct gfx_rect r)
+{
+    struct gfx_surface pgs = { pg_px, S()->w, S()->h, S()->w };
+    struct gfx_view v = { gfx_sub(&pgs, r), r.x, r.y };
+    struct gfx_view *outer = V;
+    V = &v;
+    wallpaper_draw(VS, v.ox, v.oy, 0);
+    edit_hide_icons = !edit_dyn();
+    draw_home();
+    edit_hide_icons = 0;
+    V = outer;
+    int z = edit_zoom();
+    int x0 = r.x * z / 256 - 2, y0 = r.y * z / 256 - 2, x1 = (r.x + r.w) * z / 256 + 3, y1 = (r.y + r.h) * z / 256 + 3;
+    x0 = x0 < 0 ? 0 : x0;
+    y0 = y0 < 0 ? 0 : y0;
+    x1 = x1 > cc_rect.w ? cc_rect.w : x1;
+    y1 = y1 > cc_rect.h ? cc_rect.h : y1;
+    edit_scale_part(x0, y0, x1 - x0, y1 - y0);
 }
 
 static void edit_render_page(void)
@@ -1919,6 +1997,7 @@ static void edit_render_page(void)
     edit_hide_icons = 0;
     V = outer;
     pg_ok = 1;
+    npd = 0;
 }
 
 static int panel_top(void)
@@ -2060,6 +2139,36 @@ static void draw_panel(void)
     }
 }
 
+/* Around the card: the wallpaper, dimmed (kept, so it isn't dimmed again on every frame). */
+static void edit_surround(struct gfx_rect card, struct gfx_rect view)
+{
+    if (!bgd_px) {
+        uint32_t bytes = (uint32_t)(S()->w * S()->h * 4);
+        bgd_px = (uint32_t *)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    }
+    if (bgd_px && !bgd_ok) {
+        struct gfx_surface b = { bgd_px, S()->w, S()->h, S()->w };
+        wallpaper_draw(&b, 0, 0, 150);
+        bgd_ok = 1;
+    }
+    if (!bgd_px) {
+        wallpaper_draw(VS, V->ox, V->oy, 150);
+        return;
+    }
+    struct gfx_surface b = { bgd_px, S()->w, S()->h, S()->w };
+    struct gfx_rect strips[4] = {
+        { view.x, view.y, view.w, card.y - view.y },                                   /* above */
+        { view.x, card.y + card.h, view.w, view.y + view.h - card.y - card.h },        /* below */
+        { view.x, card.y, card.x - view.x, card.h },                                   /* left */
+        { card.x + card.w, card.y, view.x + view.w - card.x - card.w, card.h },        /* right */
+    };
+    for (int k = 0; k < 4; k++) {
+        struct gfx_rect r = gfx_rect_intersect(strips[k], view);
+        if (!gfx_rect_empty(r))
+            gfx_blit(VS, VX(r.x), VY(r.y), &b, r.x, r.y, r.w, r.h);
+    }
+}
+
 static void draw_edit(void)
 {
     int p = edit_p();
@@ -2068,13 +2177,19 @@ static void draw_edit(void)
     struct gfx_rect vis = gfx_rect_intersect(card, view);
     int inside_card = vis.x == view.x && vis.y == view.y && vis.w == view.w && vis.h == view.h;
     if (!inside_card) {                 /* the wiggle's frames are all inside it: no need to draw the rest */
-        wallpaper_draw(VS, V->ox, V->oy, (uint32_t)(150 * p / 256));
+        edit_surround(card, view);
         gfx_shadow(VS, VX(card.x), VY(card.y), card.w, card.h, 0, 26, (uint32_t)(130 * p / 256));
     }
-    if (!cc_ok || cc_rect.w != card.w || cc_rect.h != card.h || cc_dyn != edit_dyn()) {
+    int moving = edit_moving && edit_sp.x != edit_sp.t;
+    if (!cc_ok || cc_rect.w != card.w || cc_rect.h != card.h || cc_dyn != edit_dyn() || cc_fast != moving) {
         if (!pg_ok || cc_dyn != edit_dyn())
             edit_render_page();
+        cc_fast = moving;
         edit_make_card(card);
+    } else if (npd) {                   /* a few parts changed: only they are drawn and scaled again */
+        for (int i = 0; i < npd; i++)
+            edit_refresh_part(pd[i]);
+        npd = 0;
     }
     if (cc_px && !gfx_rect_empty(vis)) {
         struct gfx_surface cc = { cc_px, card.w, card.h, card.w };
@@ -2126,8 +2241,15 @@ static void draw_edit(void)
 /* The clock's choices changed: draw it, and keep them. */
 static void home_clock_set(const struct home_clock *h, int save)
 {
+    struct gfx_rect old = clk_box_r, fresh;
     lockscreen_set_home_clock(h);
-    edit_damage();
+    if (rtc && clock_shown.month && old.w) {
+        lockscreen_home_clock_draw(0, 0, 0, &clock_shown, 0, &fresh);
+        edit_dirty(gfx_rect_union((struct gfx_rect){ old.x - 20, old.y - 20, old.w + 40, old.h + 40 },
+                                  (struct gfx_rect){ fresh.x - 20, fresh.y - 20, fresh.w + 40, fresh.h + 40 }));
+    } else {
+        edit_damage();
+    }
     if (save) {
         const struct home_clock *n = lockscreen_home_clock();
         kprintf("shell: home clock font %d style %d opacity %d stretch %d size %d at %d,%d\n", n->font, n->style,
@@ -2248,8 +2370,11 @@ static void layout_place(int a, int where, int idx)
         struct gfx_rect now = tile_base(i);
         off_x[i] = home_has(i) ? (before[i].x - now.x) * 256 : 0;
         off_y[i] = home_has(i) ? (before[i].y - now.y) * 256 : 0;
+        if (!home_has(i))
+            edit_dirty(before[i]);
+        else if (before[i].x != now.x || before[i].y != now.y)
+            edit_dirty(gfx_rect_union(before[i], now));
     }
-    edit_damage();
 }
 
 /* Where the dragged icon would go: in the dock or on the grid, and at which place (a cell). */
@@ -2431,18 +2556,20 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             if (!ed_lift && (px - hold_x) * (px - hold_x) + (py - hold_y) * (py - hold_y) > 24 * 24) {
                 ed_lift = 1;            /* picked up */
                 off_x[ed_app] = off_y[ed_app] = 0;
-                edit_damage();
+                edit_damage();          /* from here the icons are in the card's picture */
             }
             if (ed_lift) {
+                int sz = HOME_ICON * 118 / 100 + 48;
+                edit_dirty((struct gfx_rect){ ed_px - sz / 2, ed_py - sz / 2, sz, sz });
                 ed_px = px + ed_grab_x;
                 ed_py = py + ed_grab_y;
+                edit_dirty((struct gfx_rect){ ed_px - sz / 2, ed_py - sz / 2, sz, sz });
                 int where, idx;
                 drop_target(ed_app, ed_px, ed_py, &where, &idx);
                 int cw = dock_slot(ed_app) >= 0 ? W_DOCK : W_GRID;
                 int ci = cw == W_DOCK ? dock_slot(ed_app) : grid_index(ed_app);
                 if (where != cw || idx != ci)
                     layout_place(ed_app, where, idx);
-                edit_damage();
             }
         } else if (ed_drag == D_MOVE) {
             int nx = (px + ed_grab_x) * 1000 / S()->w, ny = (py + ed_grab_y) * 1000 / S()->h;
@@ -2513,18 +2640,28 @@ static void edit_tick(void)
             last_edit_tick = now;
             if (edit_on && edit_sp.t == 0 && now - edit_start_ms >= EDIT_ZOOM_DELAY_MS)
                 edit_sp.t = FX(256);
-            int a = 1, b = 1, was_x = edit_sp.x;
+            int a = 1, b = 1, was_x = edit_sp.x, was_top = panel_top();
+            struct gfx_rect was_card = edit_card();
             for (uint32_t s = 0; s < (steps > 4 ? 4 : steps); s++) {
                 if (!(edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS))
                     a = spring_step(&edit_sp, 30, 150);
                 b = spring_step(&panel_sp, 36, 150);
             }
             edit_moving = a || b || (edit_on && now - edit_start_ms < EDIT_ZOOM_DELAY_MS);
-            if (edit_sp.x != was_x) {
-                cc_ok = 0;              /* the zoom moved: the card is scaled again from the page, drawn once */
+            if (edit_sp.x != was_x) {   /* the zoom moved: the card is scaled again from the page, drawn once */
+                cc_ok = 0;
+                struct gfx_rect u = gfx_rect_union(was_card, edit_card());
+                shell_damage((struct gfx_rect){ u.x - 30, u.y - 30, u.w + 60, u.h + 60 });
+                if (edit_p() >= 256 || edit_p() == 0)
+                    shell_damage((struct gfx_rect){ 0, 0, S()->w, S()->h });
+            }
+            if (panel_top() != was_top) {                       /* the sheet slid: only its strip */
+                int top = (panel_top() < was_top ? panel_top() : was_top) - 40;
+                shell_damage((struct gfx_rect){ 0, top, S()->w, S()->h - top });
+            }
+            if (!edit_moving && cc_fast) {                      /* it has stopped: the smooth picture */
+                cc_ok = 0;
                 damage_all();
-            } else {
-                damage_all();           /* only the sheet slid */
             }
         }
     }
@@ -2532,22 +2669,24 @@ static void edit_tick(void)
     for (int i = 0; i < APPS_MAX; i++)
         if (off_x[i] || off_y[i]) {
             sliding = 1;
+            struct gfx_rect r = tile_rect(i);
+            edit_dirty((struct gfx_rect){ r.x - 8, r.y - 8, r.w + 16, r.h + 16 });
             off_x[i] = off_x[i] / 2 + off_x[i] / 8;     /* about 60% of it left each step */
             off_y[i] = off_y[i] / 2 + off_y[i] / 8;
             if (off_x[i] > -512 && off_x[i] < 512)
                 off_x[i] = 0;
             if (off_y[i] > -512 && off_y[i] < 512)
                 off_y[i] = 0;
+            r = tile_rect(i);
+            edit_dirty((struct gfx_rect){ r.x - 8, r.y - 8, r.w + 16, r.h + 16 });
         }
-    if (sliding || ed_lift) {
+    if (sliding || ed_lift)
         edit_moving = 1;
-        edit_damage();
-    }
+    if (edit_on && !pg_ok && edit_p() == 0 && now - edit_start_ms > 120)
+        edit_render_page();             /* ready before the zoom starts */
     if (edit_on && now - last_wiggle >= EDIT_FRAME_MS) {        /* the wiggle: a frame at a time */
         last_wiggle = now;
-        if (edit_dyn())
-            edit_damage();
-        else
+        if (!edit_dyn())
             edit_frame();
     }
     if (edit_on || edit_moving)
@@ -3183,6 +3322,7 @@ void desktop_refresh(void)
     if (!started)
         return;
     pg_ok = 0;
+    bgd_ok = 0;
     lockscreen_home_changed();
     damage_all();
     shell_flush();
@@ -4978,7 +5118,8 @@ void desktop_tick(void)
         struct gfx_rect box;
         lockscreen_home_clock_draw(0, 0, 0, &clock_shown, 0, &box);
         shell_damage((struct gfx_rect){ 0, box.y - 20, S()->w, box.h + 40 });
-        pg_ok = 0;
+        if (edit_on)
+            edit_dirty((struct gfx_rect){ 0, box.y - 20, S()->w, box.h + 40 });
     }
     shell_flush();
 }
