@@ -544,6 +544,39 @@ static void finger(void *ctx, int x, int y, int down)
     plat_pointer(px, py, buttons);
 }
 
+/* Where the fingers are, for an app that wants more than the pointer (Gallery's pinch): /dev/shm/lkx-touch2,
+ * six int32: a counter, how many fingers are down, the pointer finger's x and y, another finger's x and y, all in
+ * screen pixels (sdk/touch2.h reads it). Written when it changes. */
+static void publish_fingers(struct dev *d)
+{
+    static int fd = -2;
+    static int32_t last[6], seq;
+    int32_t v[6];
+    int x1, y1, x2, y2;
+    if (fd == -2)
+        fd = open("/dev/shm/lkx-touch2", O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0)
+        return;
+    if (!seq) {                             /* what an earlier run left is out of date */
+        static const int32_t zero[6];
+        if (pwrite(fd, zero, sizeof(zero), 0) < 0)
+            return;
+    }
+    v[1] = touch_fingers(&d->fingers_seen, &x1, &y1, &x2, &y2);
+    v[2] = scale(x1, &d->ax, sw);
+    v[3] = scale(y1, &d->ay, sh);
+    v[4] = scale(x2, &d->ax, sw);
+    v[5] = scale(y2, &d->ay, sh);
+    if (v[1] < 2)
+        v[4] = v[5] = 0;                    /* nothing to say about a second finger */
+    if (v[1] == last[1] && v[2] == last[2] && v[3] == last[3] && v[4] == last[4] && v[5] == last[5])
+        return;
+    memcpy(last, v, sizeof(last));
+    v[0] = ++seq;
+    if (pwrite(fd, v, sizeof(v), 0) < 0)
+        close(fd), fd = -1;
+}
+
 static void read_device(struct dev *d)
 {
     struct input_event evs[64];
@@ -560,6 +593,7 @@ static void read_device(struct dev *d)
                 touch_abs(&d->fingers_seen, e->code, e->value);
             } else if (d->mt && e->type == EV_SYN && e->code == SYN_REPORT) {
                 touch_sync(&d->fingers_seen, finger, d);
+                publish_fingers(d);
             } else if (d->mt && e->type == EV_KEY) {
                 /* BTN_TOUCH: the fingers say it all */
             } else if (d->pad && e->type == EV_KEY && tool_fingers(e->code)) {

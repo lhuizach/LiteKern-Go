@@ -19,6 +19,9 @@ static int shown_w, shown_h;
 
 /* --- memory: one block at K86_HEAP, handed out in order, let go all at once --- */
 
+static int view_on, view_fast;           /* the zoom (below): on, and drawn roughly */
+static int32_t view_s, view_cx, view_cy;
+
 static uint32_t used, mapped;
 
 static void *alloc(uint32_t n)
@@ -106,6 +109,7 @@ static void still_here(void)
 int picture_open(int vol, const char *dir, const struct k86_dirent *e, const char **why)
 {
     release();
+    view_on = 0;
     if (e->size > FILE_MAX) {
         *why = "Pictures up to 32 MB can be opened.";
         return -1;
@@ -210,6 +214,126 @@ static char *num(char *p, int v)
     return p;
 }
 
+/* --- zoom (Gallery's pinch): the view is a window onto the full-size picture --------------------- */
+
+/* All in 16.16 fixed point: view_s is screen pixels per picture pixel, view_cx/cy the picture point in the
+ * middle of the view. view_on is 0 while the picture is simply fitted. */
+
+static int32_t fit_of(struct gfx_rect r)
+{
+    int info_h = text_height(TEXT_SMALL) + 12;
+    int aw = r.w, ah = r.h - info_h;
+    if (!pic.px || pic.w < 1 || pic.h < 1 || aw < 1 || ah < 1)
+        return 65536;
+    if (pic.w <= aw && pic.h <= ah)
+        return 65536;
+    int64_t sw = ((int64_t)aw << 16) / pic.w, sh = ((int64_t)ah << 16) / pic.h;
+    return (int32_t)(sw < sh ? sw : sh);
+}
+
+int picture_zoomed(void)
+{
+    return view_on;
+}
+
+void picture_zoom_reset(void)
+{
+    view_on = 0;
+    view_fast = 0;
+}
+
+/* Where the view is now: s 0 if it's only fitted. fit is the fitted scale. */
+void picture_zoom_get(struct gfx_rect r, int32_t *fit, int32_t *s, int32_t *cx, int32_t *cy)
+{
+    int32_t f = fit_of(r);
+    *fit = f;
+    *s = view_on ? view_s : f;
+    *cx = view_on ? view_cx : (int32_t)((int64_t)pic.w << 15);
+    *cy = view_on ? view_cy : (int32_t)((int64_t)pic.h << 15);
+}
+
+/* Show the picture at scale s around (cx, cy), kept inside the picture. fast: draw roughly (while fingers move). */
+void picture_zoom_set(struct gfx_rect r, int32_t s, int32_t cx, int32_t cy, int fast)
+{
+    int info_h = text_height(TEXT_SMALL) + 12;
+    int aw = r.w, ah = r.h - info_h;
+    int32_t f = fit_of(r);
+    int64_t smax = (int64_t)f * 8 > 2 * 65536 ? (int64_t)f * 8 : 2 * 65536;
+    if (!pic.px || aw < 1 || ah < 1)
+        return;
+    if (s > smax)
+        s = (int32_t)smax;
+    view_fast = fast;
+    if (s <= f + f / 64) {              /* about the fitted size: just fitted */
+        view_on = 0;
+        return;
+    }
+    int64_t half_w = ((int64_t)aw << 31) / s, half_h = ((int64_t)ah << 31) / s;   /* half the view, in picture pixels (16.16) */
+    int64_t pw = (int64_t)pic.w << 16, ph = (int64_t)pic.h << 16;
+    if (half_w * 2 >= pw)
+        cx = (int32_t)(pw / 2);
+    else
+        cx = cx < half_w ? (int32_t)half_w : cx > pw - half_w ? (int32_t)(pw - half_w) : cx;
+    if (half_h * 2 >= ph)
+        cy = (int32_t)(ph / 2);
+    else
+        cy = cy < half_h ? (int32_t)half_h : cy > ph - half_h ? (int32_t)(ph - half_h) : cy;
+    view_s = s;
+    view_cx = cx;
+    view_cy = cy;
+    view_on = 1;
+}
+
+#define ZOOM_COLS 2048
+
+static void draw_zoomed(struct gfx_surface *c, struct gfx_rect r, int aw, int ah)
+{
+    static int xi[3][ZOOM_COLS];
+    uint32_t bg = theme_get()->window_bg & 0xffffff;
+    int n = 1;
+    if (!view_fast && view_s < 65536)
+        n = view_s < 32768 ? 3 : 2;         /* shrinking: average a few samples, so it isn't jagged */
+    if (aw > ZOOM_COLS)
+        aw = ZOOM_COLS;
+    int64_t step = (65536LL << 16) / view_s;    /* one screen pixel, in picture pixels (16.16) */
+    for (int dx = 0; dx < aw; dx++) {
+        int64_t ix = view_cx + (((int64_t)(2 * dx + 1 - aw) << 15) << 16) / view_s;
+        for (int k = 0; k < n; k++) {
+            int64_t p = (ix + (int64_t)(2 * k + 1 - n) * step / (2 * n)) >> 16;
+            xi[k][dx] = p < 0 ? 0 : p >= pic.w ? pic.w - 1 : (int)p;
+        }
+    }
+    for (int dy = 0; dy < ah; dy++) {
+        int64_t iy = view_cy + (((int64_t)(2 * dy + 1 - ah) << 15) << 16) / view_s;
+        int yi[3];
+        for (int k = 0; k < n; k++) {
+            int64_t p = (iy + (int64_t)(2 * k + 1 - n) * step / (2 * n)) >> 16;
+            yi[k] = p < 0 ? 0 : p >= pic.h ? pic.h - 1 : (int)p;
+        }
+        uint32_t *out = c->px + (size_t)(r.y + dy) * (size_t)c->stride + (size_t)r.x;
+        for (int dx = 0; dx < aw; dx++) {
+            uint32_t sr = 0, sg = 0, sb = 0;
+            for (int ky = 0; ky < n; ky++) {
+                const uint32_t *row = pic.px + (size_t)yi[ky] * (size_t)pic.w;
+                for (int kx = 0; kx < n; kx++) {
+                    uint32_t px = row[xi[kx][dx]], a = px >> 24;
+                    if (a == 255) {
+                        sr += px >> 16 & 255;
+                        sg += px >> 8 & 255;
+                        sb += px & 255;
+                    } else {
+                        sr += ((px >> 16 & 255) * a + (bg >> 16 & 255) * (255 - a)) / 255;
+                        sg += ((px >> 8 & 255) * a + (bg >> 8 & 255) * (255 - a)) / 255;
+                        sb += ((px & 255) * a + (bg & 255) * (255 - a)) / 255;
+                    }
+                }
+            }
+            uint32_t d = (uint32_t)(n * n);
+            out[dx] = 0xff000000u | (sr / d) << 16 | (sg / d) << 8 | (sb / d);
+        }
+    }
+}
+
 void picture_draw(struct gfx_surface *c, struct gfx_rect r)
 {
     const struct theme *t = theme_get();
@@ -221,6 +345,10 @@ void picture_draw(struct gfx_surface *c, struct gfx_rect r)
     }
     /* Fitted: as big as fits, never bigger than it is. */
     int aw = r.w, ah = r.h - info_h, w = pic.w, h = pic.h;
+    if (view_on) {
+        draw_zoomed(c, r, aw, ah);
+        goto info;
+    }
     if (w > aw || h > ah) {
         if ((int64_t)w * ah > (int64_t)h * aw) {
             h = (int)((int64_t)h * aw / w);
@@ -249,7 +377,7 @@ void picture_draw(struct gfx_surface *c, struct gfx_rect r)
             gfx_fill_rect(c, x + cx, y + cy, w - cx < 8 ? w - cx : 8, h - cy < 8 ? h - cy : 8,
                           ((cx ^ cy) & 8) ? c2 : c1);
     gfx_blit_alpha(c, x, y, shown, w, h, w);
-
+info:;
     char info[96], *p = num(info, pic.w);
     const char *times = " " TEXT_TIMES " ";
     while (*times)

@@ -85,3 +85,25 @@ void touch_sync(struct touch *t, touch_emit emit, void *ctx)
         emit(ctx, s->x, s->y, 1);
     }
 }
+
+int touch_fingers(const struct touch *t, int *x1, int *y1, int *x2, int *y2)
+{
+    int n = 0, other = -1;
+    *x1 = *y1 = *x2 = *y2 = 0;
+    for (int i = 0; i < TOUCH_SLOTS; i++) {
+        if (t->s[i].id < 0)
+            continue;
+        n++;
+        if (i != t->active)
+            other = i;
+    }
+    if (t->active >= 0) {
+        *x1 = t->s[t->active].x;
+        *y1 = t->s[t->active].y;
+    }
+    if (other >= 0) {
+        *x2 = t->s[other].x;
+        *y2 = t->s[other].y;
+    }
+    return n;
+}

@@ -24,5 +24,8 @@ void touch_init(struct touch *t);
 void touch_abs(struct touch *t, int code, int value);
 /* At SYN_REPORT: what those events mean for the pointer. */
 void touch_sync(struct touch *t, touch_emit emit, void *ctx);
+/* How many fingers are down, and where the pointer's finger (x1, y1) and one other (x2, y2) are, in the
+ * device's units: what a pinch needs. The other is the newest finger that isn't the pointer's. */
+int touch_fingers(const struct touch *t, int *x1, int *y1, int *x2, int *y2);
 
 #endif

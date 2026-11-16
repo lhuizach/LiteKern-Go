@@ -83,5 +83,34 @@ int main(void)
     land(3, 6, 7, 7);
     land(4, 7, 8, 8);
     bad += check("two land in one report", "D7,7 U7,7 D8,8 ");
+
+    /* where the fingers are, for a pinch: the pointer's and another */
+    lift(3);
+    lift(4);
+    touch_sync(&t, emit, 0);
+    got[0] = 0;
+    {
+        int x1, y1, x2, y2, n;
+        n = touch_fingers(&t, &x1, &y1, &x2, &y2);
+        printf("%s  no fingers: none counted\n", n == 0 ? "PASS" : "FAIL");
+        bad += n != 0;
+        land(0, 8, 100, 200);
+        touch_sync(&t, emit, 0);
+        land(1, 9, 300, 400);
+        touch_sync(&t, emit, 0);
+        got[0] = 0;
+        move(0, 110, 210);
+        touch_sync(&t, emit, 0);
+        n = touch_fingers(&t, &x1, &y1, &x2, &y2);
+        int ok = n == 2 && x1 == 300 && y1 == 400 && x2 == 110 && y2 == 210;
+        printf("%s  two fingers: the pointer's (newest) and the other, which still moves (n %d, %d,%d and %d,%d)\n",
+               ok ? "PASS" : "FAIL", n, x1, y1, x2, y2);
+        bad += !ok;
+        lift(1);
+        touch_sync(&t, emit, 0);
+        n = touch_fingers(&t, &x1, &y1, &x2, &y2);
+        printf("%s  one lifts: one finger left\n", n == 1 ? "PASS" : "FAIL");
+        bad += n != 1;
+    }
     return bad;
 }

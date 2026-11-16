@@ -18,6 +18,7 @@
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
 #include "apps/files/picture.h"
+#include "sdk/touch2.h"
 
 #define MAX_PICS 96
 #define COLS 3
@@ -58,6 +59,9 @@ static int last_y;
 static int viewing = -1;                /* the picture shown, or -1: the grid */
 static struct wg_button b_lock, b_wall, b_delete;
 static int asking;                      /* Delete's question */
+static int pinching;                    /* two fingers are on the picture (the zoom, below) */
+static int pinch_update(void);
+static void pinch_end(void);
 static struct wg_dialog dialog;
 static char status[96];
 static int status_bad;
@@ -348,6 +352,17 @@ static void close_viewer(void)
     draw_grid();
 }
 
+/* Back: out of the zoom first, then out of the picture. */
+static void back_from_viewer(void)
+{
+    if (viewing >= 0 && picture_zoomed()) {
+        picture_zoom_reset();
+        draw_viewer();
+        return;
+    }
+    close_viewer();
+}
+
 static void step_viewer(int step)
 {
     int i = viewing + step;
@@ -399,6 +414,8 @@ static void timer(void)
     int busy = 0, changed = 0;
     static int was_busy;
     uint32_t now = k86_uptime_ms();
+    if (viewing >= 0 && pinching && !pinch_update())
+        pinch_end();                        /* the fingers left without another pointer event */
     if (viewing < 0 && now - last_poll >= POLL_MS - 100) {   /* a picture taken or deleted elsewhere (Camera) */
         last_poll = now;
         if (folders_signature() != pic_sig) {
@@ -421,7 +438,7 @@ static void timer(void)
     if (viewing < 0 && (busy || was_busy || changed))
         draw_grid();
     was_busy = busy;
-    k86_timer_set(busy || fling ? TICK_MS : POLL_MS);
+    k86_timer_set(busy || fling || pinching ? TICK_MS : POLL_MS);
 }
 
 static void grid_pointer(const struct wg_pointer *p, uint32_t ms)
@@ -474,8 +491,143 @@ static void grid_pointer(const struct wg_pointer *p, uint32_t ms)
         draw_grid();
 }
 
+/* --- zoom: two fingers spread or pinch the picture, one finger drags it when it's zoomed ------------------ */
+
+static struct gfx_rect pic_area(void)
+{
+    return (struct gfx_rect){ 0, 16, canvas.w, b_lock.r.y - 16 - text_height(TEXT_SMALL) - 24 };
+}
+
+static int off_x, off_y, have_off;      /* screen pixels minus canvas pixels (from the pointer's own finger) */
+static int32_t pz_s0, pz_cx0, pz_cy0;   /* the view when the pinch began (16.16) */
+static int pz_d0, pz_mx0, pz_my0;       /* the fingers' distance and middle then (canvas pixels) */
+static int panning, pan_x, pan_y;
+static int32_t pan_cx, pan_cy;
+
+static int isqrt(int64_t v)
+{
+    int64_t r = 0, b = 1LL << 40;
+    while (b > v)
+        b >>= 2;
+    for (; b; b >>= 2) {
+        if (v >= r + b) {
+            v -= r + b;
+            r = (r >> 1) + b;
+        } else {
+            r >>= 1;
+        }
+    }
+    return (int)r;
+}
+
+static void zoom_show(int fast)
+{
+    picture_draw(&canvas, pic_area());
+    (void)fast;
+}
+
+/* The fingers now: 1 if two are down (the pinch carries on). */
+static int pinch_update(void)
+{
+    struct k86_touch2 t;
+    struct gfx_rect a = pic_area();
+    int info_h = text_height(TEXT_SMALL) + 12;
+    int aw = a.w, ah = a.h - info_h;
+    if (!have_off || !k86_touch2(&t) || t.n < 2)
+        return 0;
+    int mx = (t.x1 + t.x2) / 2 - off_x, my = (t.y1 + t.y2) / 2 - off_y;
+    int d = isqrt((int64_t)(t.x2 - t.x1) * (t.x2 - t.x1) + (int64_t)(t.y2 - t.y1) * (t.y2 - t.y1));
+    int32_t fit, s, cx, cy;
+    if (!pinching) {
+        pinching = 1;
+        dragging = 0;
+        panning = 0;
+        pz_d0 = d < 8 ? 8 : d;
+        pz_mx0 = mx;
+        pz_my0 = my;
+        picture_zoom_get(a, &fit, &pz_s0, &pz_cx0, &pz_cy0);
+        k86_timer_set(TICK_MS);             /* the fingers are watched every tick, too */
+        return 1;
+    }
+    int32_t s0 = pz_s0;
+    picture_zoom_get(a, &fit, &s, &cx, &cy);
+    int64_t ns = (int64_t)s0 * d / pz_d0;
+    if (ns < fit)
+        ns = fit;
+    if (ns > (int64_t)0x7fffffff / 2)
+        ns = 0x7fffffff / 2;
+    /* The picture point that was under the fingers' middle stays under it. */
+    int64_t vcx = a.x + aw / 2, vcy = a.y + ah / 2;
+    int64_t px = pz_cx0 + (((int64_t)(pz_mx0 - vcx) << 16) << 16) / pz_s0;
+    int64_t py = pz_cy0 + (((int64_t)(pz_my0 - vcy) << 16) << 16) / pz_s0;
+    int64_t ncx = px - (((int64_t)(mx - vcx) << 16) << 16) / ns;
+    int64_t ncy = py - (((int64_t)(my - vcy) << 16) << 16) / ns;
+    picture_zoom_set(a, (int32_t)ns, (int32_t)ncx, (int32_t)ncy, 1);
+    zoom_show(1);
+    return 1;
+}
+
+static void pinch_end(void)
+{
+    struct gfx_rect a = pic_area();
+    int32_t fit, s, cx, cy;
+    pinching = 0;
+    panning = 0;
+    picture_zoom_get(a, &fit, &s, &cx, &cy);
+    picture_zoom_set(a, s, cx, cy, 0);      /* drawn properly now */
+    zoom_show(0);
+    k86_timer_set(POLL_MS);
+}
+
+/* A pointer event in the viewer, before the buttons: 1 if the zoom took it. */
+static int zoom_pointer(const struct wg_pointer *p)
+{
+    struct k86_touch2 t;
+    struct gfx_rect a = pic_area();
+    if (p->held || p->down) {
+        if (k86_touch2(&t) && t.n >= 1) {
+            off_x = t.x1 - p->x;
+            off_y = t.y1 - p->y;
+            have_off = 1;
+        }
+    }
+    if (pinch_update())
+        return 1;
+    if (pinching) {                         /* fewer than two fingers now: the pinch is over */
+        pinch_end();
+        return 1;
+    }
+    if (picture_zoomed()) {                 /* zoomed: one finger drags the picture */
+        if (p->down && p->y >= a.y && p->y < a.y + a.h) {
+            int32_t fit;
+            panning = 1;
+            pan_x = p->x;
+            pan_y = p->y;
+            picture_zoom_get(a, &fit, &pz_s0, &pan_cx, &pan_cy);
+            return 1;
+        }
+        if (panning && p->held) {
+            int32_t fit, s, cx, cy;
+            picture_zoom_get(a, &fit, &s, &cx, &cy);
+            int64_t ncx = pan_cx - (((int64_t)(p->x - pan_x) << 16) << 16) / s;
+            int64_t ncy = pan_cy - (((int64_t)(p->y - pan_y) << 16) << 16) / s;
+            picture_zoom_set(a, s, (int32_t)ncx, (int32_t)ncy, 1);
+            zoom_show(1);
+            return 1;
+        }
+        if (panning && p->up) {
+            panning = 0;
+            pinch_end();
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void viewer_pointer(const struct wg_pointer *p)
 {
+    if (!asking && zoom_pointer(p))
+        return;
     if (asking) {
         int r = wg_dialog_pointer(&dialog, p);
         if (r == 0) {
@@ -539,7 +691,7 @@ static void key(const struct key_event *k)
     }
     if (viewing >= 0) {
         if (k->key == KEY_ESC)
-            close_viewer();                 /* the phone's Back */
+            back_from_viewer();             /* the phone's Back */
         else if (k->key == KEY_RIGHT)
             step_viewer(1);
         else if (k->key == KEY_LEFT)
@@ -591,7 +743,7 @@ int main(void)
         case K86_EVENT_TIMER:   timer(); break;
         case K86_EVENT_HEADER:
             if (ev.id == BACK_ID)
-                close_viewer();
+                back_from_viewer();
             break;
         case K86_EVENT_THEME:
             if (viewing >= 0)
