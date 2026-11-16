@@ -63,7 +63,7 @@ Power-up order (stock): analog, the enable pin, digital, I/O, reset low (2 ms) t
 then 5 ms. The sensor wants 26 MHz; the phone's clock controller gives 23.88, so the driver sets the clock
 registers and the PLL multiplier (226) for that.
 
-## What's built (not yet tried on the phone)
+## What's built (16 Nov 2026: it streams)
 
 - `phone/kernel/0005-a5-front-camera.patch`: `drivers/misc/s5k5e3yx.c` (a module, modelled on `imx135.c`; the
   register header is made by `tools/front-regs.py`), and the device tree: `camera@10` on the camera bus, CSI PHY 1
@@ -72,3 +72,13 @@ registers and the PLL multiplier (226) for that.
   (register 0x0101: 1 mirror, 2 flip; the stock firmware writes 3).
 - Still to do: see whether it probes (`dmesg | grep S5K5E3YX`), then find the Bayer order and orientation from a
   picture, then a front/back switch in the Camera app (the pipeline needs csiphy1, csid1 instead of 0, 0).
+
+## Result so far (16 Nov 2026)
+
+- Probe: `s5k5e3yx 9-0010: S5K5E3YX: model id 0x5e30`, powered with the stock order.
+- Opening the video node failed with -22: mainline camss powers the VFE with the CSID's own number, and the
+  8916 has one VFE. `0006-camss-csid1-uses-vfe0.patch` makes CSID 1 use VFE 0.
+- `CAM_FRONT=1 CAM_SIZE=1920x1080 camgrab NAME` (phone/tools/camgrab.c) gets frames: a real picture, sideways
+  (the sensor is mounted rotated, mount angle 270). The two lanes with `data-lanes = <0 2>` work.
+- Not yet: the Bayer order and colours (grey-world gains came out 0.77 / 0.76, so check `order`), the full
+  2576x1932 mode, the front/back switch in the Camera app, and the picture's orientation and mirroring.
