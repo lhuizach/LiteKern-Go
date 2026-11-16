@@ -151,6 +151,8 @@ static void set_fmt(const char *name, int pad)
     close(fd);
 }
 
+static int link_flags = MEDIA_LNK_FL_ENABLED;      /* 0: switch the link off (quietly) */
+
 static void link_pads(const char *from, int from_pad, const char *to, int to_pad)
 {
     struct media_entity_desc a, b;
@@ -164,8 +166,8 @@ static void link_pads(const char *from, int from_pad, const char *to, int to_pad
     l.sink.entity = b.id;
     l.sink.index = to_pad;
     l.sink.flags = MEDIA_PAD_FL_SINK;
-    l.flags = MEDIA_LNK_FL_ENABLED;
-    if (ioctl(media, MEDIA_IOC_SETUP_LINK, &l))
+    l.flags = (uint32_t)link_flags;
+    if (ioctl(media, MEDIA_IOC_SETUP_LINK, &l) && link_flags)
         die(to);
 }
 
@@ -293,8 +295,16 @@ static void save_ppm(const uint8_t *frame, int stride, const char *path)
     free(out);
 }
 
+/* CAM_FRONT=1: the front camera (s5k5e3yx on csiphy1 and csid1; try CAM_SIZE=1920x1080 or 2576x1932). */
+static const char *sensor_name = "imx135", *phy = "msm_csiphy0", *csid = "msm_csid0";
+
 int main(int argc, char **argv)
 {
+    if (getenv("CAM_FRONT")) {
+        sensor_name = "s5k5e3yx";
+        phy = "msm_csiphy1";
+        csid = "msm_csid1";
+    }
     if (getenv("CAM_SIZE"))
         sscanf(getenv("CAM_SIZE"), "%dx%d", &W, &H);
     if (argc < 2) {
@@ -306,21 +316,33 @@ int main(int argc, char **argv)
     media = open(node ? node : "/dev/media0", O_RDWR);
     if (media < 0)
         die("media device");
-    link_pads("msm_csiphy0", 1, "msm_csid0", 0);
+    /* a run that failed leaves its links on: start from none */
+    link_flags = 0;
+    for (int p = 0; p < 2; p++)
+        for (int c = 0; c < 2; c++) {
+            char a[16], b[16];
+            snprintf(a, sizeof(a), "msm_csiphy%d", p);
+            snprintf(b, sizeof(b), "msm_csid%d", c);
+            link_pads(a, 1, b, 0);
+        }
     link_pads("msm_csid0", 1, "msm_ispif0", 0);
+    link_pads("msm_csid1", 1, "msm_ispif0", 0);
+    link_flags = MEDIA_LNK_FL_ENABLED;
+    link_pads(phy, 1, csid, 0);
+    link_pads(csid, 1, "msm_ispif0", 0);
     link_pads("msm_ispif0", 1, "msm_vfe0_rdi0", 0);
-    set_fmt("imx135", 0);
-    set_fmt("msm_csiphy0", 0);
-    set_fmt("msm_csiphy0", 1);
-    set_fmt("msm_csid0", 0);
-    set_fmt("msm_csid0", 1);
+    set_fmt(sensor_name, 0);
+    set_fmt(phy, 0);
+    set_fmt(phy, 1);
+    set_fmt(csid, 0);
+    set_fmt(csid, 1);
     set_fmt("msm_ispif0", 0);
     set_fmt("msm_ispif0", 1);
     set_fmt("msm_vfe0_rdi0", 0);
     set_fmt("msm_vfe0_rdi0", 1);
 
     struct media_entity_desc se, ve;
-    find("imx135", &se);
+    find(sensor_name, &se);
     sensor = open_node(&se);
     set_ctrl(V4L2_CID_EXPOSURE, exposure);
     set_ctrl(V4L2_CID_ANALOGUE_GAIN, gain_code);

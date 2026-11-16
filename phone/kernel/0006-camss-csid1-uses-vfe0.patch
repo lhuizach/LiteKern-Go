@@ -1,0 +1,32 @@
+--- a/drivers/media/platform/qcom/camss/camss.c	2026-11-16 17:22:41.948964153 +0000
++++ b/drivers/media/platform/qcom/camss/camss.c	2026-11-16 17:22:41.964848466 +0000
+@@ -1637,10 +1637,21 @@
+ 	}
+ }
+ 
++/*
++ * The MSM8916 has two CSIDs but one VFE, and both CSIDs feed it (through the ISPIF): so a CSID
++ * past the last VFE uses the first one. (LiteKern Go: the front camera is on CSID 1.)
++ */
++static int vfe_for_csid(struct camss *camss, int id)
++{
++	return id < camss->res->vfe_num ? id : 0;
++}
++
+ static int vfe_parent_dev_ops_get(struct camss *camss, int id)
+ {
+ 	int ret = -EINVAL;
+ 
++	id = vfe_for_csid(camss, id);
++
+ 	if (id < camss->res->vfe_num) {
+ 		struct vfe_device *vfe = &camss->vfe[id];
+ 
+@@ -1652,6 +1663,7 @@
+ 
+ static int vfe_parent_dev_ops_put(struct camss *camss, int id)
+ {
++	id = vfe_for_csid(camss, id);
+ 	if (id < camss->res->vfe_num) {
+ 		struct vfe_device *vfe = &camss->vfe[id];
+ 
