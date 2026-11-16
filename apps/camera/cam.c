@@ -1,6 +1,12 @@
-/* Camera: the pipeline imx135 -> csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0, set up
- * through the media device, with frames taken as they come and auto-exposure on
- * the sensor's own controls. Nothing here waits: the app polls from its timer. */
+/* Camera: the pipeline imx135 -> csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 (or, for the front
+ * camera, s5k5e3yx -> csiphy1 -> csid1 -> ispif0 -> vfe0_rdi0), set up through the media device, with
+ * frames taken as they come and auto-exposure on the sensor's own controls. Nothing here waits: the
+ * app polls from its timer.
+ *
+ * The rest of the app only knows one kind of frame: packed RAW10, red first (RGGB), CAM_W x CAM_H for
+ * the live picture, turned and flipped for the rear camera's mounting. The front sensor's frames
+ * (1920x1080, green first: GRBG) are made into that here (normalise), at the right turn for its own
+ * mounting and mirrored like a selfie view. */
 #include "cam.h"
 #include "sdk/kern86.h"
 
@@ -19,15 +25,30 @@
 
 #define CODE MEDIA_BUS_FMT_SRGGB10_1X10
 #define BUFS 4
-#define EXPOSURE_MAX 2620
+#define EXPOSURE_MAX 2620               /* the rear's; the front's live mode has 1459 */
+#define FRONT_EXPOSURE_MAX 2000
+/* The front camera streams its whole sensor (2576x1932) all the time, and the live picture and the photos use
+ * the middle 16:9 of it (1448 rows: 2576 x 1448 turned is the screen's 9:16), so what the preview shows is
+ * what the photo gets, and a photo needs no change of mode. In cells of 2 x 2 pixels: */
+#define FRONT_CELLS_W 1288
+#define FRONT_OY 121                    /* cells down to the window */
+#define FRONT_CELLS_H 724
 #define GAIN_CODE_MAX 192               /* 4x: past that it's mostly noise */
 #define TARGET 0.14f                    /* the mean brightness we aim for, linear */
 
 static int media = -1, sensor = -1, video = -1, stride;
+/* Which camera: the names of its parts, and the size its live picture really is. */
+static int front;
+static const char *s_name = "imx135", *s_phy = "msm_csiphy0", *s_csid = "msm_csid0";
+static int live_w = CAM_W, live_h = CAM_H;
+static int flip_x, flip_y;               /* the front picture's flips (see load_flips): none is upright on this phone */
+static uint8_t *norm;                   /* the front's live frame, as the app wants it */
+static int norm_stride;
 static void *mem[BUFS];
 static uint32_t mem_len[BUFS];
 static unsigned nbufs;
 static int exposure = 1600, gain_code = 128;
+static int paused;
 
 static int find(const char *prefix, struct media_entity_desc *out)
 {
@@ -109,8 +130,8 @@ static void set_ctrl(uint32_t id, int value)
 /* The size every stage works at; the sensor picks the mode of that size. */
 static int set_sizes(int w, int h)
 {
-    static const char *const nodes[] = { "msm_csiphy0", "msm_csid0", "msm_ispif0", "msm_vfe0_rdi0" };
-    if (set_fmt("imx135", 0, w, h))
+    const char *const nodes[] = { s_phy, s_csid, "msm_ispif0", "msm_vfe0_rdi0" };
+    if (set_fmt(s_name, 0, w, h))
         return -1;
     for (unsigned i = 0; i < 4; i++)
         if (set_fmt(nodes[i], 0, w, h) || set_fmt(nodes[i], 1, w, h))
@@ -118,13 +139,49 @@ static int set_sizes(int w, int h)
     return 0;
 }
 
+/* Both cameras' links off first: a link to the ISPIF that's still on from the other camera is "busy". */
+static void unlink_all(void)
+{
+    static const char *const phys[] = { "msm_csiphy0", "msm_csiphy1" }, *const csids[] = { "msm_csid0", "msm_csid1" };
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 2; j++) {
+            struct media_entity_desc a, b;
+            struct media_link_desc l;
+            if (find(phys[i], &a) || find(csids[j], &b))
+                continue;
+            memset(&l, 0, sizeof(l));
+            l.source.entity = a.id;
+            l.source.index = 1;
+            l.source.flags = MEDIA_PAD_FL_SOURCE;
+            l.sink.entity = b.id;
+            l.sink.index = 0;
+            l.sink.flags = MEDIA_PAD_FL_SINK;
+            ioctl(media, MEDIA_IOC_SETUP_LINK, &l);
+        }
+    for (int j = 0; j < 2; j++) {
+        struct media_entity_desc a, b;
+        struct media_link_desc l;
+        if (find(csids[j], &a) || find("msm_ispif0", &b))
+            continue;
+        memset(&l, 0, sizeof(l));
+        l.source.entity = a.id;
+        l.source.index = 1;
+        l.source.flags = MEDIA_PAD_FL_SOURCE;
+        l.sink.entity = b.id;
+        l.sink.index = 0;
+        l.sink.flags = MEDIA_PAD_FL_SINK;
+        ioctl(media, MEDIA_IOC_SETUP_LINK, &l);
+    }
+}
+
 static int pipeline(void)
 {
     struct media_entity_desc e;
-    if (link_pads("msm_csiphy0", 1, "msm_csid0", 0) || link_pads("msm_csid0", 1, "msm_ispif0", 0) ||
-        link_pads("msm_ispif0", 1, "msm_vfe0_rdi0", 0) || set_sizes(CAM_W, CAM_H))
+    unlink_all();
+    if (link_pads(s_phy, 1, s_csid, 0) || link_pads(s_csid, 1, "msm_ispif0", 0) ||
+        link_pads("msm_ispif0", 1, "msm_vfe0_rdi0", 0) || set_sizes(live_w, live_h))
         return -1;
-    if (find("imx135", &e) || (sensor = open_node(&e)) < 0)
+    if (find(s_name, &e) || (sensor = open_node(&e)) < 0)
         return -1;
     if (find("msm_vfe0_video0", &e) || (video = open_node(&e)) < 0)
         return -1;
@@ -210,6 +267,37 @@ static int stream_up(int w, int h, unsigned want, int exp, int gain)
     return err;
 }
 
+/* The front camera's turn: "x y" in /extras/camera-front.cfg (1 flips that way; none is upright). */
+static void load_flips(void)
+{
+    FILE *f = fopen("/extras/camera-front.cfg", "r");
+    int x, y;
+    if (f) {
+        if (fscanf(f, "%d %d", &x, &y) == 2) {
+            flip_x = x != 0;
+            flip_y = y != 0;
+        }
+        fclose(f);
+    }
+}
+
+static void choose(int want_front)
+{
+    front = want_front;
+    s_name = front ? "s5k5e3yx" : "imx135";
+    s_phy = front ? "msm_csiphy1" : "msm_csiphy0";
+    s_csid = front ? "msm_csid1" : "msm_csid0";
+    live_w = front ? 2576 : CAM_W;
+    live_h = front ? 1932 : CAM_H;
+    if (front)
+        load_flips();
+}
+
+int cam_front(void)
+{
+    return front;
+}
+
 int cam_open(void)
 {
     for (int i = 0; i < 4 && media < 0; i++) {
@@ -217,19 +305,45 @@ int cam_open(void)
         struct media_entity_desc e;
         snprintf(path, sizeof(path), "/dev/media%d", i);
         media = open(path, O_RDWR);
-        if (media >= 0 && find("imx135", &e)) {
+        if (media >= 0 && find(s_name, &e)) {
             close(media);
             media = -1;
         }
     }
     if (media < 0 || pipeline())
         return -1;
-    return stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code);
+    return stream_up(live_w, live_h, BUFS, exposure, gain_code);
+}
+
+/* The other camera. 0 when it's streaming; -1 if it wouldn't come up (the first one is back then). */
+int cam_switch(void)
+{
+    int was = front;
+    buffers_down();
+    if (sensor >= 0)
+        close(sensor);
+    if (video >= 0)
+        close(video);
+    sensor = video = -1;
+    paused = 0;
+    choose(!was);
+    if (!pipeline() && !stream_up(live_w, live_h, BUFS, exposure, gain_code))
+        return 0;
+    k86_logf("camera: the %s camera wouldn't come up", front ? "front" : "rear");
+    buffers_down();
+    if (sensor >= 0)
+        close(sensor);
+    if (video >= 0)
+        close(video);
+    sensor = video = -1;
+    choose(was);
+    if (pipeline() || stream_up(live_w, live_h, BUFS, exposure, gain_code))
+        k86_log("camera: the first camera didn't come back either");
+    return -1;
 }
 
 /* Not in front: stop the sensor and give the buffers back, so the camera costs the CPU nothing; cam_resume() brings
  * the live picture back (the lens needs focus_restore() after it, as after any restream). */
-static int paused;
 
 void cam_pause(void)
 {
@@ -244,7 +358,7 @@ int cam_resume(void)
     if (!paused)
         return 0;
     paused = 0;
-    return stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code);
+    return stream_up(live_w, live_h, BUFS, exposure, gain_code);
 }
 
 void cam_close(void)
@@ -262,7 +376,54 @@ void cam_close(void)
 
 int cam_stride(void)
 {
-    return stride;
+    return front ? norm_stride : stride;
+}
+
+/* --- the front sensor's frames, made into the rear's kind --------------------------------------------- */
+
+static inline int rd10(const uint8_t *row, int x)
+{
+    const uint8_t *g = row + (x >> 2) * 5;
+    return g[x & 3] << 2 | (g[4] >> ((x & 3) * 2) & 3);
+}
+
+/* The sensor's frame (green first, GRBG, scw x sch cells of 2 x 2 pixels) as RGGB, dw x dh pixels (dw a
+ * multiple of 4): each cell of the result takes the colours of one cell of the source, scaled (scw and dw / 2
+ * differ for the live picture) and flipped across and/or down as asked. Cells move whole, so the colours stay
+ * right. */
+static void normalise(const uint8_t *src, int sstride, int ox, int oy, int scw, int sch, uint8_t *dst, int dstride,
+                      int dw, int dh, int fx, int fy)
+{
+    int dcw = dw / 2, dch = dh / 2;
+    for (int cy = 0; cy < dch; cy++) {
+        int sy = cy * sch / dch;
+        if (fy)
+            sy = sch - 1 - sy;
+        sy += oy;
+        const uint8_t *r0 = src + (size_t)(2 * sy) * (size_t)sstride, *r1 = r0 + sstride;
+        uint8_t *d0 = dst + (size_t)(2 * cy) * (size_t)dstride, *d1 = d0 + dstride;
+        for (int cx = 0; cx < dcw; cx += 2, d0 += 5, d1 += 5) {
+            int a[2][4];                    /* [row][column] of the four pixels this group makes */
+            for (int k = 0; k < 2; k++) {
+                int sx = (cx + k) * scw / dcw;
+                if (fx)
+                    sx = scw - 1 - sx;
+                int x0 = 2 * (sx + ox);
+                a[0][2 * k] = rd10(r0, x0 + 1);         /* red */
+                a[0][2 * k + 1] = rd10(r0, x0);         /* green, in the red row */
+                a[1][2 * k] = rd10(r1, x0 + 1);         /* green, in the blue row */
+                a[1][2 * k + 1] = rd10(r1, x0);         /* blue */
+            }
+            for (int j = 0; j < 2; j++) {
+                uint8_t *d = j ? d1 : d0;
+                d[0] = (uint8_t)(a[j][0] >> 2);
+                d[1] = (uint8_t)(a[j][1] >> 2);
+                d[2] = (uint8_t)(a[j][2] >> 2);
+                d[3] = (uint8_t)(a[j][3] >> 2);
+                d[4] = (uint8_t)((a[j][0] & 3) | (a[j][1] & 3) << 2 | (a[j][2] & 3) << 4 | (a[j][3] & 3) << 6);
+            }
+        }
+    }
 }
 
 const uint8_t *cam_next(int *slot)
@@ -277,12 +438,26 @@ const uint8_t *cam_next(int *slot)
     b.length = 1;
     if (ioctl(video, VIDIOC_DQBUF, &b))
         return 0;
+    if (front) {
+        if (!norm) {
+            norm_stride = CAM_W / 4 * 5;
+            norm = malloc((size_t)norm_stride * CAM_H);
+        }
+        if (norm)
+            normalise(mem[b.index], stride, 0, FRONT_OY, FRONT_CELLS_W, FRONT_CELLS_H, norm, norm_stride, CAM_W, CAM_H,
+                      flip_x, flip_y);
+        ioctl(video, VIDIOC_QBUF, &b);          /* given back at once: the app works on the copy */
+        *slot = 0;                              /* nothing to give back: cam_release() ignores it */
+        return norm;
+    }
     *slot = (int)b.index;
     return mem[b.index];
 }
 
 void cam_release(int slot)
 {
+    if (front)
+        return;
     struct v4l2_buffer b;
     struct v4l2_plane p;
     memset(&b, 0, sizeof(b));
@@ -308,10 +483,49 @@ static const struct { int w, h, num, den; } still_modes[] = {
     { STILL_W, STILL_H, 4572, 9728 },          /* the full 4160x2340 */
     { 2080, 1170, 4572, 5120 },                /* every 2 x 2 made one: if the big one won't come up */
 };
+
+/* The front camera's photo: the next frame of the stream, which is already in the photo mode: the middle 16:9
+ * of it (2572 across, whole groups of 4 pixels) as RGGB, flipped. No restart, so no wait. */
+static uint8_t *front_still(int *w, int *h, int *row_bytes)
+{
+    uint8_t *copy = NULL;
+    for (int tries = 0; tries < 6 && !copy; tries++) {
+        struct pollfd pf = { video, POLLIN, 0 };
+        struct v4l2_buffer b;
+        struct v4l2_plane p;
+        if (poll(&pf, 1, 1000) <= 0) {
+            k86_log("camera: front photo: no frame");
+            break;
+        }
+        memset(&b, 0, sizeof(b));
+        memset(&p, 0, sizeof(p));
+        b.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        b.memory = V4L2_MEMORY_MMAP;
+        b.m.planes = &p;
+        b.length = 1;
+        if (ioctl(video, VIDIOC_DQBUF, &b))
+            continue;
+        if (tries >= 1) {                       /* the first may be older than the shutter */
+            int dw = 2572, dh = FRONT_CELLS_H * 2;
+            *row_bytes = dw / 4 * 5;
+            copy = malloc((size_t)*row_bytes * (size_t)dh);
+            if (copy)
+                normalise(mem[b.index], stride, 0, FRONT_OY, dw / 2, FRONT_CELLS_H, copy, *row_bytes, dw, dh, flip_x,
+                          flip_y);
+            *w = dw;
+            *h = dh;
+        }
+        ioctl(video, VIDIOC_QBUF, &b);
+    }
+    return copy;
+}
+
 uint8_t *cam_still(int *w, int *h, int *row_bytes, void (*settled)(void))
 {
     uint8_t *copy = NULL;
     int sw = STILL_W, sh = STILL_H, got = 0, e, up = -1;
+    if (front)
+        return front_still(w, h, row_bytes);
     buffers_down();
     for (unsigned m = 0; m < sizeof(still_modes) / sizeof(still_modes[0]) && up; m++) {
         sw = still_modes[m].w;
@@ -357,7 +571,7 @@ uint8_t *cam_still(int *w, int *h, int *row_bytes, void (*settled)(void))
         }
     }
     buffers_down();
-    if (stream_up(CAM_W, CAM_H, BUFS, exposure, gain_code))
+    if (stream_up(live_w, live_h, BUFS, exposure, gain_code))
         k86_log("camera: the live picture didn't come back");
     return copy;
 }
@@ -371,7 +585,7 @@ void cam_expose(const uint8_t *frame)
 {
     long sum = 0, bright = 0, n = 0;
     for (int y = 1; y < CAM_H; y += 8) {
-        const uint8_t *row = frame + (size_t)y * (size_t)stride;
+        const uint8_t *row = frame + (size_t)y * (size_t)cam_stride();
         for (int x = 0; x < CAM_W; x += 8) {    /* odd rows start on green */
             int v = row[x / 4 * 5];
             sum += v;
@@ -388,7 +602,8 @@ void cam_expose(const uint8_t *frame)
         return;
     ratio = ratio > 2 ? 2 : ratio < 0.5f ? 0.5f : ratio;
     float want = (float)exposure * gain_of(gain_code) * ratio;
-    int e = want > EXPOSURE_MAX ? EXPOSURE_MAX : want < 4 ? 4 : (int)want;
+    int emax = front ? FRONT_EXPOSURE_MAX : EXPOSURE_MAX;
+    int e = want > emax ? emax : want < 4 ? 4 : (int)want;
     float g = want / (float)e;
     int code = g <= 1 ? 0 : (int)(256 - 256 / g);
     code = code > GAIN_CODE_MAX ? GAIN_CODE_MAX : code;

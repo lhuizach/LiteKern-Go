@@ -209,7 +209,9 @@ static int png_decode(const uint8_t *d, uint32_t len, image_alloc_fn alloc, stru
     out->px = new_pixels(alloc, (int)p.w, (int)p.h);
     if (!raw || !out->px)
         return fail("There isn't enough memory to open it.");
+    inflate_progress = image_busy;
     int got = inflate_raw(z + 2, zn - 2, raw, raw_len);
+    inflate_progress = 0;
     if (got < 0 || (uint32_t)got < raw_len)
         return fail("The PNG file is damaged.");
     uint8_t *r = raw;

@@ -1,4 +1,5 @@
-/* LiteKern Go: Camera. A live picture from the rear camera, and a button that
+/* LiteKern Go: Camera. A live picture from the rear camera (or the front one: the button at the top right
+ * switches), and a button that
  * saves a 720x1280 photo to Pictures/Camera, where Gallery shows it, and a little
  * picture of the last photo that opens Gallery. Exposure and white balance follow
  * the scene by themselves; focus is found on opening, and with a tap wherever you want
@@ -24,6 +25,7 @@
 #define ZOOM_R 32                       /* the zoom buttons' radius, and where they sit: above the shutter */
 #define ZOOM_STEP 104
 #define NZOOMS 3
+#define SWITCH_R 38                     /* the front/back button, top right */
 
 static struct k86_window win;
 static struct gfx_surface canvas;
@@ -48,6 +50,29 @@ static int zoom_cx(int i)
 static int zoom_cy(void)
 {
     return canvas.h - BUTTON_BELOW - BUTTON_R - 56;
+}
+
+static int switch_cx(void)
+{
+    return canvas.w - 24 - SWITCH_R;
+}
+
+static int switch_cy(void)
+{
+    return 96;
+}
+
+/* Two arrows chasing each other: the other camera. */
+static void switch_draw(void)
+{
+    int cx = switch_cx(), cy = switch_cy();
+    gfx_fill_circle(&canvas, cx, cy, SWITCH_R, 0x303030);
+    gfx_thick_line(&canvas, cx - 16, cy - 9, cx + 14, cy - 9, 3, 0xffffff);
+    gfx_thick_line(&canvas, cx + 14, cy - 9, cx + 6, cy - 17, 3, 0xffffff);
+    gfx_thick_line(&canvas, cx + 14, cy - 9, cx + 6, cy - 1, 3, 0xffffff);
+    gfx_thick_line(&canvas, cx + 16, cy + 9, cx - 14, cy + 9, 3, 0xffffff);
+    gfx_thick_line(&canvas, cx - 14, cy + 9, cx - 6, cy + 1, 3, 0xffffff);
+    gfx_thick_line(&canvas, cx - 14, cy + 9, cx - 6, cy + 17, 3, 0xffffff);
 }
 
 static int thumb_x(void)
@@ -83,6 +108,7 @@ static void overlay(void)
 {
     button_draw(busy);
     zoom_draw();
+    switch_draw();
     if (have_thumb) {
         struct gfx_surface t = { thumb, THUMB, THUMB, THUMB };
         gfx_fill_rect(&canvas, thumb_x() - 3, thumb_y() - 3, THUMB + 6, THUMB + 6, 0xffffff);
@@ -119,6 +145,8 @@ static void draw_message(const char *text)
 static void focus_on(int x, int y)
 {
     int sx, sy;
+    if (cam_front())
+        return;                                 /* no lens motor in the front camera */
     photo_screen_to_sensor(x, y, &sx, &sy);
     focus_x = x;
     focus_y = y;
@@ -165,9 +193,10 @@ static void take(const uint8_t *frame)
     if (live)
         memcpy(live, frame, live_len);
     int live_stride = cam_stride();
-    uint8_t *still = cam_still(&w, &h, &rb, focus_restore);
+    uint8_t *still = cam_still(&w, &h, &rb, cam_front() ? 0 : focus_restore);
     restreamed = 1;
-    focus_restore();                            /* the lens lost its power again */
+    if (!cam_front())
+        focus_restore();                        /* the lens lost its power again */
     k86_logf("camera: the frame took %u ms (%s)", k86_uptime_ms() - job_began, still ? "photo mode" : "live frame");
     if (still) {
         free(live);
@@ -264,7 +293,8 @@ static void timer_event(void)
         } else if (front && paused) {
             if (cam_resume())
                 k86_log("camera: the live picture didn't come back");
-            focus_restore();
+            if (!cam_front())
+                focus_restore();
             paused = 0;
             k86_timer_set(FRAME_MS);
             k86_log("camera: in front again");
@@ -274,12 +304,35 @@ static void timer_event(void)
         timer();
 }
 
+/* The button: the other camera. The live picture stops for a moment while it comes up. */
+static void switch_camera(void)
+{
+    if (job || busy)
+        return;
+    int err = cam_switch();
+    frames = 0;                                 /* (no frame in hand, so no "restreamed": that would lose a buffer) */
+    focus_pending = !cam_front();               /* the front has no lens to focus */
+    if (err) {
+        say("That camera won't start");
+    } else {
+        say(cam_front() ? "Front camera" : "Rear camera");
+        k86_logf("camera: the %s camera", cam_front() ? "front" : "rear");
+    }
+}
+
 static void pointer(const struct k86_event *ev)
 {
     struct wg_pointer p = wg_pointer_make(ev->x, ev->y, ev->buttons, ev->changed, ev->time_ms);
     int dx = p.x - canvas.w / 2, dy = p.y - (canvas.h - BUTTON_BELOW);
     if (!p.up || !have_camera)
         return;
+    {
+        int sx = p.x - switch_cx(), sy = p.y - switch_cy();
+        if (sx * sx + sy * sy < (SWITCH_R + 16) * (SWITCH_R + 16)) {
+            switch_camera();
+            return;
+        }
+    }
     for (int i = 0; i < NZOOMS; i++) {
         int zx = p.x - zoom_cx(i), zy = p.y - zoom_cy();
         if (zx * zx + zy * zy < (ZOOM_R + 14) * (ZOOM_R + 14)) {

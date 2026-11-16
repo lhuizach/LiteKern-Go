@@ -13,4 +13,7 @@
  * written, or -EINVAL for a corrupt stream, -ENOSPC if out is too small. */
 int inflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len);
 
+/* Called about every 128 KB of output while it works (0 for none), so a long one can show it's alive. */
+extern void (*inflate_progress)(void);
+
 #endif

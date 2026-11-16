@@ -23,6 +23,10 @@ int cam_resume(void);              /* and start it again (0 = ok) */
 const uint8_t *cam_next(int *slot);
 void cam_release(int slot);
 int cam_stride(void);
+/* The front camera (Samsung S5K5E3YX): cam_front() says which one is in use, cam_switch() goes to the other
+ * (0 when it streams, -1 if it wouldn't come up: the first is back). Its frames come out as the rear's kind. */
+int cam_front(void);
+int cam_switch(void);
 /* A photo-sized frame (see cam.c); free() it. w, h and row_bytes say its size; settled() is called
  * once the photo mode is streaming, to put the lens back. NULL if it didn't work. */
 uint8_t *cam_still(int *w, int *h, int *row_bytes, void (*settled)(void));

@@ -101,9 +101,13 @@ static void scale(const uint32_t *src, int sw, int sh, uint32_t *dst, int dw, in
 
 /* --- opening ---------------------------------------------------------------------------- */
 
+void (*picture_progress)(void);
+
 static void still_here(void)
 {
     k86_uptime_ms();                        /* any system call tells the watchdog */
+    if (picture_progress)
+        picture_progress();
 }
 
 int picture_open(int vol, const char *dir, const struct k86_dirent *e, const char **why)

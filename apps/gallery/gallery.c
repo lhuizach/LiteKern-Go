@@ -61,6 +61,7 @@ static struct wg_button b_lock, b_wall, b_delete;
 static int asking;                      /* Delete's question */
 static int pinching;                    /* two fingers are on the picture (the zoom, below) */
 static int pinch_update(void);
+static struct gfx_rect pic_area(void);
 static void pinch_end(void);
 static struct wg_dialog dialog;
 static char status[96];
@@ -328,15 +329,58 @@ static void draw_viewer(void)
         picture_draw(&canvas, (struct gfx_rect){ 0, 16, canvas.w, b_lock.r.y - 16 - text_height(TEXT_SMALL) - 24 });
 }
 
+/* --- the spinner: twelve dots, the bright one going round, while a picture opens ---------------------- */
+
+static uint32_t spin_last;
+
+static uint32_t mix(uint32_t a, uint32_t b, int t)     /* t/256 of b over a */
+{
+    uint32_t r = ((a >> 16 & 255) * (256 - t) + (b >> 16 & 255) * t) >> 8;
+    uint32_t g = ((a >> 8 & 255) * (256 - t) + (b >> 8 & 255) * t) >> 8;
+    uint32_t bl = ((a & 255) * (256 - t) + (b & 255) * t) >> 8;
+    return r << 16 | g << 8 | bl;
+}
+
+static void spin(void)
+{
+    static const int8_t dot[12][2] = { { 0, -30 }, { 15, -26 }, { 26, -15 }, { 30, 0 }, { 26, 15 }, { 15, 26 },
+                                       { 0, 30 }, { -15, 26 }, { -26, 15 }, { -30, 0 }, { -26, -15 }, { -15, -26 } };
+    const struct theme *t = theme_get();
+    struct gfx_rect a = pic_area();
+    uint32_t now = k86_uptime_ms();
+    if (spin_last && now - spin_last < 60)
+        return;
+    spin_last = now;
+    int cx = a.x + a.w / 2, cy = a.y + (a.h - 40) / 2, head = (int)(now / 70 % 12);
+    const char *label = "Opening";
+    int lw = text_width(label, TEXT_SMALL), bw = lw > 120 ? lw + 24 : 144;
+    gfx_fill_rect(&canvas, cx - bw / 2, cy - 48, bw, 120, t->window_bg);
+    for (int k = 0; k < 12; k++) {
+        int age = (head - k + 12) % 12;
+        gfx_fill_circle(&canvas, cx + dot[k][0], cy + dot[k][1], 5, mix(t->fg, t->window_bg, age * 20));
+    }
+    text_draw(&canvas, cx - lw / 2, cy + 44, label, TEXT_SMALL, t->fg_dim);
+    k86_present(cx - bw / 2, cy - 48, bw, 120);
+}
+
 static void open_viewer(int i)
 {
     const char *why = 0;
     status[0] = '\0';
+    picture_close();                            /* the old one goes: the screen shows the spinner while the new one opens */
+    viewing = i;
+    asking = 0;
+    header();
+    layout_viewer();
+    draw_viewer();
+    spin_last = 0;
+    picture_progress = spin;
+    spin();
     if (picture_open(vol, pics[i].dir, &pics[i].e, &why)) {
         copy(status, why, sizeof(status));
         status_bad = 1;
     }
-    viewing = i;
+    picture_progress = 0;
     k86_logf("gallery: open %s", pics[i].e.name);
     header();
     layout_viewer();

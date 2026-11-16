@@ -95,9 +95,17 @@ static const uint16_t dist_base[30] = { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49,
 static const uint8_t dist_extra[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
                                         7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
 
+void (*inflate_progress)(void);
+
 static int codes(struct state *s, const struct huffman *lit, const struct huffman *dist)
 {
+    size_t next_tick = s->out_pos + 0x20000;
     for (;;) {
+        if (s->out_pos >= next_tick) {      /* every 128 KB: the caller can show it's still working */
+            next_tick = s->out_pos + 0x20000;
+            if (inflate_progress)
+                inflate_progress();
+        }
         int sym = decode(s, lit);
         if (s->error)
             return s->error;

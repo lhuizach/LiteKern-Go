@@ -32,6 +32,9 @@ void picture_zoom_set(struct gfx_rect r, int32_t s, int32_t cx, int32_t cy, int 
  * K86_WALLPAPER_LOCK (the lock screen's). 0, or -1 with *why. */
 int picture_wallpaper(int where, const char **why);
 
+/* Called now and then while a picture opens (a big one takes seconds): Gallery draws its spinner from it. */
+extern void (*picture_progress)(void);
+
 /* Let go of its memory. */
 void picture_close(void);
 
