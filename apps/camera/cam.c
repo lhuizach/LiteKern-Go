@@ -303,16 +303,28 @@ void cam_release(int slot)
  * and row pitch; NULL if the photo mode didn't come up (the live picture comes back all
  * the same). */
 #define STILL_SKIP 5
-#define STILL_LINE_NUM 4572            /* the live mode's line length, and the photo mode's: */
-#define STILL_LINE_DEN 5120
+/* The live mode's line length (4572) over a photo mode's: 5120 for 2080x1170, 9728 for 4160x2340. */
+static const struct { int w, h, num, den; } still_modes[] = {
+    { STILL_W, STILL_H, 4572, 9728 },          /* the full 4160x2340 */
+    { 2080, 1170, 4572, 5120 },                /* every 2 x 2 made one: if the big one won't come up */
+};
 uint8_t *cam_still(int *w, int *h, int *row_bytes, void (*settled)(void))
 {
     uint8_t *copy = NULL;
-    int sw = STILL_W, sh = STILL_H, got = 0, e;
+    int sw = STILL_W, sh = STILL_H, got = 0, e, up = -1;
     buffers_down();
-    e = exposure * STILL_LINE_NUM / STILL_LINE_DEN;
-    e = e < 4 ? 4 : e;
-    if (stream_up(sw, sh, BUFS, e, gain_code) == 0) {
+    for (unsigned m = 0; m < sizeof(still_modes) / sizeof(still_modes[0]) && up; m++) {
+        sw = still_modes[m].w;
+        sh = still_modes[m].h;
+        e = exposure * still_modes[m].num / still_modes[m].den;
+        e = e < 4 ? 4 : e;
+        up = stream_up(sw, sh, BUFS, e, gain_code);
+        if (up) {
+            k86_logf("camera: photo mode %dx%d didn't come up", (uint32_t)sw, (uint32_t)sh);
+            buffers_down();
+        }
+    }
+    if (up == 0) {
         if (settled)
             settled();                         /* the lens back to its place */
         for (int tries = 0; tries < 40 && !copy; tries++) {

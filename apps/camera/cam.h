@@ -8,9 +8,9 @@
 #define CAM_W 1280
 #define CAM_H 720
 /* The photo mode: the same window of the sensor as the live picture, with every 2 x 2 of
- * its pixels made one instead of the whole being scaled down. */
-#define STILL_W 2080
-#define STILL_H 1170
+ * its pixels as they are (4160x2340; cam.c falls back to 2080x1170, 2 x 2 made one). */
+#define STILL_W 4160
+#define STILL_H 2340
 #define CAM_BLACK 64
 #define CAM_WHITE 1023
 
