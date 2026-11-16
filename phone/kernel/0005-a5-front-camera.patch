@@ -1,0 +1,573 @@
+diff -urN a/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts b/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts
+--- a/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts	2026-11-16 17:16:07.857705356 +0000
++++ b/arch/arm64/boot/dts/qcom/msm8916-samsung-a5u-eur.dts	2026-11-16 17:16:07.873207478 +0000
+@@ -317,3 +317,60 @@
+ 		};
+ 	};
+ };
++
++/* LiteKern Go: the front camera, a Samsung S5K5E3YX (drivers/misc/s5k5e3yx.c): two lanes into the second
++ * CSI PHY, on the same camera bus as the rear one, its own clock (MCLK1) and pins, the same supplies. The pins
++ * and power-up order are from the stock device tree (camera@1). */
++&camss {
++	ports {
++		port@1 {
++			reg = <1>;
++
++			csiphy1_ep: endpoint {
++				data-lanes = <0 2>;
++				clock-lanes = <1>;
++				remote-endpoint = <&s5k5e3yx_ep>;
++			};
++		};
++	};
++};
++
++&cci_i2c0 {
++	camera@10 {
++		compatible = "samsung,s5k5e3yx";
++		reg = <0x10>;
++		clocks = <&gcc GCC_CAMSS_MCLK1_CLK>;
++		vio-supply = <&pm8916_l16>;
++		vdig-supply = <&rt5033_buck>;
++		vana-supply = <&rt5033_ldo>;
++		enable-gpios = <&tlmm 120 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&front_camera_default>;
++
++		port {
++			s5k5e3yx_ep: endpoint {
++				data-lanes = <1 2>;
++				remote-endpoint = <&csiphy1_ep>;
++			};
++		};
++	};
++};
++
++&tlmm {
++	front_camera_default: front-camera-default-state {
++		mclk1-pins {
++			pins = "gpio27";
++			function = "cam_mclk1";
++			drive-strength = <16>;
++			bias-disable;
++		};
++
++		control-pins {
++			pins = "gpio28", "gpio120";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
++};
+diff -urN a/drivers/misc/Makefile b/drivers/misc/Makefile
+--- a/drivers/misc/Makefile	2026-11-16 17:16:07.860656139 +0000
++++ b/drivers/misc/Makefile	2026-11-16 17:16:07.873207478 +0000
+@@ -73,3 +73,4 @@
+ obj-$(CONFIG_MARVELL_CN10K_DPI)	+= mrvl_cn10k_dpi.o
+ obj-y				+= keba/
+ obj-m				+= imx135.o
++obj-m				+= s5k5e3yx.o
+diff -urN a/drivers/misc/s5k5e3yx-modes.h b/drivers/misc/s5k5e3yx-modes.h
+--- a/drivers/misc/s5k5e3yx-modes.h	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/misc/s5k5e3yx-modes.h	2026-11-16 17:16:07.873207478 +0000
+@@ -0,0 +1,63 @@
++/* The Samsung S5K5E3YX's register values for the Galaxy A5 (2015)'s front camera, read out of the stock
++ * firmware's sensor library (libmmcamera_s5k5e3yx.so; tools/front-regs.py, docs/FRONT-CAMERA.md). The PLL
++ * is for a 26 MHz clock (0x0305 = 6, 0x0307 = 0xcf); s5k5e3yx.c changes it for the clock the phone gives. */
++#define S5K5E3YX_END 0xffff
++struct s5k5e3yx_reg {
++	u16 addr;
++	u8 val;
++};
++
++static const struct s5k5e3yx_reg init_regs[] = {
++	{ 0x3000, 0x04 }, { 0x3002, 0x03 }, { 0x3003, 0x04 }, { 0x3004, 0x05 },
++	{ 0x3005, 0x00 }, { 0x3006, 0x10 }, { 0x3007, 0x0a }, { 0x3008, 0x55 },
++	{ 0x3039, 0x00 }, { 0x303a, 0x00 }, { 0x303b, 0x00 }, { 0x3009, 0x05 },
++	{ 0x300a, 0x55 }, { 0x300b, 0x38 }, { 0x300c, 0x10 }, { 0x3012, 0x14 },
++	{ 0x3013, 0x00 }, { 0x3014, 0x22 }, { 0x300e, 0x79 }, { 0x3010, 0x68 },
++	{ 0x3019, 0x03 }, { 0x301a, 0x00 }, { 0x301b, 0x06 }, { 0x301c, 0x00 },
++	{ 0x301d, 0x22 }, { 0x301e, 0x00 }, { 0x301f, 0x10 }, { 0x3020, 0x00 },
++	{ 0x3021, 0x00 }, { 0x3022, 0x0a }, { 0x3023, 0x1e }, { 0x3024, 0x00 },
++	{ 0x3025, 0x00 }, { 0x3026, 0x00 }, { 0x3027, 0x00 }, { 0x3028, 0x1a },
++	{ 0x3015, 0x00 }, { 0x3016, 0x84 }, { 0x3017, 0x00 }, { 0x3018, 0xa0 },
++	{ 0x302b, 0x10 }, { 0x302c, 0x0a }, { 0x302d, 0x06 }, { 0x302e, 0x05 },
++	{ 0x302f, 0x0e }, { 0x3030, 0x2f }, { 0x3031, 0x08 }, { 0x3032, 0x05 },
++	{ 0x3033, 0x09 }, { 0x3034, 0x05 }, { 0x3035, 0x00 }, { 0x3036, 0x00 },
++	{ 0x3037, 0x00 }, { 0x3038, 0x00 }, { 0x3088, 0x06 }, { 0x308a, 0x08 },
++	{ 0x308c, 0x05 }, { 0x308e, 0x07 }, { 0x3090, 0x06 }, { 0x3092, 0x08 },
++	{ 0x3094, 0x05 }, { 0x3096, 0x21 }, { 0x3055, 0x9e }, { 0x3099, 0x06 },
++	{ 0x3070, 0x10 }, { 0x3085, 0x31 }, { 0x3086, 0x01 }, { 0x3064, 0x00 },
++	{ 0x3062, 0x08 }, { 0x3061, 0x15 }, { 0x307b, 0x20 }, { 0x3068, 0x01 },
++	{ 0x3074, 0x00 }, { 0x307d, 0x05 }, { 0x3045, 0x01 }, { 0x3046, 0x05 },
++	{ 0x3047, 0x78 }, { 0x307f, 0xb1 }, { 0x3098, 0x01 }, { 0x305c, 0xf6 },
++	{ 0x3063, 0x2f }, { 0x3400, 0x01 }, { 0x3235, 0x49 }, { 0x3233, 0x00 },
++	{ 0x3234, 0x00 }, { 0x3300, 0x0c }, { 0x3203, 0x45 }, { 0x3205, 0x4d },
++	{ 0x320b, 0x40 }, { 0x320c, 0x06 }, { 0x320d, 0xc0 }, { 0x3244, 0x00 },
++	{ 0x3245, 0x00 }, { 0x3246, 0x01 }, { 0x3247, 0x00 }, { 0x3268, 0x88 },
++	{ 0x3269, 0x01 }, { 0x3320, 0x02 },
++	{ S5K5E3YX_END, 0 }
++};
++
++static const struct s5k5e3yx_reg mode_2576x1932[] = {
++	{ 0x0305, 0x06 }, { 0x0306, 0x00 }, { 0x0307, 0xcf }, { 0x3c1f, 0x00 },
++	{ 0x0820, 0x03 }, { 0x0821, 0x82 }, { 0x3c1c, 0x58 }, { 0x0114, 0x01 },
++	{ 0x0340, 0x07 }, { 0x0341, 0xe9 }, { 0x0342, 0x0b }, { 0x0343, 0x86 },
++	{ 0x0344, 0x00 }, { 0x0345, 0x00 }, { 0x0346, 0x00 }, { 0x0347, 0x02 },
++	{ 0x0348, 0x0a }, { 0x0349, 0x0f }, { 0x034a, 0x07 }, { 0x034b, 0x8d },
++	{ 0x034c, 0x0a }, { 0x034d, 0x10 }, { 0x034e, 0x07 }, { 0x034f, 0x8c },
++	{ 0x0900, 0x00 }, { 0x0901, 0x00 }, { 0x0383, 0x01 }, { 0x0387, 0x01 },
++	{ 0x0204, 0x00 }, { 0x0205, 0x20 }, { 0x0202, 0x02 }, { 0x0203, 0x00 },
++	{ 0x0200, 0x04 }, { 0x0201, 0x98 }, { 0x0136, 0x1a }, { 0x0137, 0x05 },
++	{ S5K5E3YX_END, 0 }
++};
++
++static const struct s5k5e3yx_reg mode_1920x1080[] = {
++	{ 0x0305, 0x06 }, { 0x0306, 0x00 }, { 0x0307, 0xcf }, { 0x3c1f, 0x00 },
++	{ 0x0820, 0x03 }, { 0x0821, 0x82 }, { 0x3c1c, 0x58 }, { 0x0114, 0x01 },
++	{ 0x0340, 0x05 }, { 0x0341, 0xb7 }, { 0x0342, 0x0b }, { 0x0343, 0x86 },
++	{ 0x0344, 0x01 }, { 0x0345, 0x40 }, { 0x0346, 0x01 }, { 0x0347, 0xac },
++	{ 0x0348, 0x08 }, { 0x0349, 0xbf }, { 0x034a, 0x05 }, { 0x034b, 0xe3 },
++	{ 0x034c, 0x07 }, { 0x034d, 0x80 }, { 0x034e, 0x04 }, { 0x034f, 0x38 },
++	{ 0x0900, 0x00 }, { 0x0901, 0x00 }, { 0x0387, 0x01 }, { 0x0204, 0x00 },
++	{ 0x0205, 0x20 }, { 0x0202, 0x02 }, { 0x0203, 0x00 }, { 0x0200, 0x04 },
++	{ 0x0201, 0x98 }, { 0x0136, 0x1a }, { 0x0137, 0x05 },
++	{ S5K5E3YX_END, 0 }
++};
+diff -urN a/drivers/misc/s5k5e3yx.c b/drivers/misc/s5k5e3yx.c
+--- a/drivers/misc/s5k5e3yx.c	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/misc/s5k5e3yx.c	2026-11-16 17:16:07.870089214 +0000
+@@ -0,0 +1,430 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * LiteKern Go: the Samsung S5K5E3YX, the Galaxy A5 (2015)'s front camera, as a V4L2 sensor for
++ * Qualcomm's CAMSS. RAW10 on two lanes, in two sizes: 1920x1080 and 2576x1932 (chosen by setting the
++ * format). Modelled on imx135.c.
++ *
++ * The register values (s5k5e3yx-modes.h) were read out of the stock firmware's sensor library; the pins,
++ * supplies and the power-up order are from the stock device tree (camera@1 in Samsung's boot.img): MCLK1
++ * (gpio27), reset gpio28, a supply enable gpio120, and the same analog and digital supplies as the rear
++ * camera, on the same camera bus (the sensor's address is 0x20 as 8 bits, 0x10 as 7).
++ */
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/regulator/consumer.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-subdev.h>
++
++#include "s5k5e3yx-modes.h"
++
++/* The nearest the clock controller gets to 24 MHz: asking for that gives 66.67. */
++#define MCLK_HZ		23880000
++/* 23.88 MHz / 6 * 226 = 899.5 Mb/s on each of 2 lanes; the clock lane runs at half that. */
++#define PLL_MULT	226
++#define LINK_FREQ	449740000
++#define EXPOSURE_MAX	2020		/* lines: the full mode's frame is 2025 */
++#define GAIN_MAX	224		/* 8x: gain = 256 / (256 - code), as the rear camera's */
++
++/* CAMSS sets its clocks from this: like the rear sensor's, higher than the true rate, so the VFE keeps up. */
++static long reported_rate = 400000000;
++module_param(reported_rate, long, 0444);
++MODULE_PARM_DESC(reported_rate, "pixel rate told to CAMSS");
++/* The Bayer order the picture comes out in: 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR. */
++static int order;
++module_param(order, int, 0444);
++MODULE_PARM_DESC(order, "0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR");
++/* Register 0x0101: bit 0 mirrors across, bit 1 flips down (the stock firmware writes 3). */
++static int orient;
++module_param(orient, int, 0444);
++MODULE_PARM_DESC(orient, "register 0x0101: 1 mirror, 2 flip");
++static int test_pattern;
++module_param(test_pattern, int, 0644);
++MODULE_PARM_DESC(test_pattern, "0 the camera, 2 colour bars");
++
++static const u32 codes[] = {
++	MEDIA_BUS_FMT_SRGGB10_1X10, MEDIA_BUS_FMT_SGRBG10_1X10,
++	MEDIA_BUS_FMT_SGBRG10_1X10, MEDIA_BUS_FMT_SBGGR10_1X10,
++};
++
++struct s5k5e3yx_mode {
++	const struct s5k5e3yx_reg *regs;
++	u16 width, height, exposure_max;
++};
++
++static const struct s5k5e3yx_mode modes[] = {
++	{ mode_1920x1080, 1920, 1080, 1459 },
++	{ mode_2576x1932, 2576, 1932, EXPOSURE_MAX },
++};
++
++struct s5k5e3yx {
++	const struct s5k5e3yx_mode *mode;
++	struct i2c_client *client;
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++	struct v4l2_ctrl_handler ctrls;
++	struct v4l2_ctrl *exposure, *gain;
++	struct clk *mclk;
++	struct regulator *vio, *vdig, *vana;
++	struct gpio_desc *enable, *reset;
++	int on;
++};
++
++static u32 code_of(void)
++{
++	return codes[order & 3];
++}
++
++static int write8(struct s5k5e3yx *s, u16 reg, u8 val)
++{
++	u8 b[3] = { reg >> 8, reg & 0xff, val };
++	int ret = i2c_master_send(s->client, b, 3);
++
++	return ret == 3 ? 0 : (ret < 0 ? ret : -EIO);
++}
++
++static int read8(struct s5k5e3yx *s, u16 reg, u8 *val)
++{
++	u8 out[2] = { reg >> 8, reg & 0xff };
++	struct i2c_msg msgs[2] = {
++		{ .addr = s->client->addr, .flags = 0, .len = 2, .buf = out },
++		{ .addr = s->client->addr, .flags = I2C_M_RD, .len = 1, .buf = val },
++	};
++	int ret = i2c_transfer(s->client->adapter, msgs, 2);
++
++	return ret == 2 ? 0 : (ret < 0 ? ret : -EIO);
++}
++
++static void power_off(struct s5k5e3yx *s)
++{
++	if (!s->on)
++		return;
++	s->on = 0;
++	clk_disable_unprepare(s->mclk);
++	gpiod_set_value_cansleep(s->reset, 0);
++	regulator_disable(s->vio);
++	regulator_disable(s->vdig);
++	gpiod_set_value_cansleep(s->enable, 0);
++	regulator_disable(s->vana);
++}
++
++/* The stock order: analog, the enable pin, digital, I/O, then reset low and high, then the clock. */
++static int power_on(struct s5k5e3yx *s)
++{
++	int err;
++
++	err = regulator_enable(s->vana);
++	if (err)
++		return err;
++	usleep_range(1000, 2000);
++	gpiod_set_value_cansleep(s->enable, 1);
++	usleep_range(1000, 2000);
++	err = regulator_enable(s->vdig);
++	if (err)
++		goto no_vdig;
++	usleep_range(1000, 2000);
++	err = regulator_enable(s->vio);
++	if (err)
++		goto no_vio;
++	usleep_range(1000, 2000);
++	gpiod_set_value_cansleep(s->reset, 0);
++	usleep_range(2000, 3000);
++	gpiod_set_value_cansleep(s->reset, 1);
++	msleep(30);
++	clk_set_rate(s->mclk, MCLK_HZ);
++	err = clk_prepare_enable(s->mclk);
++	if (err)
++		goto no_clk;
++	usleep_range(1000, 2000);
++	msleep(5);
++	s->on = 1;
++	return 0;
++no_clk:
++	gpiod_set_value_cansleep(s->reset, 0);
++	regulator_disable(s->vio);
++no_vio:
++	regulator_disable(s->vdig);
++no_vdig:
++	gpiod_set_value_cansleep(s->enable, 0);
++	regulator_disable(s->vana);
++	return err;
++}
++
++static int write_table(struct s5k5e3yx *s, const struct s5k5e3yx_reg *t)
++{
++	for (; t->addr != S5K5E3YX_END; t++) {
++		int err = write8(s, t->addr, t->val);
++
++		if (err) {
++			dev_err(&s->client->dev, "write 0x%04x: %d\n", t->addr, err);
++			return err;
++		}
++	}
++	return 0;
++}
++
++static int write_mode(struct s5k5e3yx *s)
++{
++	int e = min_t(int, s->exposure->val, s->mode->exposure_max);
++	int g = 8192 / (256 - s->gain->val);		/* 1/32ths: 0x20 is 1x */
++	int err;
++
++	err = write_table(s, init_regs);
++	if (err)
++		return err;
++	err = write_table(s, s->mode->regs);
++	if (err)
++		return err;
++	write8(s, 0x0136, MCLK_HZ / 1000000);		/* the clock, 8.8 */
++	write8(s, 0x0137, (MCLK_HZ % 1000000) * 256 / 1000000);
++	write8(s, 0x0307, PLL_MULT);
++	write8(s, 0x0821, 0x83);			/* the link rate, 899 Mb/s */
++	write8(s, 0x0101, orient & 3);
++	write8(s, 0x0202, e >> 8);
++	write8(s, 0x0203, e & 0xff);
++	write8(s, 0x0204, g >> 8);
++	write8(s, 0x0205, g & 0xff);
++	if (test_pattern) {
++		write8(s, 0x0600, 0);
++		write8(s, 0x0601, test_pattern);
++	}
++	write8(s, 0x0104, 0);				/* the group hold the table started: off */
++	return write8(s, 0x0100, 1);			/* stream on */
++}
++
++static int s5k5e3yx_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct s5k5e3yx *s = container_of(sd, struct s5k5e3yx, sd);
++	u8 before = 0, after = 0;
++	int err;
++
++	if (!enable) {
++		power_off(s);
++		return 0;
++	}
++	err = power_on(s);
++	if (err)
++		return err;
++	err = write_mode(s);
++	if (!err) {
++		read8(s, 0x0005, &before);		/* the frame counter */
++		msleep(120);
++		read8(s, 0x0005, &after);
++		dev_warn(&s->client->dev, "streaming: frame count %u then %u\n", before, after);
++		return 0;
++	}
++	power_off(s);
++	return err;
++}
++
++static int s5k5e3yx_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct s5k5e3yx *s = container_of(ctrl->handler, struct s5k5e3yx, ctrls);
++
++	if (!s->on)
++		return 0;			/* it goes in with the mode */
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE: {
++		int e = min_t(int, ctrl->val, s->mode->exposure_max);
++
++		write8(s, 0x0104, 1);		/* both bytes together */
++		write8(s, 0x0202, e >> 8);
++		write8(s, 0x0203, e & 0xff);
++		return write8(s, 0x0104, 0);
++	}
++	case V4L2_CID_ANALOGUE_GAIN: {
++		int g = 8192 / (256 - ctrl->val);
++
++		write8(s, 0x0104, 1);
++		write8(s, 0x0204, g >> 8);
++		write8(s, 0x0205, g & 0xff);
++		return write8(s, 0x0104, 0);
++	}
++	}
++	return -EINVAL;
++}
++
++static const struct v4l2_ctrl_ops ctrl_ops = {
++	.s_ctrl = s5k5e3yx_s_ctrl,
++};
++
++static const s64 link_freqs[] = { LINK_FREQ };
++
++static void fill(struct v4l2_mbus_framefmt *f, const struct s5k5e3yx_mode *m)
++{
++	memset(f, 0, sizeof(*f));
++	f->width = m->width;
++	f->height = m->height;
++	f->code = code_of();
++	f->field = V4L2_FIELD_NONE;
++	f->colorspace = V4L2_COLORSPACE_RAW;
++}
++
++static int s5k5e3yx_get_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			    struct v4l2_subdev_format *fmt)
++{
++	struct s5k5e3yx *s = container_of(sd, struct s5k5e3yx, sd);
++
++	fill(&fmt->format, s->mode);
++	return 0;
++}
++
++/* The mode of that size, or the nearest bigger one (the biggest if it's bigger than all). */
++static int s5k5e3yx_set_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			    struct v4l2_subdev_format *fmt)
++{
++	struct s5k5e3yx *s = container_of(sd, struct s5k5e3yx, sd);
++	const struct s5k5e3yx_mode *m = &modes[ARRAY_SIZE(modes) - 1];
++	int i;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && s->on)
++		return -EBUSY;
++	for (i = 0; i < ARRAY_SIZE(modes); i++) {
++		if (modes[i].width >= fmt->format.width && modes[i].height >= fmt->format.height) {
++			m = &modes[i];
++			break;
++		}
++	}
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
++		s->mode = m;
++	fill(&fmt->format, m);
++	return 0;
++}
++
++static int s5k5e3yx_enum_code(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			      struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index)
++		return -EINVAL;
++	code->code = code_of();
++	return 0;
++}
++
++static int s5k5e3yx_enum_size(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			      struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(modes) || fse->code != code_of())
++		return -EINVAL;
++	fse->min_width = fse->max_width = modes[fse->index].width;
++	fse->min_height = fse->max_height = modes[fse->index].height;
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops video_ops = {
++	.s_stream = s5k5e3yx_s_stream,
++};
++
++static const struct v4l2_subdev_pad_ops pad_ops = {
++	.enum_mbus_code = s5k5e3yx_enum_code,
++	.enum_frame_size = s5k5e3yx_enum_size,
++	.get_fmt = s5k5e3yx_get_fmt,
++	.set_fmt = s5k5e3yx_set_fmt,
++};
++
++static const struct v4l2_subdev_ops subdev_ops = {
++	.video = &video_ops,
++	.pad = &pad_ops,
++};
++
++static int get_supply(struct device *dev, struct regulator **r, const char *name)
++{
++	*r = devm_regulator_get(dev, name);
++	return IS_ERR(*r) ? dev_err_probe(dev, PTR_ERR(*r), "%s\n", name) : 0;
++}
++
++static int s5k5e3yx_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct s5k5e3yx *s = devm_kzalloc(dev, sizeof(*s), GFP_KERNEL);
++	u8 hi = 0, lo = 0;
++	int err;
++
++	if (!s)
++		return -ENOMEM;
++	s->client = client;
++	s->mode = &modes[ARRAY_SIZE(modes) - 1];
++	if ((err = get_supply(dev, &s->vio, "vio")) || (err = get_supply(dev, &s->vdig, "vdig")) ||
++	    (err = get_supply(dev, &s->vana, "vana")))
++		return err;
++	s->mclk = devm_clk_get(dev, NULL);
++	if (IS_ERR(s->mclk))
++		return dev_err_probe(dev, PTR_ERR(s->mclk), "clock\n");
++	s->enable = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(s->enable))
++		return dev_err_probe(dev, PTR_ERR(s->enable), "enable\n");
++	s->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(s->reset))
++		return dev_err_probe(dev, PTR_ERR(s->reset), "reset\n");
++
++	err = power_on(s);
++	if (err)
++		return dev_err_probe(dev, err, "power\n");
++	err = read8(s, 0x0000, &hi);
++	if (!err)
++		err = read8(s, 0x0001, &lo);
++	power_off(s);
++	if (err)
++		return dev_err_probe(dev, err, "no answer\n");
++	dev_warn(dev, "S5K5E3YX: model id 0x%02x%02x\n", hi, lo);
++
++	v4l2_i2c_subdev_init(&s->sd, client, &subdev_ops);
++	s->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	s->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	s->pad.flags = MEDIA_PAD_FL_SOURCE;
++	v4l2_ctrl_handler_init(&s->ctrls, 4);
++	s->exposure = v4l2_ctrl_new_std(&s->ctrls, &ctrl_ops, V4L2_CID_EXPOSURE, 1, EXPOSURE_MAX, 1, 1000);
++	s->gain = v4l2_ctrl_new_std(&s->ctrls, &ctrl_ops, V4L2_CID_ANALOGUE_GAIN, 0, GAIN_MAX, 1, 128);
++	v4l2_ctrl_new_std(&s->ctrls, NULL, V4L2_CID_PIXEL_RATE, reported_rate, reported_rate, 1, reported_rate);
++	v4l2_ctrl_new_int_menu(&s->ctrls, NULL, V4L2_CID_LINK_FREQ, 0, 0, link_freqs);
++	if (s->ctrls.error) {
++		err = s->ctrls.error;
++		goto no_ctrls;
++	}
++	s->sd.ctrl_handler = &s->ctrls;
++	err = media_entity_pads_init(&s->sd.entity, 1, &s->pad);
++	if (err)
++		goto no_ctrls;
++	err = v4l2_async_register_subdev_sensor(&s->sd);
++	if (err)
++		goto no_async;
++	return 0;
++no_async:
++	media_entity_cleanup(&s->sd.entity);
++no_ctrls:
++	v4l2_ctrl_handler_free(&s->ctrls);
++	return err;
++}
++
++static void s5k5e3yx_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct s5k5e3yx *s = container_of(sd, struct s5k5e3yx, sd);
++
++	v4l2_async_unregister_subdev(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(&s->ctrls);
++	power_off(s);
++}
++
++static const struct of_device_id s5k5e3yx_of[] = {
++	{ .compatible = "samsung,s5k5e3yx" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, s5k5e3yx_of);
++
++static struct i2c_driver s5k5e3yx_driver = {
++	.driver = {
++		.name = "s5k5e3yx",
++		.of_match_table = s5k5e3yx_of,
++	},
++	.probe = s5k5e3yx_probe,
++	.remove = s5k5e3yx_remove,
++};
++module_i2c_driver(s5k5e3yx_driver);
++
++MODULE_DESCRIPTION("Samsung S5K5E3YX camera sensor, for LiteKern Go");
++MODULE_LICENSE("GPL");

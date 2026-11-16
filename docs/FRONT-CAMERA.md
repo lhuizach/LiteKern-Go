@@ -44,11 +44,31 @@ Mode 1920x1080 (the video crop): same PLL; 0340=05 0341=b7, 0342=0b 0343=86, win
 Streaming: 0100=01 on, 0100=00 off. 0101=03 (mirror and flip, as the library sets for this mounting).
 0104 is group hold (0 = apply).
 
-## Still to find before a driver
+## The wiring (from the stock device tree: Samsung's boot.img, `qcom,camera@1`)
 
-- Wiring: which CCI bus and address the sensor is on (the earlier note says it answers; where), its MCLK
-  (probably MCLK1), reset/enable GPIOs, and which regulators power it (the rear uses RT5033 LDO/BUCK and
-  PM8916 L10/L16). The Samsung msm8916 dts (camera sensor dtsi in the Lineage kernel on GitHub) has them.
-- CSI: 2 lanes into a different CSIPHY than the rear (csiphy1, probably), with its own CSID/VFE path.
-- Then: `drivers/misc/s5k5e3yx.c` (modelled on `imx135.c`), the dts node, and a front/back switch in the
-  Camera app (picture mirrored for the selfie view).
+Read on the PC with `tools/fdt_dump.py` (a small device tree dumper) from the QCDT inside `boot.img`.
+
+| | front (S5K5E3YX) | rear (IMX135, for comparison) |
+|---|---|---|
+| CSI PHY / CSID | 1 / 1 | 0 / 0 |
+| camera bus | CCI master 0, same as the rear | CCI master 0 |
+| address | 0x20 (8-bit), 0x10 as 7-bit | |
+| clock | MCLK1, gpio27 | MCLK0, gpio26 |
+| reset | gpio28 | gpio35 |
+| supply enable | gpio120 | gpio33 |
+| supplies | the same: vio 1.8 V (PM8916 L16), analog 2.8 V and digital 1.5 V (the RT5033's LDO and BUCK) | |
+| mount angle | 270 | 90 |
+
+Power-up order (stock): analog, the enable pin, digital, I/O, reset low (2 ms) then high (30 ms), clock (1 ms),
+then 5 ms. The sensor wants 26 MHz; the phone's clock controller gives 23.88, so the driver sets the clock
+registers and the PLL multiplier (226) for that.
+
+## What's built (not yet tried on the phone)
+
+- `phone/kernel/0005-a5-front-camera.patch`: `drivers/misc/s5k5e3yx.c` (a module, modelled on `imx135.c`; the
+  register header is made by `tools/front-regs.py`), and the device tree: `camera@10` on the camera bus, CSI PHY 1
+  with two lanes (`data-lanes = <0 2>`, clock lane 1: a guess from the rear's pattern), MCLK1 and the pins.
+- Module parameters for what isn't known yet: `order` (Bayer order, 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR) and `orient`
+  (register 0x0101: 1 mirror, 2 flip; the stock firmware writes 3).
+- Still to do: see whether it probes (`dmesg | grep S5K5E3YX`), then find the Bayer order and orientation from a
+  picture, then a front/back switch in the Camera app (the pipeline needs csiphy1, csid1 instead of 0, 0).
