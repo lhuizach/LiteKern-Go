@@ -888,8 +888,12 @@ static void add_floater(int cx, int cy, const char *text, uint32_t col)
     floats[slot].y = cy;
     floats[slot].born = (int)now_ms;
     floats[slot].colour = col;
-    strncpy(floats[slot].text, text, sizeof(floats[slot].text) - 1);
-    floats[slot].text[sizeof(floats[slot].text) - 1] = 0;
+    int n = 0;
+    while (text[n] && n < (int)sizeof(floats[slot].text) - 1) {
+        floats[slot].text[n] = text[n];
+        n++;
+    }
+    floats[slot].text[n] = 0;
 }
 
 static void go(enum screen s)
