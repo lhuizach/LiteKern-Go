@@ -1,0 +1,11 @@
+{
+  "name": "Traffic Racer",
+  "icon": "trafficracer",
+  "entry": "trafficracer.lkx",
+  "version": "1.0",
+  "order": 123,
+  "width": 720,
+  "height": 1224,
+  "min_width": 360,
+  "min_height": 600
+}
