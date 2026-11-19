@@ -1,14 +1,14 @@
-/* Traffic Racer: our own lane-dodging driving game for LiteKern Go, in the old pseudo-3D way: the road is
- * drawn a line at a time with perspective (near lines wide, far lines narrow), it bends left and right, and
- * the cars are drawn from behind, scaled by how far away they are. Nothing is a 3D model, so it runs on the
- * phone's CPU.
+/* Traffic Racer: our own lane-dodging driving game for LiteKern Go. A high chase camera looks down the road:
+ * the road is drawn a line at a time in perspective (it narrows only a little, because the camera looks steeply
+ * down), it bends gently, guardrails and desert scenery slide past, and the cars are drawn from above and
+ * behind, shaded so they look solid. Nothing is a 3D model, so it runs on the phone's CPU.
  *
  * Four lanes. Swipe left or right (or tap the left or right of the screen) to change lane. Traffic comes in
  * waves that always leave one lane free; the speed climbs the longer you last. Squeezing past a car scores
  * extra (a near miss). Keys for the PC: left and right arrows, Esc.
  *
- * Whole numbers only, drawn in code. Its own palette; the best score is kept in the user's home folder. The
- * timer only runs while driving, and the game pauses itself when another app is in front. */
+ * Whole numbers only, drawn in code. Its own palette and art; the best score is kept in the user's home
+ * folder. The timer only runs while driving, and the game pauses itself when another app is in front. */
 #include <stdint.h>
 #include <string.h>
 
@@ -23,15 +23,15 @@
 #define SAVE_MAGIC 0x54524331u
 #define FRAME_MS 33
 
-/* the world: units are 1 cm. The road's 4 lanes are 500 wide; z is how far ahead of the camera */
+/* The world: units are 1 cm. The road's 4 lanes are 500 wide; z is the distance from the camera. The camera
+ * looks steeply down, so the horizon is far above the top of the screen (a row of -1.1 screens). */
 #define LANES 4
 #define LANE_W 500
 #define ROAD_HW 1000                    /* half the road */
-#define FOC 700                         /* the camera's focal length, in pixels */
-#define CAM_H 2376                      /* its height: puts the road across the screen at the bottom */
-#define ZP 2300                         /* where the player's car is */
-#define ZFAR 40000                      /* where traffic appears */
-#define ZCUT 1700                       /* behind this, it's off the bottom of the screen */
+#define FOC 3500                        /* the camera's focal length (scales sizes against distance) */
+#define CAM_H 7560                      /* its height: puts the road across the screen at the bottom */
+#define HIT_DZ 850                      /* cars this close along the road can touch */
+#define SLOT 1100                       /* roadside things: one every this far along, on each side */
 #define V_START 5500                    /* units per second */
 #define V_MAX 11000
 #define LANE_SPEED 3200                 /* sideways, units per second */
@@ -39,15 +39,15 @@
 #define PART_MAX 28
 
 /* ---- palette ---- */
-#define C_SKY_TOP   0x2f6fc4u
-#define C_HAZE      0xa9c9ebu
-#define C_GRASS_A   0x2f9150u
-#define C_GRASS_B   0x2a8648u
-#define C_ROAD_A    0x5a5e6au
-#define C_ROAD_B    0x535763u
-#define C_RUMBLE_A  0xd9484fu
-#define C_RUMBLE_B  0xf3f3f3u
-#define C_DASH      0xf6f2d2u
+#define C_SAND_A    0xdcbf80u
+#define C_SAND_B    0xd3b574u
+#define C_SAND_SH   0xb89a5cu
+#define C_ASPH_A    0x4d5059u
+#define C_ASPH_B    0x474a53u
+#define C_LINE      0xf1f1eau
+#define C_RAIL_HI   0xe2e8efu
+#define C_RAIL      0x9099a8u
+#define C_POST      0x4d5565u
 #define C_TEXT      0xf6f8ffu
 #define C_DIM       0xc9d3f0u
 #define C_GOLD      0xffcf3fu
@@ -56,12 +56,12 @@
 #define C_CARD      0x111a3cu
 #define C_CARD_EDGE 0x3d4c99u
 
-static const uint32_t skin_col[4] = { 0xe8384fu, 0x3b82f6u, 0xffc93cu, 0x35d07fu };
-static const uint32_t traffic_col[8] = { 0xf5f5f7u, 0x2b2f3au, 0x8a94a6u, 0x2e7dd1u, 0xd9a21fu, 0x7e57c2u,
-                                         0xe07a2au, 0x2fa36bu };
-/* body shapes: hatchback, sedan, van, lorry. Width and height in units */
+static const uint32_t skin_col[4] = { 0xe8384fu, 0x3b82f6u, 0xffa21fu, 0x35d07fu };
+static const uint32_t traffic_col[8] = { 0xf2f2f4u, 0x2b2f3au, 0x8a94a6u, 0x2e7dd1u, 0xe3b21fu, 0x7e57c2u,
+                                         0xe05a2au, 0x2fa36bu };
+/* body shapes: hatchback, saloon, van, lorry. Width and length along the road, in units */
 static const int car_w[4] = { 410, 420, 430, 460 };
-static const int car_h[4] = { 330, 295, 430, 520 };
+static const int car_h[4] = { 570, 640, 700, 960 };
 
 enum screen { S_MENU, S_PLAY, S_DYING, S_PAUSE, S_OVER };
 enum { B_NONE = -1, B_PLAY, B_SKIN0, B_SKIN1, B_SKIN2, B_SKIN3, B_SOUND, B_PAUSE, B_RESUME, B_RESTART, B_MENU,
@@ -79,7 +79,7 @@ struct car {
 };
 
 struct particle {
-    int x, y, vx, vy, life;             /* pixels, 1/16 px per ms.., ms */
+    int x, y, vx, vy, life;             /* x, y in 1/16 pixel; life in ms */
     uint32_t col;
 };
 
@@ -94,10 +94,11 @@ static uint32_t now_ms, last_frame, front_checked, rng_state;
 static struct gfx_rect btn[B_COUNT];
 static int pressed = B_NONE;
 static struct gfx_rect card_r;
-static int dirty;
 
 /* the picture */
-static int horizon, cxm;                /* the horizon's row, the screen's middle */
+static int horizon, cxm;                /* the horizon's row (above the screen), the screen's middle */
+static int zp, zfar, zcut;              /* the player's distance (a row near the bottom), where traffic appears
+                                         * (above the top), and where it's gone (below the bottom) */
 
 /* the game */
 static struct car cars[CARS_MAX];
@@ -106,10 +107,8 @@ static int play_ms, v, tv, scroll;
 static int dist, bonus, score, new_best;
 static int xp, lane_target;             /* the player's sideways place (units), and the lane they're heading for */
 static int curve, curve_tgt, curve_timer;    /* the road's bend: -256..256 */
-static int bgx;                         /* the hills move with the bends */
 static int wave_acc, next_gap, free_lane;
 static uint32_t crash_since;
-static int crash_x, crash_y;
 static char msg[16];
 static uint32_t msg_until;
 static int perf_n, perf_max;
@@ -122,6 +121,16 @@ static uint32_t rnd(void)
 {
     rng_state = rng_state * 1664525u + 1013904223u;
     return rng_state >> 8;
+}
+
+static uint32_t hash(uint32_t a)
+{
+    a ^= a >> 16;
+    a *= 0x7feb352du;
+    a ^= a >> 15;
+    a *= 0x846ca68bu;
+    a ^= a >> 16;
+    return a;
 }
 
 static int imin(int a, int b) { return a < b ? a : b; }
@@ -199,8 +208,14 @@ static void text_c(int cx, int y, const char *s, enum text_style st, uint32_t co
 
 static void text_shadow_c(int cx, int y, const char *s, enum text_style st, uint32_t col)
 {
-    text_c(cx + 2, y + 3, s, st, 0x06101cu);
+    text_c(cx + 2, y + 3, s, st, 0x1a1208u);
     text_c(cx, y, s, st, col);
+}
+
+static void text_shadow_l(int x, int y, const char *s, enum text_style st, uint32_t col)
+{
+    text_draw(&canvas, x + 2, y + 3, s, st, 0x1a1208u);
+    text_draw(&canvas, x, y, s, st, col);
 }
 
 static void box(struct gfx_rect r, int rad, uint32_t fill, uint32_t edge)
@@ -235,14 +250,14 @@ static void draw_button(int id, const char *label, int primary)
 }
 
 /* ---- the road, in perspective ---- */
-/* How far the bend pushes the road sideways at distance z: nothing at the player's car, more and more
- * towards the horizon. */
+/* How far the bend pushes the road sideways at distance z: nothing at the player's car, more towards the
+ * top of the screen. */
 static int bend(int z)
 {
-    int u = imin(z - ZP, 45000);                /* (the square stays inside a 32-bit number) */
+    int u = imin(z - zp, 45000);                /* (the square stays inside a 32-bit number) */
     if (u <= 0)
         return 0;
-    return curve * (u * u >> 10) / (256 * 6836);
+    return curve * (u * u >> 10) / (256 * 1000);
 }
 
 /* the screen column of a point of the world: sideways x units, distance z */
@@ -256,121 +271,152 @@ static int proj_y(int z)
     return horizon + CAM_H * FOC / z;
 }
 
-static uint32_t fog(uint32_t c, int f)
-{
-    return f > 0 ? gfx_mix(C_HAZE, c, (uint32_t)f) : c;
-}
-
-static void draw_sky(void)
-{
-    for (int y = 0; y < horizon; y += 2)
-        gfx_fill_rect(&canvas, 0, y, canvas.w, 2, gfx_mix(C_HAZE, C_SKY_TOP, (uint32_t)(y * 255 / imax(1, horizon))));
-    /* the sun */
-    gfx_fill_circle(&canvas, canvas.w * 84 / 100 - (bgx / 6) % 120, horizon - 150, 46, 0xfff1b8u);
-    /* two ranges of hills, the far one moves less */
-    for (int i = -1; i < 6; i++) {
-        int x = ((i * 190 - bgx / 3) % (6 * 190) + 6 * 190) % (6 * 190) - 190;
-        gfx_fill_circle(&canvas, x, horizon + 20, 90 + (i & 1) * 24, 0x6f93c2u);
-    }
-    for (int i = -1; i < 5; i++) {
-        int x = ((i * 260 - bgx) % (5 * 260) + 5 * 260) % (5 * 260) - 260;
-        gfx_fill_circle(&canvas, x, horizon + 40, 100 + ((i * 7) & 3) * 14, 0x4f7d9bu);
-    }
-    gfx_fill_rect(&canvas, 0, horizon - 2, canvas.w, 6, C_HAZE);
-}
+static int lane_x(int lane) { return (lane * 2 - (LANES - 1)) * LANE_W / 2; }
 
 static void draw_road(void)
 {
     int w = canvas.w, base = CAM_H * FOC;
-    gfx_fill_rect(&canvas, 0, horizon, w, 8, fog(C_GRASS_A, 255));
-    for (int dy = 6; horizon + dy < canvas.h; dy += 2) {
-        int y = horizon + dy;
+    for (int y = 0; y < canvas.h; y += 2) {
+        int dy = y - horizon;                   /* always more than 1000: the horizon is far above */
         int z = base / dy;
-        int ph = (z + scroll) >> 9;
+        int g = z + scroll;                     /* where on the ground this row is: the stripes move with it */
         int c = cxm + bend(z);
         int hw = dy * ROAD_HW / CAM_H;
-        int rw = imax(2, dy * 140 / CAM_H);
-        int f = dy < 220 ? (220 - dy) * 255 / 220 : 0;
-        uint32_t grass = fog((ph & 1) ? C_GRASS_B : C_GRASS_A, f);
-        uint32_t road = fog((ph & 1) ? C_ROAD_B : C_ROAD_A, f);
-        uint32_t rumble = fog(((z + scroll) >> 8) & 1 ? C_RUMBLE_A : C_RUMBLE_B, f);
-        gfx_fill_rect(&canvas, 0, y, w, 2, grass);
-        gfx_fill_rect(&canvas, c - hw - rw, y, hw * 2 + rw * 2, 2, rumble);
-        gfx_fill_rect(&canvas, c - hw, y, hw * 2, 2, road);
-        if ((((z + scroll) >> 8) & 3) == 0) {
-            uint32_t dash = fog(C_DASH, f);
-            int lw = imax(1, dy * 26 / CAM_H);
-            for (int k = -1; k <= 1; k++)
-                gfx_fill_rect(&canvas, c + k * LANE_W * dy / CAM_H - lw / 2, y, lw, 2, dash);
+        int odd = (g >> 9) & 1;
+        int rail = imax(3, dy * 60 / CAM_H), gap = imax(1, dy * 15 / CAM_H);
+        gfx_fill_rect(&canvas, 0, y, w, 2, odd ? C_SAND_B : C_SAND_A);
+        /* the rail's shadow on the sand, the rail, its posts, then the road */
+        gfx_fill_rect(&canvas, c - hw - gap - rail * 22 / 10, y, rail * 12 / 10, 2, C_SAND_SH);
+        gfx_fill_rect(&canvas, c + hw + gap + rail, y, rail * 12 / 10, 2, C_SAND_SH);
+        gfx_fill_rect(&canvas, c - hw - gap - rail, y, rail, 2, C_RAIL);
+        gfx_fill_rect(&canvas, c + hw + gap, y, rail, 2, C_RAIL);
+        gfx_fill_rect(&canvas, c - hw - gap - rail * 70 / 100, y, imax(1, rail * 40 / 100), 2, C_RAIL_HI);
+        gfx_fill_rect(&canvas, c + hw + gap + rail * 30 / 100, y, imax(1, rail * 40 / 100), 2, C_RAIL_HI);
+        if (((g >> 7) & 7) == 0) {
+            gfx_fill_rect(&canvas, c - hw - gap - rail * 2, y, rail * 2, 2, C_POST);
+            gfx_fill_rect(&canvas, c + hw + gap, y, rail * 2, 2, C_POST);
+        }
+        gfx_fill_rect(&canvas, c - hw, y, hw * 2, 2, odd ? C_ASPH_B : C_ASPH_A);
+        /* the white edge lines, the solid middle line, and the dashes between lanes */
+        int lw = imax(2, dy * 40 / CAM_H), dw = imax(2, dy * 28 / CAM_H);
+        int e = (ROAD_HW - 90) * dy / CAM_H;
+        gfx_fill_rect(&canvas, c - e - lw / 2, y, lw, 2, C_LINE);
+        gfx_fill_rect(&canvas, c + e - lw / 2, y, lw, 2, C_LINE);
+        gfx_fill_rect(&canvas, c - dw, y, dw * 2, 2, C_LINE);
+        if (((g >> 8) & 3) == 0) {
+            int o = LANE_W * dy / CAM_H;
+            gfx_fill_rect(&canvas, c - o - dw / 2, y, dw, 2, C_LINE);
+            gfx_fill_rect(&canvas, c + o - dw / 2, y, dw, 2, C_LINE);
         }
     }
 }
 
-/* ---- the cars, seen from behind ---- */
 static void rr(int x, int y, int w, int h, int r, uint32_t col)
 {
     if (w > 0 && h > 0)
         gfx_fill_round_rect(&canvas, x, y, w, h, imin(r, imin(w, h) / 2), col);
 }
 
-/* A car with its bottom middle at (cx, by), width w and height h in pixels, seen from behind. lean slides the
- * roof a little sideways in a lane change. */
-static void draw_car_px(int cx, int by, int w, int h, int kind, uint32_t col, int lean)
+/* ---- scenery: bushes, rocks and cacti on the sand, from our own drawings ---- */
+static void draw_thing(int type, int x, int y, int s)
 {
-    int r = imax(1, w / 12);
-    uint32_t dark = darker(col, 90), glass = 0x1b2a40u;
-    gfx_blend_round_rect(&canvas, cx - w * 58 / 100, by - h * 8 / 100, w * 116 / 100, h * 16 / 100, h * 8 / 100, 0x000000u,
-                         110);
-    rr(cx - w / 2 - w * 3 / 100, by - h * 22 / 100, w * 17 / 100, h * 22 / 100, 2, 0x0c0d12u);
-    rr(cx + w / 2 - w * 14 / 100, by - h * 22 / 100, w * 17 / 100, h * 22 / 100, 2, 0x0c0d12u);
-    if (kind == 3) {                                    /* a lorry: a big box */
-        rr(cx - w * 48 / 100 + lean / 2, by - h, w * 96 / 100, h * 74 / 100, r, col);
-        rr(cx - w * 48 / 100 + lean / 2, by - h, w * 96 / 100, h * 8 / 100, r, lighter(col, 50));
-        rr(cx - 1 + lean / 2, by - h * 90 / 100, imax(1, w / 60), h * 58 / 100, 1, dark);
-        rr(cx - w * 45 / 100, by - h * 26 / 100, w * 90 / 100, h * 14 / 100, r, 0x20222cu);
-    } else {
-        int top, ch, cwid;
-        if (kind == 2) {                                /* a van: tall cabin */
-            top = by - h;
-            ch = h * 74 / 100;
-            cwid = w * 92 / 100;
-        } else if (kind == 1) {                         /* a saloon: low cabin */
-            top = by - h * 92 / 100;
-            ch = h * 46 / 100;
-            cwid = w * 70 / 100;
-        } else {                                        /* a hatchback */
-            top = by - h;
-            ch = h * 54 / 100;
-            cwid = w * 78 / 100;
-        }
-        rr(cx - w / 2, by - h * 58 / 100, w, h * 46 / 100, r, col);
-        rr(cx - cwid / 2 + lean, top, cwid, ch, r, kind == 2 ? col : dark);
-        rr(cx - cwid * 44 / 100 + lean, top + ch * 10 / 100, cwid * 88 / 100, ch * 62 / 100, r, glass);
-        rr(cx - cwid * 40 / 100 + lean, top + ch * 14 / 100, cwid * 80 / 100, imax(1, ch * 9 / 100), 1, 0x4a6286u);
-        rr(cx - w / 2, by - h * 22 / 100, w, h * 12 / 100, r, dark);
+    if (s < 4)
+        return;
+    gfx_blend_round_rect(&canvas, x - s * 60 / 100 - s / 6, y - s * 10 / 100, s * 130 / 100, s * 40 / 100, s / 5, 0x6b4a1au, 70);
+    if (type == 0) {                                    /* a bush: three leafy lumps */
+        gfx_fill_circle(&canvas, x - s * 22 / 100, y - s * 18 / 100, s * 30 / 100, 0x4f8433u);
+        gfx_fill_circle(&canvas, x + s * 24 / 100, y - s * 16 / 100, s * 28 / 100, 0x4f8433u);
+        gfx_fill_circle(&canvas, x, y - s * 34 / 100, s * 34 / 100, 0x6a9e3fu);
+        gfx_fill_circle(&canvas, x - s * 8 / 100, y - s * 42 / 100, s * 16 / 100, 0x86b852u);
+    } else if (type == 1) {                             /* a rock */
+        rr(x - s * 56 / 100, y - s * 62 / 100, s * 112 / 100, s * 66 / 100, s * 30 / 100, 0x86603bu);
+        rr(x - s * 54 / 100, y - s * 66 / 100, s * 100 / 100, s * 56 / 100, s * 28 / 100, 0xb28350u);
+        rr(x - s * 36 / 100, y - s * 60 / 100, s * 44 / 100, s * 22 / 100, s * 10 / 100, 0xd0a672u);
+    } else {                                            /* a cactus */
+        rr(x - s * 12 / 100, y - s * 100 / 100, s * 24 / 100, s * 104 / 100, s * 12 / 100, 0x3f8a4au);
+        rr(x - s * 34 / 100, y - s * 66 / 100, s * 12 / 100, s * 36 / 100, s * 6 / 100, 0x3f8a4au);
+        rr(x - s * 34 / 100, y - s * 66 / 100, s * 26 / 100, s * 12 / 100, s * 6 / 100, 0x3f8a4au);
+        rr(x + s * 22 / 100, y - s * 80 / 100, s * 12 / 100, s * 34 / 100, s * 6 / 100, 0x3f8a4au);
+        rr(x + s * 8 / 100, y - s * 56 / 100, s * 26 / 100, s * 12 / 100, s * 6 / 100, 0x3f8a4au);
+        rr(x - s * 5 / 100, y - s * 94 / 100, s * 8 / 100, s * 80 / 100, s * 4 / 100, 0x66b06eu);
     }
-    rr(cx - w / 2 + w * 4 / 100, by - h * 46 / 100, w * 23 / 100, h * 12 / 100, 2, 0xff3347u);
-    rr(cx + w / 2 - w * 27 / 100, by - h * 46 / 100, w * 23 / 100, h * 12 / 100, 2, 0xff3347u);
-    rr(cx - w * 10 / 100, by - h * 34 / 100, w * 20 / 100, imax(2, h * 7 / 100), 1, 0xf2f2f2u);
+}
+
+static void draw_scenery(void)
+{
+    static const int size_units[3] = { 330, 420, 600 };
+    int k_hi = (scroll + zfar - 3000) / SLOT, k_lo = (scroll + zcut) / SLOT;
+    for (int k = k_hi; k >= k_lo; k--) {                /* far to near */
+        int z = k * SLOT - scroll;
+        if (z < zcut || z > zfar - 3000)
+            continue;
+        for (int side = 0; side < 2; side++) {
+            uint32_t h = hash((uint32_t)k * 2u + (uint32_t)side + 77u);
+            if (h % 100 >= 72)
+                continue;
+            int x = ROAD_HW + 420 + (int)((h >> 8) % 1000);
+            int type = (int)((h >> 20) % 3);
+            draw_thing(type, proj_x(side ? x : -x, z), proj_y(z), size_units[type] * FOC / z);
+        }
+    }
+}
+
+/* ---- the cars, seen from above and behind ---- */
+/* A car with its middle at (cx, cy), width w and length h in pixels. Its front is at the top of the picture.
+ * lean slides the roof a little sideways in a lane change. */
+static void draw_car_px(int cx, int cy, int w, int h, int kind, uint32_t col, int lean)
+{
+    int top = cy - h / 2, bot = cy + h / 2, r = imax(2, w * 26 / 100), in = imax(1, w / 40);
+    uint32_t glass = 0x1c2a40u, dk = darker(col, 90), hi = lighter(col, 55);
+    /* the shadow, thrown a little down and to the left */
+    gfx_blend_round_rect(&canvas, cx - w / 2 - w * 16 / 100, top + h * 6 / 100, w, h, r, 0x2a1a05u, 105);
+    /* the wheels show as slivers at the sides */
+    int ww = imax(2, w * 12 / 100), wh = h * 17 / 100;
+    rr(cx - w / 2 - w * 3 / 100, top + h * 13 / 100, ww, wh, 2, 0x111218u);
+    rr(cx + w / 2 - ww + w * 3 / 100, top + h * 13 / 100, ww, wh, 2, 0x111218u);
+    rr(cx - w / 2 - w * 3 / 100, bot - h * 30 / 100, ww, wh, 2, 0x111218u);
+    rr(cx + w / 2 - ww + w * 3 / 100, bot - h * 30 / 100, ww, wh, 2, 0x111218u);
+    if (kind == 3) {                                    /* a lorry: a cab, and a long box behind it */
+        rr(cx - w / 2, top, w, h * 28 / 100, r, dk);
+        rr(cx - w * 40 / 100, top + h * 12 / 100, w * 80 / 100, h * 12 / 100, w / 10, glass);
+        rr(cx - w / 2, top + h * 22 / 100, w, h * 78 / 100, w / 14, dk);
+        rr(cx - w / 2 + in, top + h * 22 / 100 + in, w - 2 * in, h * 78 / 100 - 2 * in, w / 14, hi);
+        for (int i = 1; i < 5; i++)
+            rr(cx - w * 44 / 100, top + h * 22 / 100 + i * h * 15 / 100, w * 88 / 100, imax(1, h / 100), 1, dk);
+        rr(cx - w * 44 / 100 + lean / 2, top + h * 26 / 100, w * 88 / 100, imax(2, h * 3 / 100), 1, lighter(col, 90));
+    } else {
+        rr(cx - w / 2, top, w, h, r, dk);
+        rr(cx - w / 2 + in, top + in, w - 2 * in, h - 2 * in, r, col);
+        rr(cx - w * 30 / 100, top + h * 6 / 100, w * 60 / 100, h * 16 / 100, r / 2, lighter(col, 35));   /* the bonnet's sheen */
+        int ws = kind == 2 ? 22 : kind == 1 ? 30 : 27;          /* where the windscreen starts, % of the length */
+        int rf0 = kind == 2 ? 35 : kind == 1 ? 43 : 40;         /* the roof, % */
+        int rf1 = kind == 2 ? 96 : kind == 1 ? 63 : 66;
+        rr(cx - w * 36 / 100 + lean / 2, top + h * ws / 100, w * 72 / 100, h * 14 / 100, w / 10, glass);
+        rr(cx - w * 34 / 100 + lean, top + h * rf0 / 100, w * 68 / 100, h * (rf1 - rf0) / 100, w / 8, hi);
+        rr(cx - w * 26 / 100 + lean, top + h * (rf0 + 2) / 100, w * 18 / 100, h * (rf1 - rf0 - 4) / 100, w / 14,
+           lighter(col, 100));                                  /* a shine along the roof */
+        if (kind != 2)
+            rr(cx - w * 33 / 100 + lean / 2, top + h * (rf1 + 1) / 100, w * 66 / 100, h * 12 / 100, w / 10, glass);
+        else
+            rr(cx - 1, top + h * 40 / 100, imax(2, w / 40), h * 56 / 100, 1, dk);        /* the van's back doors */
+    }
+    /* the tail lights */
+    int tl = imax(2, h * 5 / 100);
+    rr(cx - w / 2 + w * 5 / 100, bot - tl - h * 2 / 100, w * 24 / 100, tl, 2, 0xff3347u);
+    rr(cx + w / 2 - w * 29 / 100, bot - tl - h * 2 / 100, w * 24 / 100, tl, 2, 0xff3347u);
 }
 
 static void draw_world_car(int x, int z, int kind, uint32_t col, int lean)
 {
-    if (z < ZCUT)
+    int w = car_w[kind] * FOC / z, h = car_h[kind] * FOC / z, cy = proj_y(z);
+    if (w < 3 || cy + h / 2 < 0 || cy - h / 2 > canvas.h)
         return;
-    int w = car_w[kind] * FOC / z, h = car_h[kind] * FOC / z;
-    if (w < 3)
-        return;
-    int f = z > 22000 ? imin(200, (z - 22000) * 200 / 18000) : 0;     /* far cars fade into the haze */
-    uint32_t c = fog(col, f);
-    draw_car_px(proj_x(x, z), proj_y(z), w, h, kind, c, lean * w / 380);
+    draw_car_px(proj_x(x, z), cy, w, h, kind, col, lean * w / 410);
 }
-
-static int lane_x(int lane) { return (lane * 2 - (LANES - 1)) * LANE_W / 2; }
 
 static int player_lean(void)
 {
-    return iclamp((lane_x(lane_target) - xp) / 14, -34, 34);
+    return iclamp((lane_x(lane_target) - xp) / 12, -40, 40);
 }
 
 static void draw_cars_and_player(void)
@@ -381,7 +427,7 @@ static void draw_cars_and_player(void)
     for (int pass = 0; pass < CARS_MAX; pass++) {
         int best = -1;
         for (int i = 0; i < CARS_MAX; i++)
-            if (cars[i].used && !done[i] && cars[i].z >= ZP && (best < 0 || cars[i].z > cars[best].z))
+            if (cars[i].used && !done[i] && cars[i].z >= zp && (best < 0 || cars[i].z > cars[best].z))
                 best = i;
         if (best < 0)
             break;
@@ -389,7 +435,7 @@ static void draw_cars_and_player(void)
         draw_world_car(lane_x(cars[best].lane), cars[best].z, cars[best].kind, cars[best].col, 0);
     }
     if (screen != S_DYING || (now_ms - crash_since) / 90 % 2 == 0)
-        draw_world_car(xp, ZP, 0, skin_col[sv.skin], player_lean());
+        draw_world_car(xp, zp, 0, skin_col[sv.skin], player_lean());
     for (int pass = 0; pass < CARS_MAX; pass++) {
         int best = -1;
         for (int i = 0; i < CARS_MAX; i++)
@@ -406,7 +452,7 @@ static void draw_particles(void)
 {
     for (int i = 0; i < PART_MAX; i++)
         if (parts[i].life > 0)
-            gfx_fill_rect(&canvas, parts[i].x >> 4, parts[i].y >> 4, 7, 7, parts[i].col);
+            gfx_fill_rect(&canvas, parts[i].x >> 4, parts[i].y >> 4, 8, 8, parts[i].col);
 }
 
 static void draw_scene(int ox, int oy)
@@ -414,8 +460,8 @@ static void draw_scene(int ox, int oy)
     int sh = horizon, sc = cxm;
     horizon += oy;
     cxm += ox;
-    draw_sky();
     draw_road();
+    draw_scenery();
     draw_cars_and_player();
     draw_particles();
     horizon = sh;
@@ -425,13 +471,9 @@ static void draw_scene(int ox, int oy)
 static void draw_hud(void)
 {
     char num[16], line[24];
+    text_shadow_l(24, 14, "SCORE", TEXT_SMALL, C_TEXT);
     num_text(score, num);
-    text_shadow_c(canvas.w / 2, 18, num, TEXT_LARGE, C_TEXT);
-    line[0] = 0;
-    num_text(v / 50, num);
-    cat(line, num);
-    cat(line, " km/h");
-    text_shadow_c(112, 40, line, TEXT_BOLD, C_TEXT);
+    text_shadow_l(24, 40, num, TEXT_LARGE, C_TEXT);
     struct gfx_rect p = btn[B_PAUSE];
     if (p.w > 0) {
         int lift = pressed == B_PAUSE ? 3 : 0;
@@ -439,15 +481,32 @@ static void draw_hud(void)
         gfx_fill_round_rect(&canvas, p.x + p.w / 2 - 16, p.y + lift + (p.h - 36) / 2, 12, 36, 4, C_TEXT);
         gfx_fill_round_rect(&canvas, p.x + p.w / 2 + 4, p.y + lift + (p.h - 36) / 2, 12, 36, 4, C_TEXT);
     }
+    int rx = canvas.w - 112;                    /* the middle of the speed and distance lines (they're about 190 wide) */
+    num_text(v / 50, num);
+    line[0] = 0;
+    cat(line, num);
+    cat(line, " km/h");
+    text_shadow_c(rx, 122, line, TEXT_BOLD, C_TEXT);
+    num_text(dist / 10000 / 10, num);
+    line[0] = 0;
+    cat(line, num);
+    cat(line, ".");
+    num_text(dist / 10000 % 10, num);
+    cat(line, num);
+    cat(line, " km");
+    text_shadow_c(rx, 160, line, TEXT_BODY, C_GOLD);
     if (msg[0] && now_ms < msg_until)
-        text_shadow_c(canvas.w / 2, canvas.h * 56 / 100, msg, TEXT_HEADING, C_GOLD);
+        text_shadow_c(proj_x(xp, zp), proj_y(zp) - car_h[0] * FOC / zp / 2 - 70, msg, TEXT_HEADING, C_GOLD);
 }
 
 /* ---- layout ---- */
 static void layout(void)
 {
     cxm = canvas.w / 2;
-    horizon = canvas.h * 33 / 100;
+    horizon = -canvas.h * 110 / 100;
+    zp = CAM_H * FOC / (canvas.h * 84 / 100 - horizon);
+    zfar = CAM_H * FOC / (-260 - horizon);
+    zcut = CAM_H * FOC / (canvas.h + 230 - horizon);
 }
 
 static void layout_buttons(void)
@@ -506,7 +565,7 @@ static void spawn_wave(int z)
 static int gap_for(int s)
 {
     int t = 1300 - imin(400, play_ms / 250) + (int)(rnd() % 600);
-    return imax(2500, s * t / 1000);
+    return imax(3200, s * t / 1000);
 }
 
 static void start_game(void)
@@ -530,7 +589,7 @@ static void start_game(void)
     msg[0] = 0;
     int s0 = v - tv;
     for (int k = 0; k < 3; k++)
-        spawn_wave(11000 + k * s0 * 16 / 10);
+        spawn_wave(zp + 4500 + k * s0 * 16 / 10);
     wave_acc = 0;
     next_gap = gap_for(s0);
     screen = S_PLAY;
@@ -562,16 +621,12 @@ static void to_screen(enum screen s)
     g_on = 0;
     layout_buttons();
     k86_timer_set(s == S_PLAY || s == S_DYING ? FRAME_MS : 0);
-    dirty = 1;
 }
 
-static void crash(int car_z)
+static void crash(void)
 {
     crash_since = now_ms;
-    crash_x = proj_x(xp, ZP);
-    crash_y = proj_y(ZP) - 60;
-    (void)car_z;
-    add_burst(crash_x, crash_y);
+    add_burst(proj_x(xp, zp), proj_y(zp));
     sound(220, 90, 90, 260);
     if (score > (int)sv.best) {
         sv.best = (uint32_t)score;
@@ -603,12 +658,11 @@ static void update(int dt)
     /* the bends */
     curve_timer -= dt;
     if (curve_timer <= 0) {
-        curve_tgt = (int)(rnd() % 100) < 30 ? 0 : (int)(rnd() % 441) - 220;
+        curve_tgt = (int)(rnd() % 100) < 40 ? 0 : (int)(rnd() % 441) - 220;
         curve_timer = 3000 + (int)(rnd() % 4000);
     }
     int dc = curve_tgt - curve, stp = imax(1, dt / 10);
     curve += iclamp(dc, -stp, stp);
-    bgx += curve * dt / 3500;
 
     /* the player slides to their lane */
     int tx = lane_x(lane_target), mv = LANE_SPEED * dt / 1000;
@@ -618,7 +672,7 @@ static void update(int dt)
     wave_acc += s * dt / 1000;
     if (wave_acc >= next_gap) {
         wave_acc -= next_gap;
-        spawn_wave(ZFAR);
+        spawn_wave(zfar);
         next_gap = gap_for(s);
     }
     for (int i = 0; i < CARS_MAX; i++) {
@@ -628,20 +682,20 @@ static void update(int dt)
         c->prev_z = c->z;
         c->z -= s * dt / 1000;
         int dx = iabs(lane_x(c->lane) - xp);
-        if (c->prev_z > ZP - 260 && c->z < ZP + 260 && dx < 390) {
-            crash(c->z);
+        if (c->prev_z > zp - HIT_DZ && c->z < zp + HIT_DZ && dx < 390) {
+            crash();
             return;
         }
-        if (!c->near_done && c->z < ZP - 260) {
+        if (!c->near_done && c->z < zp - HIT_DZ) {
             c->near_done = 1;
             if (dx < 470) {                     /* squeezed past: the player was partly in the next lane */
-                bonus += 25;
-                memcpy(msg, "CLOSE! +25", sizeof("CLOSE! +25"));
+                bonus += 50;
+                memcpy(msg, "CLOSE! +50", sizeof("CLOSE! +50"));
                 msg_until = now_ms + 700;
                 sound(880, 40, 1180, 60);
             }
         }
-        if (c->z < ZCUT)
+        if (c->z < zcut)
             c->used = 0;
     }
     if (msg[0] && now_ms >= msg_until)
@@ -664,17 +718,15 @@ static void update_particles(int dt)
 static void demo_scene(void)
 {
     memset(cars, 0, sizeof(cars));
-    add_car(0, 9000);
-    add_car(2, 6200);
-    add_car(3, 14000);
-    add_car(1, 20000);
-    add_car(0, 28000);
-    add_car(2, 33000);
+    add_car(0, zp + 3600);
+    add_car(3, zp + 2100);
+    add_car(3, zp + 6800);
+    add_car(0, zp + 8800);
     cars[0].kind = 2;
     cars[2].kind = 3;
     xp = lane_x(1);
     lane_target = 1;
-    curve = 90;
+    curve = 0;
     scroll = 0;
     v = V_START;
 }
@@ -691,11 +743,13 @@ static void draw_menu(void)
     char num[16], line[32] = "Best  ";
     demo_scene();
     draw_scene(0, 0);
-    text_shadow_c(canvas.w / 2, canvas.h * 9 / 100, "TRAFFIC", TEXT_LARGE, C_TEXT);
-    text_shadow_c(canvas.w / 2, canvas.h * 9 / 100 + 74, "RACER", TEXT_LARGE, C_GOLD);
+    int ty = canvas.h * 8 / 100;
+    gfx_blend_round_rect(&canvas, 70, ty - 20, canvas.w - 140, 270, 32, 0x14100au, 150);
+    text_shadow_c(canvas.w / 2, ty, "TRAFFIC", TEXT_LARGE, C_TEXT);
+    text_shadow_c(canvas.w / 2, ty + 70, "RACER", TEXT_LARGE, C_GOLD);
     num_text((int)sv.best, num);
     cat(line, num);
-    text_shadow_c(canvas.w / 2, canvas.h * 9 / 100 + 168, line, TEXT_BODY, C_TEXT);
+    text_shadow_c(canvas.w / 2, ty + 165, line, TEXT_BODY, C_TEXT);
     draw_button(B_PLAY, "Drive", 1);
     for (int i = 0; i < 4; i++) {
         struct gfx_rect r = btn[B_SKIN0 + i];
@@ -760,7 +814,6 @@ static void redraw(void)
         break;
     }
     k86_present(0, 0, canvas.w, canvas.h);
-    dirty = 0;
 }
 
 static void pause_game(void)

@@ -1,5 +1,5 @@
-"""Traffic Racer's icon: a red car seen from behind on a road that runs off to the horizon, with hills and a
-sun, on a rounded tile. Plain Python (no Pillow needed), supersampled and scaled down.
+"""Traffic Racer's icon: two cars seen from above and behind on a desert road with guardrails, a rock and a
+cactus at the side, on a rounded tile. Plain Python (no Pillow needed), supersampled and scaled down.
 Usage: python3 tools/make-icon-trafficracer.py
 Writes assets/icons/source/trafficracer-1024.png and assets/icons/trafficracer.png (112)."""
 import math
@@ -42,69 +42,66 @@ def render(size, ss):
                 dx = r - math.sqrt(max(0.0, r * r - d * d))
             put(y, int(math.ceil(x0 + dx - 0.5)), int(math.floor(x1 - dx + 0.5)), col, alpha)
 
-    def circle(cx, cy, r, col):
-        rrect(cx - r, cy - r, cx + r, cy + r, r, col)
-
     def trap(ya, yb, l0, r0, l1, r1, col):
-        """Rows ya..yb (1024-space), the left and right edges running from l0/r0 at ya to l1/r1 at yb."""
         for y in range(max(0, int(ya * f)), min(n, int(yb * f))):
             t = (y + 0.5 - ya * f) / max(1e-9, (yb - ya) * f)
             put(y, int((l0 + (l1 - l0) * t) * f), int((r0 + (r1 - r0) * t) * f), col)
 
-    # sky, from blue to haze
-    for y in range(int(96 * f), int(500 * f)):
-        t = (y - 96 * f) / (404 * f)
-        put(y, 0, n, tuple(int(a + (b - a) * t) for a, b in zip((47, 111, 196), (169, 201, 235))))
-    circle(700, 380, 52, (255, 241, 184))
-    for cx, cy, r, col in [(180, 520, 130, (111, 147, 194)), (410, 540, 110, (111, 147, 194)),
-                           (640, 530, 140, (111, 147, 194)), (860, 540, 120, (111, 147, 194)),
-                           (270, 560, 120, (79, 125, 155)), (560, 570, 100, (79, 125, 155)),
-                           (800, 570, 130, (79, 125, 155))]:
-        circle(cx, cy, r, col)
-    # grass
-    for y in range(int(480 * f), n):
-        band = int((y / f - 480) // 70) % 2
-        put(y, 0, n, (47, 145, 80) if band == 0 else (42, 134, 72))
-    # the road, running to a point at the horizon
-    top, bot, hw_top, hw_bot = 480, 940, 12, 470
-    trap(top, bot, 512 - hw_top - 6, 512 + hw_top + 6, 512 - hw_bot - 70, 512 + hw_bot + 70, (240, 240, 240))
-    # red and white rumble strips, in bands
-    for i in range(7):
-        ya, yb = top + (bot - top) * (i / 7.0) ** 1.6, top + (bot - top) * ((i + 1) / 7.0) ** 1.6
-        if i % 2 == 0:
-            def edge(y):
-                t = (y - top) / (bot - top)
-                return (hw_top + 6 + (hw_bot + 70 - hw_top - 6) * t, hw_top + (hw_bot - hw_top) * t)
-            (a0, b0), (a1, b1) = edge(ya), edge(yb)
-            trap(ya, yb, 512 - a0, 512 - b0, 512 - a1, 512 - b1, (217, 72, 79))
-            trap(ya, yb, 512 + b0, 512 + a0, 512 + b1, 512 + a1, (217, 72, 79))
-    trap(top, bot, 512 - hw_top, 512 + hw_top, 512 - hw_bot, 512 + hw_bot, (90, 94, 106))
-    # lane dashes
-    for k in (-1, 0, 1):
-        for i in range(0, 6):
-            ya = top + (bot - top) * (i / 6.0) ** 1.7 + 4
-            yb = top + (bot - top) * ((i + 0.45) / 6.0) ** 1.7
-            wa, wb = 1 + 9 * ((ya - top) / (bot - top)), 1 + 9 * ((yb - top) / (bot - top))
-            ca = (ya - top) / (bot - top) * hw_bot * k * 0.5 + hw_top * k * 0.5 * (1 - (ya - top) / (bot - top))
-            cb = (yb - top) / (bot - top) * hw_bot * k * 0.5 + hw_top * k * 0.5 * (1 - (yb - top) / (bot - top))
-            trap(ya, yb, 512 + ca - wa, 512 + ca + wa, 512 + cb - wb, 512 + cb + wb, (246, 242, 210))
+    def mix(c, k):                       # k < 0 darker, k > 0 lighter
+        t = abs(k) / 100.0
+        target = 255 if k > 0 else 0
+        return tuple(int(v + (target - v) * t) for v in c)
 
-    # the car, from behind
-    cx, by, w, h = 512, 905, 330, 270
-    rrect(cx - w * 0.6, by - h * 0.07, cx + w * 0.6, by + h * 0.07, h * 0.07, (20, 22, 28), 110)
-    rrect(cx - w * 0.53, by - h * 0.24, cx - w * 0.36, by, 14, (12, 13, 18))
-    rrect(cx + w * 0.36, by - h * 0.24, cx + w * 0.53, by, 14, (12, 13, 18))
-    red = (232, 56, 79)
-    rrect(cx - w / 2, by - h * 0.60, cx + w / 2, by - h * 0.12, 30, red)
-    rrect(cx - w * 0.39, by - h, cx + w * 0.39, by - h * 0.44, 30, (150, 32, 50))
-    rrect(cx - w * 0.34, by - h * 0.92, cx + w * 0.34, by - h * 0.55, 22, (27, 42, 64))
-    rrect(cx - w * 0.31, by - h * 0.88, cx + w * 0.31, by - h * 0.82, 6, (74, 98, 134))
-    rrect(cx - w / 2, by - h * 0.24, cx + w / 2, by - h * 0.12, 18, (150, 32, 50))
-    rrect(cx - w * 0.46, by - h * 0.50, cx - w * 0.22, by - h * 0.36, 8, (255, 51, 71))
-    rrect(cx + w * 0.22, by - h * 0.50, cx + w * 0.46, by - h * 0.36, 8, (255, 51, 71))
-    rrect(cx - w * 0.1, by - h * 0.37, cx + w * 0.1, by - h * 0.29, 5, (242, 242, 242))
+    def car(cx, cy, w, h, col, light=True):
+        """A car from above and behind: front at the top of the picture."""
+        top, bot = cy - h / 2, cy + h / 2
+        glass = (28, 42, 64)
+        rrect(cx - w / 2 - w * 0.18, top + h * 0.06, cx + w / 2 - w * 0.18, bot + h * 0.06, w * 0.26, (60, 40, 10), 100)
+        for wy in (top + h * 0.13, bot - h * 0.30):                 # the wheels show as slivers at the sides
+            rrect(cx - w / 2 - w * 0.03, wy, cx - w / 2 + w * 0.09, wy + h * 0.17, 8, (17, 18, 24))
+            rrect(cx + w / 2 - w * 0.09, wy, cx + w / 2 + w * 0.03, wy + h * 0.17, 8, (17, 18, 24))
+        rrect(cx - w / 2, top, cx + w / 2, bot, w * 0.26, mix(col, -45))
+        rrect(cx - w / 2 + 6, top + 6, cx + w / 2 - 6, bot - 6, w * 0.24, col)
+        rrect(cx - w * 0.30, top + h * 0.06, cx + w * 0.30, top + h * 0.22, w * 0.12, mix(col, 35))
+        rrect(cx - w * 0.36, top + h * 0.27, cx + w * 0.36, top + h * 0.41, w * 0.10, glass)
+        rrect(cx - w * 0.34, top + h * 0.40, cx + w * 0.34, top + h * 0.66, w * 0.12, mix(col, 55))
+        rrect(cx - w * 0.26, top + h * 0.42, cx - w * 0.08, top + h * 0.64, w * 0.08, mix(col, 100))
+        rrect(cx - w * 0.33, top + h * 0.67, cx + w * 0.33, top + h * 0.79, w * 0.10, glass)
+        rrect(cx - w / 2 + w * 0.05, bot - h * 0.08, cx - w / 2 + w * 0.29, bot - h * 0.03, 5, (255, 51, 71))
+        rrect(cx + w / 2 - w * 0.29, bot - h * 0.08, cx + w / 2 - w * 0.05, bot - h * 0.03, 5, (255, 51, 71))
 
-    # scale down; the rounded tile is a mask
+    # sand, in soft bands
+    for y in range(n):
+        band = int((y / f) // 90) % 2
+        put(y, 0, n, (220, 191, 128) if band == 0 else (211, 181, 116))
+    # the road, a little narrower at the top
+    cx = 512
+    trap(0, 1024, cx - 170 - 70, cx + 170 + 70, cx - 270 - 70, cx + 270 + 70, (144, 153, 168))      # rails
+    trap(0, 1024, cx - 170 - 42, cx + 170 + 42, cx - 270 - 42, cx + 270 + 42, (226, 232, 239))
+    trap(0, 1024, cx - 170, cx + 170, cx - 270, cx + 270, (77, 80, 89))
+    trap(0, 1024, cx - 170 + 14, cx - 170 + 26, cx - 270 + 24, cx - 270 + 40, (241, 241, 234))       # edge lines
+    trap(0, 1024, cx + 170 - 26, cx + 170 - 14, cx + 270 - 40, cx + 270 - 24, (241, 241, 234))
+    trap(0, 1024, cx - 7, cx + 7, cx - 12, cx + 12, (241, 241, 234))                               # the middle
+    for i in range(5):
+        ya, yb = 40 + i * 215, 40 + i * 215 + 95
+        for k in (-1, 1):
+            t0, t1 = ya / 1024.0, yb / 1024.0
+            x0 = cx + k * (85 + 50 * t0)
+            x1 = cx + k * (85 + 50 * t1)
+            trap(ya, yb, x0 - 6 - 4 * t0, x0 + 6 + 4 * t0, x1 - 6 - 4 * t1, x1 + 6 + 4 * t1, (241, 241, 234))
+    # a rock and a cactus on the sand
+    rrect(104, 690, 192, 760, 28, (134, 96, 59))
+    rrect(106, 680, 188, 748, 26, (178, 131, 80))
+    rrect(120, 684, 168, 708, 11, (208, 166, 114))
+    rrect(840, 330, 872, 490, 16, (63, 138, 74))
+    rrect(806, 390, 826, 440, 10, (63, 138, 74))
+    rrect(806, 390, 850, 410, 10, (63, 138, 74))
+    rrect(886, 370, 906, 420, 10, (63, 138, 74))
+    rrect(862, 420, 906, 440, 10, (63, 138, 74))
+    # the cars: a blue one ahead, the orange player's below it
+    car(405, 380, 150, 215, (59, 130, 246))
+    car(632, 730, 195, 280, (255, 162, 31))
+
     def inside(px, py):
         x, y = px / n * 1024.0, py / n * 1024.0
         if x < 96 or x > 928 or y < 96 or y > 928:
