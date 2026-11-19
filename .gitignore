@@ -22,3 +22,6 @@ admin/
 
 # R3lay: the project URL and public key (apps/r3lay/r3lay.conf.example)
 /apps/r3lay/r3lay.conf
+
+phone-tools/
+build-target-phone/
