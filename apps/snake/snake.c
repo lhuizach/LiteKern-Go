@@ -896,6 +896,13 @@ static void add_floater(int cx, int cy, const char *text, uint32_t col)
     floats[slot].text[n] = 0;
 }
 
+static int idle;                        /* not in front: the timer is slow and nothing is drawn */
+
+static uint32_t timer_ms(enum screen s)
+{
+    return s == S_PAUSE ? 0 : s == S_MENU || s == S_OVER ? 40 : 30;
+}
+
 static void go(enum screen s)
 {
     screen = s;
@@ -913,8 +920,8 @@ static void go(enum screen s)
         layout_over();
         btn[B_PAUSE] = (struct gfx_rect){ 0, 0, 0, 0 };
     }
-    uint32_t ms = s == S_PAUSE ? 0 : s == S_MENU || s == S_OVER ? 40 : 30;
-    k86_timer_set(ms);
+    idle = 0;
+    k86_timer_set(timer_ms(s));
 }
 
 static void start_game(void)
@@ -1087,6 +1094,20 @@ static void frame(void)
     int dt = imin(100, (int)(now_ms - last_frame));
     last_frame = now_ms;
     int f = 256;
+    if (screen != S_PLAY && screen != S_DYING && screen != S_PAUSE && now_ms - front_checked >= 500) {
+        /* Menu, splash and game over animate: not when another app is in front (the home screen, ...) */
+        front_checked = now_ms;
+        int front = in_front();
+        if (!front && !idle) {
+            idle = 1;
+            k86_timer_set(500);
+        } else if (front && idle) {
+            idle = 0;
+            k86_timer_set(timer_ms(screen));
+        }
+    }
+    if (idle)
+        return;
     switch (screen) {
     case S_SPLASH:
         draw_splash();

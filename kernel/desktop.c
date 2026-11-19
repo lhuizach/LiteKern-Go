@@ -657,6 +657,8 @@ static struct gfx_rect dock_icon_rect(int i)
 enum hit_kind { H_NONE, H_HOME, H_POWER, H_NET, H_BATTERY, H_WBTN, H_WCTL, H_RESTART, H_SHUTDOWN, H_LOCK, H_LOGOUT, H_DOCK, H_APPS, H_DOCK_BG, H_TILE,
                 H_LIST,     /* a row of All apps */
                 H_WIDGET,   /* a widget on the home screen */
+                H_FOLD,     /* an app in the open folder's popup */
+                H_FOLDX,    /* outside it: closes it */
                 H_BAR };
 
 static const enum hit_kind menu_kinds[MENU_ITEMS] = { H_SHUTDOWN, H_RESTART, H_LOCK, H_LOGOUT };
@@ -835,15 +837,20 @@ static int home_shown(void)
  * page), or off the home screen (still in the app drawer, and Apps in home edit mode puts it back).
  * Kept by name in settings.txt. */
 enum { W_GRID, W_DOCK, W_HIDDEN };
-#define LAYOUT_MAX 32
+#define LAYOUT_MAX 48
 #define LAYOUT_NAME 24
 #define DOCK_MAX 5
 #define CELLS_MAX 64
+#define FOLD_MAX 8                      /* folders: apps dragged onto each other */
+#define FOLD_CAP 9                      /* apps in one */
 static const char *const dock_names[] = { "Files", "Browser", "Gallery", "Settings" };   /* the first layout's dock */
-static struct { char name[LAYOUT_NAME]; int where; int cell; int size; } layout[LAYOUT_MAX];     /* size: a widget's cw * 10 + ch */
+/* size: a widget's cw * 10 + ch. fold: the folder an app is in (-1 none). A folder sits on the grid as ONE of its
+ * apps (its face: the one with a cell, drawn as a folder); the others are hidden from the home screen. */
+static struct { char name[LAYOUT_NAME]; int where; int cell; int size; int fold; } layout[LAYOUT_MAX];
 static int nlayout, layout_seen = -1, layout_dirty = 1;
 static int dock_idx[DOCK_MAX], n_dock, hid_idx[APPS_MAX], n_hid;        /* app numbers */
 static int cell_of[APPS_MAX];           /* an app's cell on the grid, -1: not on it */
+static int fold_of[APPS_MAX];           /* the folder an app is in, -1: none */
 static int off_x[APPS_MAX], off_y[APPS_MAX];    /* an icon sliding to its place: where it is from there, 1/256 px */
 
 /* --- widgets: cards on the home grid, each covering several cells ---------------------------------
@@ -921,6 +928,7 @@ static void layout_add(const char *name, int where, int cell)
     layout[nlayout].where = where;
     layout[nlayout].cell = cell;
     layout[nlayout].size = 0;
+    layout[nlayout].fold = -1;
     nlayout++;
 }
 
@@ -978,18 +986,59 @@ static void layout_sync(void)
             wg_mark(w, taken);
         }
     }
+    {   /* Folders: two or more apps, exactly one of them (the face) on the grid, none in the dock. */
+        int cnt[FOLD_MAX] = { 0 }, face[FOLD_MAX];
+        for (int f = 0; f < FOLD_MAX; f++)
+            face[f] = -1;
+        for (int k = 0; k < nlayout; k++) {
+            int f = layout[k].fold;
+            if (f >= FOLD_MAX || (f >= 0 && (app_by_name(layout[k].name) < 0 || layout[k].where == W_DOCK)))
+                layout[k].fold = f = -1;
+            if (f >= 0)
+                cnt[f]++;
+        }
+        for (int k = 0; k < nlayout; k++) {
+            int f = layout[k].fold;
+            if (f < 0)
+                continue;
+            if (cnt[f] < 2) {                           /* alone: not a folder any more */
+                layout[k].fold = -1;
+                if (layout[k].where == W_HIDDEN) {
+                    layout[k].where = W_GRID;
+                    layout[k].cell = -1;
+                }
+            } else if (layout[k].where == W_GRID) {
+                if (face[f] >= 0) {                     /* a second one on the grid: it is inside */
+                    layout[k].where = W_HIDDEN;
+                    layout[k].cell = -1;
+                } else {
+                    face[f] = k;
+                }
+            }
+        }
+        for (int k = 0; k < nlayout; k++)               /* all inside: the first one is the face */
+            if (layout[k].fold >= 0 && face[layout[k].fold] < 0) {
+                face[layout[k].fold] = k;
+                layout[k].where = W_GRID;
+                layout[k].cell = -1;
+            }
+    }
     n_dock = n_hid = 0;
-    for (int i = 0; i < APPS_MAX; i++)
+    for (int i = 0; i < APPS_MAX; i++) {
         cell_of[i] = -1;
+        fold_of[i] = -1;
+    }
     int pending[LAYOUT_MAX], npending = 0;
     for (int k = 0; k < nlayout; k++) {
         int i = app_by_name(layout[k].name);
         if (i < 0)
             continue;
+        fold_of[i] = layout[k].fold;
         if (layout[k].where == W_DOCK && n_dock < DOCK_MAX) {
             dock_idx[n_dock++] = i;
         } else if (layout[k].where == W_HIDDEN) {
-            hid_idx[n_hid++] = i;
+            if (layout[k].fold < 0)                     /* (an app inside a folder is not "off the home screen") */
+                hid_idx[n_hid++] = i;
         } else {                                        /* the grid (or a dock that's full) */
             int c = layout[k].where == W_GRID ? layout[k].cell : -1;
             if (c >= 0 && c < CELLS_MAX && !taken[c]) {
@@ -1043,10 +1092,17 @@ static void layout_rebuild(void)
         layout_add(builtin_apps[dock_idx[k]].name, W_DOCK, -1);
     for (int c = 0; c < CELLS_MAX; c++)
         for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)
-            if (cell_of[i] == c)
+            if (cell_of[i] == c) {
                 layout_add(builtin_apps[i].name, W_GRID, c);
+                layout[nlayout - 1].fold = fold_of[i];
+            }
     for (int k = 0; k < n_hid; k++)
         layout_add(builtin_apps[hid_idx[k]].name, W_HIDDEN, -1);
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++)         /* the apps inside folders */
+        if (fold_of[i] >= 0 && cell_of[i] < 0) {
+            layout_add(builtin_apps[i].name, W_HIDDEN, -1);
+            layout[nlayout - 1].fold = fold_of[i];
+        }
     for (int w = 0; w < WG_COUNT; w++) {
         char nm[LAYOUT_NAME];
         nm[0] = '@';
@@ -1067,6 +1123,117 @@ static void fill_taken(uint8_t *taken)
     for (int w = 0; w < WG_COUNT; w++)
         if (wg_cell[w] >= 0)
             wg_mark(w, taken);
+}
+
+/* --- folders ---------------------------------------------------------------------------------
+ * Drag an icon onto another and hold: a folder (edit mode). Tap it: its apps open in a popup. Hold an
+ * app in the popup to take it out; the minus on a folder (edit mode) empties it. */
+#define FOLD_DWELL_MS 420               /* held over another icon this long: it will make a folder */
+
+static int fold_count(int f)
+{
+    int n = 0;
+    for (int i = 0; i < APPS_MAX; i++)
+        n += fold_of[i] == f;
+    return n;
+}
+
+static int fold_nth(int f, int k)       /* the k-th app inside folder f (in app order), or -1 */
+{
+    for (int i = 0; i < APPS_MAX; i++)
+        if (fold_of[i] == f && k-- == 0)
+            return i;
+    return -1;
+}
+
+static int fold_free_id(void)
+{
+    for (int f = 0; f < FOLD_MAX; f++)
+        if (fold_count(f) == 0)
+            return f;
+    return -1;
+}
+
+static int free_cell_here(const uint8_t *taken)         /* the first free cell on the page being looked at */
+{
+    for (int c = page * HOME_PER_PAGE; c < (page + 1) * HOME_PER_PAGE && c < CELLS_MAX; c++)
+        if (!taken[c])
+            return c;
+    return first_free_cell(taken);
+}
+
+/* App a dropped on app target (both on the grid): they become a folder, or a is added to target's folder. */
+static int fold_merge(int a, int target)
+{
+    layout_sync();
+    if (a == target || cell_of[target] < 0 || fold_of[a] >= 0)
+        return 0;
+    int f = fold_of[target];
+    if (f >= 0) {
+        if (fold_count(f) >= FOLD_CAP)
+            return 0;
+    } else {
+        f = fold_free_id();
+        if (f < 0)
+            return 0;
+        fold_of[target] = f;
+    }
+    int keep = 0;
+    for (int k = 0; k < n_dock; k++)                    /* a may have come from the dock */
+        if (dock_idx[k] != a)
+            dock_idx[keep++] = dock_idx[k];
+    n_dock = keep;
+    fold_of[a] = f;
+    cell_of[a] = -1;
+    layout_rebuild();
+    layout_sync();
+    return 1;
+}
+
+/* App a leaves its folder for a free cell here; a folder left with one app is no folder. */
+static void fold_take_out(int a)
+{
+    layout_sync();
+    int f = fold_of[a];
+    if (f < 0)
+        return;
+    int c = cell_of[a];
+    fold_of[a] = -1;
+    cell_of[a] = -1;
+    if (c >= 0)                                         /* it was the face: another app takes its cell */
+        for (int m = 0; m < APPS_MAX; m++)
+            if (fold_of[m] == f) {
+                cell_of[m] = c;
+                break;
+            }
+    if (fold_count(f) == 1)
+        for (int m = 0; m < APPS_MAX; m++)
+            if (fold_of[m] == f)
+                fold_of[m] = -1;
+    uint8_t taken[CELLS_MAX];
+    fill_taken(taken);
+    cell_of[a] = free_cell_here(taken);
+    layout_rebuild();
+    layout_sync();
+}
+
+/* All of the folder (whose face is app a) back on the grid. */
+static void fold_ungroup(int a)
+{
+    layout_sync();
+    int f = fold_of[a];
+    if (f < 0)
+        return;
+    for (int m = 0; m < APPS_MAX; m++)
+        if (fold_of[m] == f && m != a) {
+            uint8_t taken[CELLS_MAX];
+            fold_of[m] = -1;
+            fill_taken(taken);
+            cell_of[m] = free_cell_here(taken);
+        }
+    fold_of[a] = -1;
+    layout_rebuild();
+    layout_sync();
 }
 
 static int dock_slot(int i)     /* app i's place in the dock, or -1 */
@@ -1139,9 +1306,9 @@ int desktop_layout_text(char *out, int max)
     layout_sync();
     int n = 0;
     for (int k = 0; k < nlayout; k++) {
-        for (const char *q = layout[k].name; *q && n < max - 8; q++)
+        for (const char *q = layout[k].name; *q && n < max - 14; q++)
             out[n++] = *q == '|' || *q == ';' ? ' ' : *q;
-        if (n >= max - 8)
+        if (n >= max - 14)
             break;
         out[n++] = '|';
         out[n++] = layout[k].where == W_DOCK ? 'd' : layout[k].where == W_HIDDEN ? 'h' : 'g';
@@ -1149,6 +1316,10 @@ int desktop_layout_text(char *out, int max)
             if (layout[k].cell >= 10)
                 out[n++] = (char)('0' + layout[k].cell / 10);
             out[n++] = (char)('0' + layout[k].cell % 10);
+        }
+        if (layout[k].fold >= 0 && layout[k].fold < 10) {       /* in a folder: F and its number */
+            out[n++] = 'F';
+            out[n++] = (char)('0' + layout[k].fold);
         }
         if (layout[k].size) {           /* a widget's size: s, its width, its height */
             out[n++] = 's';
@@ -1171,7 +1342,7 @@ void desktop_layout_set(const char *text)
         while (*text && *text != '|' && *text != ';' && n < LAYOUT_NAME - 1)
             name[n++] = *text++;
         name[n] = '\0';
-        int where = W_GRID, cell = -1, size = 0;
+        int where = W_GRID, cell = -1, size = 0, fold = -1;
         if (*text == '|') {
             text++;
             where = *text == 'd' ? W_DOCK : *text == 'h' ? W_HIDDEN : W_GRID;
@@ -1181,6 +1352,10 @@ void desktop_layout_set(const char *text)
                 cell = 0;
                 while (*text >= '0' && *text <= '9')
                     cell = cell * 10 + (*text++ - '0');
+            }
+            if (*text == 'F' && text[1] >= '0' && text[1] <= '9') {
+                fold = text[1] - '0';
+                text += 2;
             }
             if (*text == 's' && text[1] >= '0' && text[1] <= '9' && text[2] >= '0' && text[2] <= '9') {
                 size = (text[1] - '0') * 10 + (text[2] - '0');
@@ -1193,8 +1368,10 @@ void desktop_layout_set(const char *text)
             text++;
         if (n) {
             layout_add(name, where, cell);
-            if (nlayout)
+            if (nlayout) {
                 layout[nlayout - 1].size = size;
+                layout[nlayout - 1].fold = fold;
+            }
         }
     }
     layout_dirty = 1;
@@ -1252,10 +1429,36 @@ static struct gfx_rect tile_icon_rect(int i)
     return icon_in_tile(tile_rect(i), dock_slot(i) >= 0);
 }
 
-/* All apps, A to Z: the k-th row's app. */
+/* The apps opened last, newest first (at most DRW_RECENT): out[]; returns how many. */
+#define DRW_RECENT 4
+static int recent_apps(int *out)
+{
+    int n = 0;
+    for (int i = 0; i < builtin_app_count && i < APPS_MAX; i++) {
+        if (!app_seq[i])
+            continue;
+        int pos = n;
+        while (pos > 0 && app_seq[out[pos - 1]] < app_seq[i])
+            pos--;
+        if (pos >= DRW_RECENT)
+            continue;
+        for (int j = n < DRW_RECENT ? n : DRW_RECENT - 1; j > pos; j--)
+            out[j] = out[j - 1];
+        out[pos] = i;
+        if (n < DRW_RECENT)
+            n++;
+    }
+    return n;
+}
+
+/* All apps, A to Z: the k-th row's app. k past the apps: the recent ones, on top of the drawer. */
 static int list_app(int k)
 {
     int order[APPS_MAX], n = builtin_app_count;
+    if (k >= n) {
+        int rec[DRW_RECENT], nr = recent_apps(rec);
+        return k - n < nr ? rec[k - n] : 0;
+    }
     for (int i = 0; i < n; i++)
         order[i] = i;
     for (int i = 1; i < n; i++)             /* a handful of apps: insertion sort */
@@ -1268,7 +1471,9 @@ static int list_app(int k)
 }
 
 /* The drawer's tiles, row by row, sliding with it. */
-#define DRAWER_TOP 120
+#define DRW_RECENT_Y 158        /* the recent apps' card, from the sheet's top */
+#define DRW_RECENT_H 150
+#define DRW_GRID_Y 358          /* the first row of all apps */
 static struct spring drw;       /* FX(the screen's height): all the way open */
 static int drw_moving, drw_y0 = -1, drw_from, drw_live;
 static uint32_t last_drw_tick;
@@ -1276,12 +1481,52 @@ static uint32_t last_drw_tick;
 static int drw_shown(void) { return drw.x > 0 || drw.t > 0; }
 static int drw_top(void) { return S()->h - drw.x / 256; }     /* the sheet's top edge */
 
+static int drw_row_h(void)      /* a row of all apps: as tall as a home tile if they all fit */
+{
+    const struct theme *t = T();
+    int rows = (builtin_app_count + HOME_COLS - 1) / HOME_COLS, h = rows ? (S()->h - DRW_GRID_Y - 24) / rows : t->tile_h;
+    return h > t->tile_h ? t->tile_h : h < 120 ? 120 : h;
+}
+
 static struct gfx_rect list_rect(int k)
 {
     const struct theme *t = T();
-    int x0 = (S()->w - HOME_COLS * t->tile_w) / 2;
-    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, drw_top() + DRAWER_TOP + (k / HOME_COLS) * t->tile_h,
-                              t->tile_w, t->tile_h };
+    if (k >= builtin_app_count) {       /* a recent app: in the card on top */
+        int slot = (S()->w - 48) / DRW_RECENT, j = k - builtin_app_count;
+        return (struct gfx_rect){ 24 + j * slot, drw_top() + DRW_RECENT_Y + 8, slot, DRW_RECENT_H - 16 };
+    }
+    int x0 = (S()->w - HOME_COLS * t->tile_w) / 2, rh = drw_row_h();
+    return (struct gfx_rect){ x0 + (k % HOME_COLS) * t->tile_w, drw_top() + DRW_GRID_Y + (k / HOME_COLS) * rh, t->tile_w, rh };
+}
+
+/* The open folder's popup: a card in the middle of the screen with its apps in rows of three. */
+static int fold_open_id = -1;
+static int fold_hold_app = -1;                  /* an app in the popup under a finger, held since... */
+static uint32_t fold_hold_ms;
+static int fold_hold_x, fold_hold_y;
+
+static struct gfx_rect fold_panel(int n)
+{
+    const struct theme *t = T();
+    int rows = (n + 2) / 3, w = 3 * t->tile_w + 48, h = 96 + rows * t->tile_h + 56;
+    return (struct gfx_rect){ (S()->w - w) / 2, (S()->h - h) / 2 - 30, w, h };
+}
+
+static struct gfx_rect fold_cell(int k, int n)
+{
+    const struct theme *t = T();
+    struct gfx_rect p = fold_panel(n);
+    return (struct gfx_rect){ p.x + 24 + (k % 3) * t->tile_w, p.y + 90 + (k / 3) * t->tile_h, t->tile_w, t->tile_h };
+}
+
+static void fold_set(int f)
+{
+    if (f == fold_open_id)
+        return;
+    fold_open_id = f;
+    fold_hold_ms = 0;
+    kprintf("shell: folder %s\n", f >= 0 ? "open" : "closed");
+    damage_all();
 }
 
 static void turn_to(int p, int instant)
@@ -1350,8 +1595,16 @@ static struct hit hit_at(int x, int y)
         return (struct hit){ H_BAR, 0 };
     }
     if (home_shown() && !swipe_on) {
+        if (fold_open_id >= 0) {                /* the folder's popup has the screen */
+            int n = fold_count(fold_open_id);
+            for (int k = 0; k < n; k++)
+                if (inside(fold_cell(k, n), x, y))
+                    return (struct hit){ H_FOLD, fold_nth(fold_open_id, k) };
+            return inside(fold_panel(n), x, y) ? (struct hit){ H_BAR, 0 } : (struct hit){ H_FOLDX, 0 };
+        }
         if (drw_shown()) {
-            for (int k = 0; k < builtin_app_count; k++)
+            int rec[DRW_RECENT], nr = recent_apps(rec);
+            for (int k = 0; k < builtin_app_count + nr; k++)
                 if (inside(list_rect(k), x, y))
                     return (struct hit){ H_LIST, k };
             return (struct hit){ H_NONE, 0 };
@@ -1383,6 +1636,8 @@ static void damage_hit(struct hit h)
     case H_DOCK:
     case H_APPS:     shell_damage(dock_band()); break;
     case H_TILE:     shell_damage(tile_rect(h.app)); break;
+    case H_FOLD:
+    case H_FOLDX:    shell_damage((struct gfx_rect){ 0, 0, S()->w, S()->h }); break;
     case H_WIDGET:   shell_damage(wg_rect(h.app)); break;
     case H_LIST:     shell_damage(list_rect(h.app)); break;
     default:         break;
@@ -1558,6 +1813,35 @@ static void draw_icon(const struct app *a, struct gfx_rect r, uint32_t alpha)
         if (r.w >= 40)
             text_draw(VS, VX(r.x) + (r.w - text_width(initial, TEXT_HEADING)) / 2,
                       VY(r.y) + (r.h - text_height(TEXT_HEADING)) / 2, initial, TEXT_HEADING, t->accent_fg);
+    }
+}
+
+/* A folder on the home screen: a plate with the first four apps in it, small. `hot`: something is held over it. */
+static int merge_target = -1, merge_flagged;      /* the icon held over (edit mode), and held long enough */
+static uint32_t merge_since;
+
+static int merge_hot(int i)
+{
+    return edit_on && ed_lift && merge_target == i && merge_flagged;
+}
+
+static void draw_folder_icon(int face, struct gfx_rect r, int hot)
+{
+    int f = fold_of[face];
+    int rad = home_shape == 2 ? r.w / 2 : home_shape == 3 ? r.w / 10 : r.w / 4;
+    gfx_blend_round_rect(VS, VX(r.x), VY(r.y), r.w, r.h, rad, hot ? 0x8a91b8 : 0x4a4f66, 238);
+    int pad = r.w / 9, gap = r.w / 14, c = (r.w - 2 * pad - gap) / 2;
+    for (int k = 0; k < 4; k++) {
+        int m = fold_nth(f, k);
+        if (m < 0)
+            break;
+        struct gfx_rect ir = { r.x + pad + (k % 2) * (c + gap), r.y + pad + (k / 2) * (c + gap), c, c };
+        const struct icon *ic = icon_find(builtin_apps[m].icon);
+        if (ic)
+            gfx_blit_alpha_scaled(VS, (struct gfx_rect){ VX(ir.x), VY(ir.y), ir.w, ir.h }, ic->px, ic->w, ic->h,
+                                  ic->w, 255);
+        else
+            draw_icon(&builtin_apps[m], ir, 255);
     }
 }
 
@@ -2124,19 +2408,27 @@ static void draw_home(void)
             gfx_blend_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
         const struct app *a = &builtin_apps[i];
         struct gfx_rect ir = tile_icon_rect(i);
-        if (edit_hide_icons)
+        int is_fold = fold_of[i] >= 0;
+        const char *label = is_fold ? "Folder" : a->name;
+        if (edit_hide_icons) {
             ;                               /* the card's picture: its icons are drawn over it, wiggling */
-        else if (edit_on)
-            draw_icon_wiggle(a, ir, i);
-        else
-            draw_icon(a, ir, 255);
+        } else if (is_fold) {
+            draw_folder_icon(i, ir, merge_hot(i));
+        } else {
+            if (merge_hot(i))               /* an icon held over this one: they will be a folder */
+                gfx_blend_round_rect(VS, VX(ir.x - 12), VY(ir.y - 12), ir.w + 24, ir.h + 24, ir.w / 4 + 8, WHITE, 70);
+            if (edit_on)
+                draw_icon_wiggle(a, ir, i);
+            else
+                draw_icon(a, ir, 255);
+        }
         if (edit_on && !edit_hide_icons)
             draw_badge(ir.x + 10, ir.y + 10, BADGE_R);
         if (dock_slot(i) >= 0 || !home_labels)
             continue;                       /* the dock's apps have no labels: their icons are enough */
         int ty = ir.y + ir.h + 12, max_w = r.w - 8;
-        int tw = text_width(a->name, TEXT_SMALL);
-        text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w,
+        int tw = text_width(label, TEXT_SMALL);
+        text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), label, max_w,
                       TEXT_SMALL, SHELL_FG);
     }
     layout_sync();
@@ -2159,7 +2451,10 @@ static void draw_home(void)
     if (edit_on && ed_lift && ed_app >= 0) {            /* the icon in the finger: bigger, over the rest */
         int sz = home_icon_px * 118 / 100;
         struct gfx_rect r = { ed_px - sz / 2, ed_py - sz / 2, sz, sz };
-        draw_icon(&builtin_apps[ed_app], r, 255);
+        if (fold_of[ed_app] >= 0)
+            draw_folder_icon(ed_app, r, 0);
+        else
+            draw_icon(&builtin_apps[ed_app], r, 255);
     }
     /* A handle above the dock: all apps are up there. Dots when there's more than a page. */
     int n = home_pages(), gap = 24, cy = d.y - 24;
@@ -2170,26 +2465,79 @@ static void draw_home(void)
     } else {
         gfx_blend_round_rect(VS, VX(S()->w / 2 - 36), VY(cy - 4), 72, 8, 4, WHITE, 140);
     }
+    if (fold_open_id >= 0 && fold_count(fold_open_id) > 0) {        /* an open folder: its apps on a card over the page */
+        int cnt = fold_count(fold_open_id);
+        gfx_blend_round_rect(VS, VX(0), VY(0), S()->w, S()->h, 0, 0x000000, 150);
+        struct gfx_rect p = fold_panel(cnt);
+        gfx_fill_round_rect(VS, VX(p.x), VY(p.y), p.w, p.h, 44, 0x2c2f3d);
+        text_draw(VS, VX(p.x + (p.w - text_width("Folder", TEXT_BOLD)) / 2), VY(p.y + 26), "Folder", TEXT_BOLD, SHELL_FG);
+        for (int k = 0; k < cnt; k++) {
+            struct gfx_rect c = fold_cell(k, cnt);
+            int m = fold_nth(fold_open_id, k);
+            struct hit h = { H_FOLD, m };
+            if (same(h, pressed) && same(h, hover))
+                gfx_blend_round_rect(VS, VX(c.x + 8), VY(c.y), c.w - 16, c.h, TILE_RADIUS * 2, WHITE, A_PRESSED);
+            struct gfx_rect ir = { c.x + (c.w - HOME_ICON) / 2, c.y + 16, HOME_ICON, HOME_ICON };
+            draw_icon(&builtin_apps[m], ir, 255);
+            int tw = text_width(builtin_apps[m].name, TEXT_SMALL), max_w = c.w - 8;
+            text_draw_fit(VS, VX(c.x + (c.w - (tw < max_w ? tw : max_w)) / 2), VY(ir.y + ir.h + 12),
+                          builtin_apps[m].name, max_w, TEXT_SMALL, SHELL_FG);
+        }
+        text_draw(VS, VX(p.x + (p.w - text_width("Hold an app to take it out", TEXT_SMALL)) / 2), VY(p.y + p.h - 44),
+                  "Hold an app to take it out", TEXT_SMALL, DOT_GREY);
+    }
 }
 
 /* All apps, A to Z, on a sheet that slides up over the home screen. */
 static void draw_drawer(void)
 {
     const struct theme *t = T();
-    int top = drw_top();
-    gfx_fill_round_rect(VS, VX(0), VY(top), S()->w, S()->h - top + 64, 40, t->window_bg);
-    text_draw(VS, VX(48), VY(top + t->topbar_h + 12), "Apps", TEXT_HEADING, t->fg);
-    for (int k = 0; k < builtin_app_count; k++) {
+    int top = drw_top(), w = S()->w, n = builtin_app_count;
+    gfx_fill_round_rect(VS, VX(0), VY(top), w, S()->h - top + 64, 44, t->window_bg);
+    gfx_fill_round_rect(VS, VX(w / 2 - 40), VY(top + 14), 80, 8, 4, t->border);         /* a grab bar */
+    text_draw(VS, VX(40), VY(top + t->topbar_h + 8), "All apps", TEXT_HEADING, t->fg);
+    char count[24];
+    ksnprintf(count, sizeof(count), "%d apps", n);
+    text_draw(VS, VX(w - 40 - text_width(count, TEXT_SMALL)), VY(top + t->topbar_h + 24), count, TEXT_SMALL, t->fg_dim);
+
+    /* the apps opened last: one card, big icons */
+    text_draw(VS, VX(40), VY(top + DRW_RECENT_Y - 34), "RECENT", TEXT_SMALL, t->fg_dim);
+    gfx_fill_round_rect(VS, VX(24), VY(top + DRW_RECENT_Y), w - 48, DRW_RECENT_H, 32, t->view_bg);
+    int rec[DRW_RECENT], nr = recent_apps(rec);
+    if (!nr) {
+        const char *none = "Apps you open show up here";
+        text_draw(VS, VX((w - text_width(none, TEXT_SMALL)) / 2),
+                  VY(top + DRW_RECENT_Y + (DRW_RECENT_H - text_height(TEXT_SMALL)) / 2), none, TEXT_SMALL, t->fg_dim);
+    }
+    for (int j = 0; j < nr; j++) {
+        struct gfx_rect r = list_rect(n + j);
+        if (!visible(r))
+            continue;
+        struct hit h = { H_LIST, n + j };
+        if (same(h, pressed) && same(h, hover))
+            gfx_fill_round_rect(VS, VX(r.x + 4), VY(r.y), r.w - 8, r.h, 24, t->button_bg);
+        const struct app *a = &builtin_apps[rec[j]];
+        struct gfx_rect ir = { r.x + (r.w - 84) / 2, r.y + 10, 84, 84 };
+        draw_icon(a, ir, 255);
+        int max_w = r.w - 8, tw = text_width(a->name, TEXT_SMALL);
+        text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ir.y + ir.h + 8), a->name, max_w,
+                      TEXT_SMALL, t->fg);
+    }
+
+    /* every app, A to Z, each on its own soft card */
+    text_draw(VS, VX(40), VY(top + DRW_GRID_Y - 34), "A TO Z", TEXT_SMALL, t->fg_dim);
+    int isz = drw_row_h() - 72 < HOME_ICON ? drw_row_h() - 72 : HOME_ICON;
+    for (int k = 0; k < n; k++) {
         struct gfx_rect r = list_rect(k);
         if (!visible(r))
             continue;
         struct hit h = { H_LIST, k };
-        if (same(h, pressed) && same(h, hover))
-            gfx_fill_round_rect(VS, VX(r.x + 8), VY(r.y), r.w - 16, r.h, TILE_RADIUS * 2, t->button_bg);
+        int on = same(h, pressed) && same(h, hover);
+        gfx_fill_round_rect(VS, VX(r.x + 6), VY(r.y + 4), r.w - 12, r.h - 8, 28, on ? t->button_bg : t->view_bg);
         const struct app *a = &builtin_apps[list_app(k)];
-        struct gfx_rect ir = { r.x + (r.w - HOME_ICON) / 2, r.y + 16, HOME_ICON, HOME_ICON };
+        struct gfx_rect ir = { r.x + (r.w - isz) / 2, r.y + 14, isz, isz };
         draw_icon(a, ir, 255);
-        int ty = ir.y + ir.h + 12, max_w = r.w - 8, tw = text_width(a->name, TEXT_SMALL);
+        int ty = ir.y + ir.h + 8, max_w = r.w - 20, tw = text_width(a->name, TEXT_SMALL);
         text_draw_fit(VS, VX(r.x + (r.w - (tw < max_w ? tw : max_w)) / 2), VY(ty), a->name, max_w, TEXT_SMALL, t->fg);
     }
 }
@@ -2863,6 +3211,15 @@ static void draw_edit(void)
         struct gfx_rect box = { sx - sz_w / 2 - 6, sy - sz_h / 2 - 6, sz_w + 12, sz_h + 12 };
         if (!visible(box))
             continue;
+        if (fold_of[i] >= 0) {                      /* a folder: its plate, not wiggling */
+            draw_folder_icon(i, (struct gfx_rect){ sx - sz_w / 2, sy - sz_h / 2, sz_w, sz_h }, 0);
+            if (edit_on && p > 200) {
+                int bx, by;
+                page_to_screen(ir.x + 10, ir.y + 10, &bx, &by);
+                draw_badge(bx, by, BADGE_R * z / 256);
+            }
+            continue;
+        }
         const struct icon *ic = icon_find(builtin_apps[i].icon);
         int sn = edit_on ? wiggle_sn(i) : 0;
         if (!ic) {
@@ -3346,7 +3703,7 @@ static void drop_target(int a, int px, int py, int *where, int *idx)
     for (int k = 0; k < n_dock; k++)
         in_dock += dock_idx[k] != a;
     struct gfx_rect d = home_dock();
-    if (py >= d.y - 30 && in_dock < DOCK_MAX) {
+    if (py >= d.y - 30 && in_dock < DOCK_MAX && fold_of[a] < 0) {       /* (a folder doesn't go in the dock) */
         int count = in_dock + 1, i = (px - d.x) * count / d.w;
         *where = W_DOCK;
         *idx = i < 0 ? 0 : i > count - 1 ? count - 1 : i;
@@ -3604,6 +3961,12 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
             }
         }
         if (badge_hit >= 0) {                                   /* the minus: off the home screen */
+            if (fold_of[badge_hit] >= 0) {                      /* ...on a folder: its apps come out */
+                fold_ungroup(badge_hit);
+                edit_damage();
+                layout_saved("emptied", badge_hit);
+                return 1;
+            }
             layout_place(badge_hit, W_HIDDEN, 1000);
             layout_saved("removed", badge_hit);
             return 1;
@@ -3700,6 +4063,26 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
                 edit_dirty((struct gfx_rect){ ed_px - sz / 2, ed_py - sz / 2, sz, sz });
                 int where, idx;
                 drop_target(ed_app, ed_px, ed_py, &where, &idx);
+                int occupant = -1;                  /* held over another icon: wait, it may become a folder */
+                if (where == W_GRID && fold_of[ed_app] < 0)
+                    for (int b = 0; b < APPS_MAX; b++)
+                        if (b != ed_app && cell_of[b] == idx)
+                            occupant = b;
+                if (occupant >= 0) {
+                    if (merge_target != occupant) {
+                        if (merge_target >= 0 || merge_flagged)
+                            edit_damage();
+                        merge_target = occupant;
+                        merge_since = uptime_ms();
+                        merge_flagged = 0;
+                    }
+                    return 1;
+                }
+                if (merge_target >= 0) {
+                    merge_target = -1;
+                    merge_flagged = 0;
+                    edit_damage();
+                }
                 int cw = dock_slot(ed_app) >= 0 ? W_DOCK : W_GRID;
                 int ci = cw == W_DOCK ? dock_slot(ed_app) : grid_index(ed_app);
                 if (where != cw || idx != ci)
@@ -3726,6 +4109,24 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
         return 1;
     }
     if (ed_drag == D_ICON) {            /* let go: it settles into its place */
+        if (ed_lift && merge_target >= 0) {     /* over another icon: a folder if it stayed long enough, else they swap */
+            int target = merge_target, made = merge_flagged || uptime_ms() - merge_since >= FOLD_DWELL_MS;
+            int tcell = cell_of[target];
+            merge_target = -1;
+            merge_flagged = 0;
+            ed_lift = 0;
+            if (made && fold_merge(ed_app, target)) {
+                layout_saved("put in a folder:", ed_app);
+                kprintf("shell: home folder: %s in %s's\n", builtin_apps[ed_app].name, builtin_apps[target].name);
+            } else if (tcell >= 0) {
+                layout_place(ed_app, W_GRID, tcell);
+                layout_saved("moved", ed_app);
+            }
+            ed_app = -1;
+            ed_drag = D_NONE;
+            edit_damage();
+            return 1;
+        }
         if (ed_lift) {
             struct gfx_rect slot = icon_in_tile(tile_base(ed_app), dock_slot(ed_app) >= 0);
             off_x[ed_app] = (ed_px - (slot.x + slot.w / 2)) * 256;
@@ -3775,6 +4176,25 @@ static int edit_pointer(int x, int y, uint8_t buttons, int down, int up)
 static void edit_tick(void)
 {
     uint32_t now = uptime_ms();
+    if (merge_target >= 0 && !merge_flagged && now - merge_since >= FOLD_DWELL_MS) {
+        merge_flagged = 1;              /* held long enough: the icon underneath lights up */
+        edit_damage();
+    }
+    if (fold_open_id >= 0 && !home_shown())
+        fold_open_id = -1;              /* an app took the screen */
+    if (fold_hold_ms && now - fold_hold_ms >= 600) {    /* an app in the popup held: it comes out */
+        int app = fold_hold_app;
+        fold_hold_ms = 0;
+        pressed = (struct hit){ H_NONE, 0 };
+        hover = (struct hit){ H_NONE, 0 };
+        fold_take_out(app);
+        if (fold_open_id >= 0 && fold_count(fold_open_id) < 2)
+            fold_set(-1);
+        settings_save();
+        show_toast("Taken out of the folder");
+        kprintf("shell: home folder: %s taken out\n", builtin_apps[app].name);
+        damage_all();
+    }
     if (hold_since && now - hold_since >= EDIT_HOLD_MS) {
         hold_since = 0;
         if ((last_buttons & MOUSE_LEFT) && home_shown() && !edit_on && !menu_open && !drw_shown() && !swipe_on &&
@@ -4399,9 +4819,28 @@ static void activate(struct hit h)
         break;
     }
     case H_TILE:
+        if (fold_of[h.app] >= 0) {          /* a folder: open it */
+            fold_set(fold_of[h.app]);
+            break;
+        }
         set_grid(0);
         shell_flush();
         launch(h.app, tile_icon_rect(h.app));
+        break;
+    case H_FOLD: {                          /* an app in the popup */
+        int n = fold_count(fold_open_id);
+        struct gfx_rect from = { S()->w / 2 - 40, S()->h / 2 - 40, 80, 80 };
+        for (int k = 0; k < n; k++)
+            if (fold_nth(fold_open_id, k) == h.app)
+                from = fold_cell(k, n);
+        fold_set(-1);
+        set_grid(0);
+        shell_flush();
+        launch(h.app, from);
+        break;
+    }
+    case H_FOLDX:
+        fold_set(-1);
         break;
     case H_LIST: {
         struct gfx_rect r = list_rect(h.app);
@@ -5728,7 +6167,7 @@ static int drawer_swipe(int y, uint8_t buttons, int down, int up)
 
 static int home_swipe(int x, uint8_t buttons, int down, int up)
 {
-    if (down && home_shown() && !menu_open && !drw_shown()) {
+    if (down && home_shown() && !menu_open && !drw_shown() && fold_open_id < 0) {
         swipe_x0 = x;
         swipe_from = pager.x;
         swipe_on = 0;
@@ -5794,7 +6233,10 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
     if (edit_pointer(x, y, buttons, down, up))
         return;
     /* A finger held still on the home screen starts edit mode (edit_tick). */
-    if (down && home_shown() && !menu_open && !drw_shown() && y >= T()->topbar_h) {
+    if (fold_hold_ms && (up || !(buttons & MOUSE_LEFT) || (x - fold_hold_x) * (x - fold_hold_x) +
+                                                              (y - fold_hold_y) * (y - fold_hold_y) > SWIPE_SLOP * SWIPE_SLOP))
+        fold_hold_ms = 0;
+    if (down && home_shown() && !menu_open && !drw_shown() && fold_open_id < 0 && y >= T()->topbar_h) {
         hold_since = uptime_ms() ? uptime_ms() : 1;
         hold_x = x;
         hold_y = y;
@@ -5832,6 +6274,12 @@ void desktop_input_mouse(int x, int y, uint8_t buttons)
         } else if (h.kind != H_BAR && h.kind != H_DOCK_BG) {
             pressed = h;
             damage_hit(h);
+            if (h.kind == H_FOLD) {             /* held, it comes out of the folder (edit_tick) */
+                fold_hold_app = h.app;
+                fold_hold_ms = uptime_ms() ? uptime_ms() : 1;
+                fold_hold_x = x;
+                fold_hold_y = y;
+            }
         }
     } else if (up && pressed.kind) {
         struct hit was = pressed;
@@ -5872,6 +6320,10 @@ static void home_key(void)
     }
     menu_set(0);
     set_grid(0);
+    if (fold_open_id >= 0) {            /* an open folder closes first */
+        fold_set(-1);
+        return;
+    }
     if (qs_shown()) {
         qs_set(0, 0);
         return;
@@ -6420,7 +6872,7 @@ void desktop_tick(void)
 int desktop_busy(void)
 {
     /* A key held: its long press (or repeat) is timed, so no sleeping. */
-    return panic_on || hold_since || edit_on || edit_moving || dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
+    return panic_on || hold_since || fold_hold_ms || edit_on || edit_moving || dock_moving || hide_at || pager_moving || qs_moving || vol_key || power_down_ms || home_down_ms || drw_moving ||
            fx_moving || osk_moving();
 }
 

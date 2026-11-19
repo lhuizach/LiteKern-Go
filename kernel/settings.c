@@ -194,7 +194,7 @@ static int apply(int top, int at_boot)
     uint32_t saver = 0xffffffffu;
     struct lock_settings lock = *lockscreen_settings();
     struct home_clock home = *lockscreen_home_clock();
-    static char layout_text[400], style_text[48];
+    static char layout_text[640], style_text[48];
     layout_text[0] = '\0';
     style_text[0] = '\0';
     wallpaper[0] = '\0';
@@ -400,7 +400,7 @@ void settings_save(void)
     const char *wp = wallpaper_current();
     const struct lock_settings *lock = lockscreen_settings();
     char clock_y[12], home_y[12];
-    static char layout_text[400];
+    static char layout_text[640];
     char style_text[48];
     desktop_layout_text(layout_text, sizeof(layout_text));
     desktop_style_text(style_text, sizeof(style_text));
