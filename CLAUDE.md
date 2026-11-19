@@ -111,7 +111,7 @@ A PC cannot test the real touch controller, Wi-Fi chip, display driver, brightne
 
 His list, from the owner, 7 Nov 2026. Games are our own originals with our own names and art, not copies of the named games.
 
-- Games: a lane-dodging traffic racer (not built), Snake (done, `apps/snake`), a block-placing puzzle like Block Blast (done: Brickfit), a falling-block puzzle like Tetris (not built), a knife-throwing game with a watermelon ("Watermelon tungin": not built, exact idea to confirm).
+- Games: a lane-dodging traffic racer (not built), Snake (done, `apps/snake`), a block-placing puzzle like Block Blast (done: Brickfit), a falling-block puzzle like Tetris (done 19 Nov 2026: Stackfall, `apps/stackfall`, drag/tap/flick controls, hold, ghost, next 3, saved best; checked on the PC desktop only, not on the phone, and line clears were not seen on screen yet), a knife-throwing game with a watermelon ("Watermelon tungin": not built, exact idea to confirm).
 - Apps: R3lay (the owner's own messaging app: a Capacitor web app on Supabase, with realtime chat, file storage and WebRTC calls; our own C client for text chat is in `apps/r3lay/`, see `docs/R3LAY-PLAN.md`; calls unlikely), Class Charts (no Android apps here, so it would be our own client, if its login and data can be reached at all: unverified), Weather (done), a music app such as Spotify (Spotify itself isn't available for this OS: the local Music app with an Audius online tab is done).
 - All the online apps need Wi-Fi, which works.
 
