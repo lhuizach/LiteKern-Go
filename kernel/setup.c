@@ -45,7 +45,7 @@ static struct {
     /* Wi-Fi */
     struct k86_wifi nets[8];
     int nnets, sel, entering, kb_sym, kb_shift, show_pw, joining, joined, join_bad, pw_len;
-    uint32_t poll_at;
+    uint32_t poll_at, spin_at;
     char pw[64], joined_ssid[K86_SSID_MAX];
     struct gfx_rect rows[8], rescan, back, field, showbtn;
     struct { struct gfx_rect r; char c; } keys[48];
@@ -249,6 +249,18 @@ static void bars(struct gfx_surface *s, int x, int y, int signal, uint32_t c)
     }
 }
 
+/* A loader: twelve dots round a circle, the lit one moving on (no trigonometry: the circle's points are a table). */
+static void spinner(struct gfx_surface *s, int cx, int cy, int r, uint32_t c)
+{
+    static const signed char sn[12] = { 0, 50, 87, 100, 87, 50, 0, -50, -87, -100, -87, -50 };
+    int head = (int)(uptime_ms() / 80) % 12;
+    for (int i = 0; i < 12; i++) {
+        int age = (head - i + 12) % 12, a = 255 - age * 20;
+        int x = cx + sn[i] * r / 100, y = cy - sn[(i + 3) % 12] * r / 100;
+        gfx_fill_circle(s, x, y, imax(2, r / 7 + (age == 0)), gfx_mix(c, 0x000000u, (uint32_t)a));
+    }
+}
+
 static void lock_icon(struct gfx_surface *s, int x, int y, uint32_t c)
 {
     gfx_fill_round_rect(s, x, y + 10, 24, 18, 4, c);
@@ -362,8 +374,10 @@ static void draw_page(struct gfx_surface *s, int page)
                 text_draw(s, su.field.x + 28, su.field.y + (su.field.h - text_height(TEXT_BODY)) / 2, "Password", TEXT_BODY, 0x909090u);
             if (su.join_bad)
                 centred(s, 460, "That password didn't work. Try again.", TEXT_SMALL, 0xff8f7au);
-            else if (su.joining)
+            else if (su.joining) {
                 centred(s, 460, "Connecting...", TEXT_SMALL, 0xc8c8c8u);
+                spinner(s, w / 2 - text_width("Connecting...", TEXT_SMALL) / 2 - 30, 460 + text_height(TEXT_SMALL) / 2, 14, WHITE);
+            }
             draw_keyboard(s);
             return;
         }
@@ -379,6 +393,8 @@ static void draw_page(struct gfx_surface *s, int page)
             gfx_blend_round_rect(s, r.x, r.y, r.w, r.h, 26, me ? t->accent_bg : WHITE, me ? 170 : 28);
             text_draw_fit(s, r.x + 28, r.y + (r.h - text_height(TEXT_BODY)) / 2, su.nets[i].ssid, r.w - 200, TEXT_BODY, WHITE);
             bars(s, r.x + r.w - 76, r.y + 28, su.nets[i].signal, WHITE);
+            if (su.joining && i == su.sel)
+                spinner(s, r.x + r.w - 190, r.y + r.h / 2, 18, WHITE);
             if (su.nets[i].secure)
                 lock_icon(s, r.x + r.w - 124, r.y + 30, 0xe0e0e0u);
         }
@@ -558,6 +574,10 @@ void setup_tick(void)
         return;
     struct gfx_surface *s = S();
     uint32_t now = uptime_ms();
+    if (su.page == P_WIFI && su.joining && (int32_t)(now - su.spin_at) >= 80 && now - su.page_at >= FADE_MS) {
+        su.spin_at = now;                           /* the loader turns */
+        show_now(P_WIFI);
+    }
     if (su.page == P_WIFI && su.joining && (int32_t)(now - su.poll_at) >= 600) {
         su.poll_at = now;
         wifi_poll();
