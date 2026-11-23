@@ -1060,7 +1060,7 @@ static void add_car(int lane, int z)
 static void spawn_wave(int z)
 {
     free_lane = iclamp(free_lane + (int)(rnd() % 3) - 1, 0, LANES - 1);
-    int density = imin(92, 45 + play_ms / 2000);
+    int density = imin(55, 27 + play_ms / 3300);        /* (40% fewer cars than before: 45 + play_ms / 2000, at most 92) */
     for (int lane = 0; lane < LANES; lane++)
         if (lane != free_lane && (int)(rnd() % 100) < density)
             add_car(lane, z + (int)(rnd() % 900));
