@@ -52,6 +52,7 @@
 #define BRAKE_DECEL 2300                /* units/s per second: about 38 km/h a second, hard */
 #define RAIL_X 765                      /* the most the car's middle can be from the road's middle */
 #define CARS_MAX 24
+#define BUMP_SPEED 900                  /* closing speed (about 15 km/h) up to which touching a car is a bump, not a crash */
 #define PART_MAX 28
 
 /* ---- palette ---- */
@@ -92,6 +93,7 @@ struct save {
 struct car {
     int used, lane, z, prev_z, kind, near_done, sp;    /* sp: its speed along the road, units/s */
     uint32_t col;
+    int x, vx;                                         /* across the road (a car can be knocked out of its lane), and how fast it drifts */
 };
 
 struct particle {
@@ -130,7 +132,7 @@ static int off_x, off_y;                /* screen pixels to window pixels, from 
 static const int lane_sp[LANES] = { 3667, 3178, 2750, 2322 };   /* each lane's traffic speed (60, 52, 45, 38 km/h) */
 static int curve, curve_tgt, curve_timer;    /* the road's bend: -256..256 */
 static int wave_acc, next_gap, free_lane;
-static uint32_t crash_since;
+static uint32_t crash_since, bump_until;
 static char msg[16];
 static uint32_t msg_until;
 static int perf_n, perf_max;
@@ -592,7 +594,7 @@ static void draw_cars_and_player(void)
         if (best < 0)
             break;
         done[best] = 1;
-        draw_world_car(lane_x(cars[best].lane), cars[best].z, cars[best].kind, cars[best].col, 0);
+        draw_world_car(cars[best].x, cars[best].z, cars[best].kind, cars[best].col, 0);
     }
     if (screen != S_DYING || (now_ms - crash_since) / 90 % 2 == 0)
         draw_world_car(xp, zp, 0, skin_col[sv.skin], player_lean());
@@ -604,7 +606,7 @@ static void draw_cars_and_player(void)
         if (best < 0)
             break;
         done[best] = 1;
-        draw_world_car(lane_x(cars[best].lane), cars[best].z, cars[best].kind, cars[best].col, 0);
+        draw_world_car(cars[best].x, cars[best].z, cars[best].kind, cars[best].col, 0);
     }
 }
 
@@ -819,7 +821,8 @@ static void gl_send(int ox, int oy)
     for (int i = 0; i < CARS_MAX && sc.ncars < GL_CARS; i++)
         if (cars[i].used && cars[i].z > zp - 3500) {
             struct gl_car *c = &sc.cars[sc.ncars++];
-            c->x = lane_x(cars[i].lane);
+            c->x = cars[i].x;
+            c->yaw = cars[i].vx / 6;                    /* a car being knocked sideways points a little that way (if the renderer uses it) */
             c->z = cars[i].z;
             c->kind = cars[i].kind;
             c->col = cars[i].col;
@@ -1022,7 +1025,7 @@ static void add_car(int lane, int z)
         if (!cars[i].used) {
             int roll = (int)(rnd() % 100);
             cars[i] = (struct car){ 1, lane, z, z, roll < 40 ? 0 : roll < 70 ? 1 : roll < 90 ? 2 : 3, 0, lane_sp[lane],
-                                    traffic_col[rnd() % 8] };
+                                    traffic_col[rnd() % 8], lane_x(lane), 0 };
             return;
         }
 }
@@ -1191,12 +1194,43 @@ static void update(int dt)
             continue;
         c->prev_z = c->z;
         c->z -= (v - c->sp) * dt / 1000;
-        int dx = iabs(lane_x(c->lane) - xp);
+        c->x += c->vx * dt / 1000;                      /* a car that was knocked sideways drifts and settles */
+        c->vx -= c->vx * dt * 5 / 2000;
+        if (c->x > RAIL_X || c->x < -RAIL_X) {          /* ...into the guard rail: it scrapes and slows down */
+            c->x = iclamp(c->x, -RAIL_X, RAIL_X);
+            c->vx = 0;
+            c->sp = imax(V_MIN, c->sp - 1400 * dt / 1000);
+        }
+        int dx = iabs(c->x - xp);
         int half_l = (car_h[c->kind] + car_h[0]) / 2 * 9 / 10, half_w = (car_w[c->kind] + car_w[0]) / 2 - 25;
         int z_lo = imin(c->prev_z, c->z), z_hi = imax(c->prev_z, c->z);
         if (z_lo <= zp + half_l && z_hi >= zp - half_l && dx < half_w) {
-            crash();
-            return;
+            int rel = v - c->sp;                        /* how fast we close in on it along the road */
+            if (iabs(rel) > BUMP_SPEED) {               /* a real hit */
+                crash();
+                return;
+            }
+            /* About the same speed: a bump. It is pushed out of the way sideways (into the wall or the next car if
+             * that is where it goes: the car being pushed holds us back), and the two trade a little speed. */
+            int dir = c->x >= xp ? 1 : -1, pen = half_w - dx;
+            int lat_v = steer_s * lat / 1000;           /* our sideways speed */
+            c->x += dir * pen;
+            if (dir * lat_v > 0 || dx < half_w / 2)
+                c->vx = dir * imax(300, imin(1400, iabs(lat_v) * 8 / 10));
+            if (c->x > RAIL_X || c->x < -RAIL_X) {      /* it can't go further: we can't push in */
+                int over = iabs(c->x) - RAIL_X;
+                c->x = iclamp(c->x, -RAIL_X, RAIL_X);
+                xp -= dir * over;
+                c->vx = 0;
+            }
+            int dv = (v - c->sp) * imin(1000, dt * 3) / 1000;
+            v -= dv / 2;
+            c->sp += dv / 2;
+            c->near_done = 1;                           /* no CLOSE bonus for a car we bumped */
+            if (now_ms >= bump_until) {
+                bump_until = now_ms + 250;
+                sound(260, 30, 0, 0);
+            }
         }
         if (!c->near_done && c->z < zp - half_l) {
             c->near_done = 1;
@@ -1209,6 +1243,31 @@ static void update(int dt)
         }
         if (c->z < zcut)
             c->used = 0;
+    }
+    /* a car knocked into another one shoves it along (the pair share the way out; at a wall the one against it stays) */
+    for (int i = 0; i < CARS_MAX; i++) {
+        struct car *a = &cars[i];
+        if (!a->used || a->vx == 0)
+            continue;
+        for (int j = 0; j < CARS_MAX; j++) {
+            struct car *b = &cars[j];
+            if (j == i || !b->used)
+                continue;
+            int hl = (car_h[a->kind] + car_h[b->kind]) / 2 * 9 / 10, hw = (car_w[a->kind] + car_w[b->kind]) / 2 - 25;
+            int ddx = b->x - a->x;
+            if (iabs(b->z - a->z) >= hl || iabs(ddx) >= hw)
+                continue;
+            int dir = ddx >= 0 ? 1 : -1, pen = hw - iabs(ddx);
+            b->x += dir * pen;
+            b->vx = a->vx * 7 / 10;
+            if (b->x > RAIL_X || b->x < -RAIL_X) {
+                int over = iabs(b->x) - RAIL_X;
+                b->x = iclamp(b->x, -RAIL_X, RAIL_X);
+                a->x -= dir * over;
+                b->vx = 0;
+            }
+            a->vx = a->vx * 4 / 10;
+        }
     }
     if (msg[0] && now_ms >= msg_until)
         msg[0] = 0;
