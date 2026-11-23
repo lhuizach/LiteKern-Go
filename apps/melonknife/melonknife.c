@@ -19,13 +19,17 @@
 #include "sdk/kern86.h"
 
 #define SAVE_FILE "melonknife.dat"
-#define SAVE_MAGIC 0x4d4b4e31u
+#define SAVE_MAGIC 0x4d4b4e32u
+#define LEVELS 100
+#define PER_WORLD 25                    /* levels in each of the four worlds */
+#define MAX_OBS 4
+#define OBS_DEG 760                     /* a knife this close to an obstacle (1/100 degree) hits it */
 #define FRAME_MS 33
 #define MELON_R 170                     /* the melon's radius, px */
 #define SPR (2 * MELON_R + 48)          /* the melon's still picture: a square this big */
 #define MAX_STUCK 40
 #define PART_MAX 48
-#define HIT_DEG 880                     /* two knives closer than this (1/100 degree) hit each other */
+#define HIT_DEG 800                     /* two knives closer than this (1/100 degree) hit each other */
 #define THROW_SPEED 2600                /* px a second */
 #define BLADE 104
 #define HANDLE 72
@@ -41,10 +45,23 @@
 #define C_BTN 0x2a4651u
 #define C_BTN_PRIMARY 0x35a85eu
 
-enum screen { S_MENU, S_PLAY, S_CLEAR, S_FAIL, S_OVER };
+enum screen { S_MENU, S_PLAY, S_CLEAR, S_FAIL, S_OVER, S_PAUSE };
+
+/* The four worlds: the melon, the backdrop and the obstacles on the melon all change with them. */
+struct world {
+    const char *name;
+    uint32_t bg0, bg1, glow0, glow1, dot, rind0, rind1, ring0, ring1, fl0, fl1, stripe, seed, ob0, ob1, burst0, burst1;
+};
+static const struct world themes[4] = {
+    { "Garden", 0x1f4d59u, 0x153944u, 0x214f5bu, 0x3b8789u, 0x5fb09bu, 0x1b6b30u, 0x2e9d46u, 0xf1f6e8u, 0xdfeacfu, 0xff93a0u, 0xe0304au, 0x74d476u, 0x2a1418u, 0x2f6b24u, 0xa6e86eu, 0xf0455au, 0x4fc060u },
+    { "Frost",  0x1d3a5cu, 0x122a47u, 0x1f4468u, 0x5a9bc8u, 0xe6f4ffu, 0x2f6a9au, 0x5aa7d6u, 0xeaf6ffu, 0xcfe6f5u, 0xd6f1ffu, 0x4a9ee0u, 0xbfe8ffu, 0x10263au, 0x5fb2e6u, 0xeaf8ffu, 0x7fd0ffu, 0xeaf8ffu },
+    { "Lava",   0x4d221cu, 0x32140fu, 0x5a2a1cu, 0xc2562au, 0xff8a3cu, 0x2b2022u, 0x5a3a36u, 0xffd08au, 0xf0a95au, 0xffe27au, 0xe8501cu, 0xe0652au, 0x2a0d08u, 0x3a2f33u, 0xff7a2au, 0xffb03au, 0xff5a1cu },
+    { "Galaxy", 0x2a2150u, 0x1a1438u, 0x30275eu, 0x7a5ac8u, 0xfff2b0u, 0x3d2a8au, 0x6a4fd0u, 0xe8e0ffu, 0xcfc4f5u, 0xf3a6ffu, 0x8a3ad8u, 0xa58cffu, 0x1a0f33u, 0xb06affu, 0xffd0ffu, 0xd77affu, 0xffe27au },
+};
 
 struct save {
-    uint32_t magic, best;
+    uint32_t magic, best;                /* best: the furthest level reached */
+    uint32_t run_valid, run_level, run_score;       /* the game to carry on: it is saved when each level starts */
 };
 
 struct particle {
@@ -64,7 +81,9 @@ static enum screen screen = S_MENU;
 static uint32_t now_ms, last_frame, screen_at, rng_state;
 static int cx, cy;                      /* the melon's middle */
 static struct gfx_rect box;             /* what the melon, its knives and the juice are drawn in */
-static int level, score, left, in_level_ms;
+static int level, score, score0, left, in_level_ms, won, cur_theme = -1;
+static const struct world *th = &themes[0];
+static int obs[MAX_OBS], nobs;          /* obstacles on the melon: angles, 1/100 degree */
 static int mel_ang;                     /* 1/100 degree */
 static int stuck[MAX_STUCK], nstuck;    /* each knife's angle on the melon, 1/100 degree (0 = right, 90 = down) */
 static int flying, fly_y;               /* a knife on its way: where its tip is */
@@ -73,9 +92,9 @@ static struct particle parts[PART_MAX];
 static int pulse;                       /* the melon's bump when a knife lands, px */
 static int shake;                       /* the melon's shake, px */
 static int hud_dirty = 1, foot_dirty = 1;
-static struct gfx_rect btn_play, btn_menu;
-static int pressed;                     /* 1 play, 2 menu */
-static int new_best;
+static struct gfx_rect btn_play, btn_menu, btn_pause, chip[4];
+static int pressed;                     /* 1 first button, 2 second, 3.. a world */
+static int fail_obs;                    /* the knife that failed the level hit an obstacle */
 static uint32_t perf_sum;
 static int perf_n, perf_max;
 
@@ -198,6 +217,59 @@ static void strip(int px, int py, int qx, int qy, int w0, int w1, uint32_t c)
     quad(x, y, c);
 }
 
+/* A round disc, smooth at the edge (the library's circle isn't round at this size). alpha 255 is solid. */
+static uint32_t isqrt64(uint64_t v)
+{
+    uint64_t r = 0, bit = 1ull << 62;
+    while (bit > v)
+        bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (uint32_t)r;
+}
+
+static void put_a(struct gfx_surface *s, int x, int y, uint32_t c, int a)
+{
+    if (x < 0 || y < 0 || x >= s->w || y >= s->h || a <= 0)
+        return;
+    uint32_t *p = s->px + (size_t)y * s->stride + x;
+    *p = a >= 255 ? c : lerp(*p, c, a, 255);
+}
+
+static void disc_a(struct gfx_surface *s, int cx, int cy, int r, uint32_t c, int alpha)
+{
+    for (int dy = -r; dy <= r; dy++) {
+        int y = cy + dy;
+        if (y < 0 || y >= s->h)
+            continue;
+        uint32_t xs = isqrt64((uint64_t)((int64_t)r * r - (int64_t)dy * dy) * 65536u);   /* half the row's width, 1/256 px */
+        int full = (int)(xs >> 8), part = (int)(xs & 255);
+        int x0 = imax(0, cx - full), x1 = imin(s->w - 1, cx + full);
+        uint32_t *row = s->px + (size_t)y * s->stride;
+        if (alpha >= 255) {
+            for (int x = x0; x <= x1; x++)
+                row[x] = c;
+        } else {
+            for (int x = x0; x <= x1; x++)
+                row[x] = lerp(row[x], c, alpha, 255);
+        }
+        put_a(s, cx - full - 1, y, c, part * alpha / 255);
+        put_a(s, cx + full + 1, y, c, part * alpha / 255);
+    }
+}
+
+static void disc(struct gfx_surface *s, int cx, int cy, int r, uint32_t c)
+{
+    disc_a(s, cx, cy, r, c, 255);
+}
+
 /* ---- the pictures that are drawn once ---- */
 static void make_pictures(void)
 {
@@ -207,21 +279,44 @@ static void make_pictures(void)
     spr = (struct gfx_surface){ (uint32_t *)calloc((size_t)SPR * (size_t)SPR, 4), SPR, SPR, SPR };
     if (!bgpic.px || !spr.px)
         return;
-    for (int y = 0; y < canvas.h; y++)                                       /* a deep teal, never black */
-        gfx_fill_rect(&bgpic, 0, y, canvas.w, 1, lerp(0x1f4d59u, 0x153944u, y, canvas.h));
-    for (int i = 0; i < 24; i++)                                             /* a soft glow behind the melon */
-        gfx_fill_circle(&bgpic, cx, cy, MELON_R + 300 - i * 12, lerp(0x214f5bu, 0x3b8789u, i, 24));
+    for (int y = 0; y < canvas.h; y++)
+        gfx_fill_rect(&bgpic, 0, y, canvas.w, 1, lerp(th->bg0, th->bg1, y, canvas.h));
+    for (int i = 0; i < 24; i++)                                             /* a soft glow behind the melon (no hard edge) */
+        disc_a(&bgpic, cx, cy, MELON_R + 300 - i * 12, th->glow1, 11);
+    uint32_t q = 0x9e3779b9u;                                                /* the world's specks: snow, embers, stars, spores */
+    for (int i = 0; i < 70; i++) {
+        q = q * 1664525u + 1013904223u;
+        int x = (int)(q >> 8) % canvas.w;
+        q = q * 1664525u + 1013904223u;
+        int y = (int)(q >> 8) % canvas.h, d = (int)(q >> 4 & 3);
+        disc(&bgpic, x, y, 2 + d, lerp(lerp(th->bg0, th->glow1, 1, 2), th->dot, 1 + d, 4));
+    }
     /* the melon, still parts: its picture starts as the background behind it */
     gfx_blit(&spr, 0, 0, &bgpic, cx - SPR / 2, cy - SPR / 2, SPR, SPR);
     int m = SPR / 2, r = MELON_R;
-    gfx_blend_round_rect(&spr, m - r + 4, m - r + 14, 2 * r, 2 * r, r, 0x050c0eu, 140);          /* its shadow */
-    gfx_fill_circle(&spr, m, m, r, 0x1b6b30u);                                                    /* rind */
-    gfx_fill_circle(&spr, m, m, r - 5, 0x2e9d46u);
-    gfx_fill_circle(&spr, m, m, r - 20, 0xf1f6e8u);                                               /* the white ring */
-    gfx_fill_circle(&spr, m, m, r - 27, 0xdfeacfu);
+    disc_a(&spr, m + 4, m + 14, r, 0x050c0eu, 140);          /* its shadow */
+    disc(&spr, m, m, r, th->rind0);                                                    /* rind */
+    disc(&spr, m, m, r - 5, th->rind1);
+    disc(&spr, m, m, r - 20, th->ring0);                                               /* the white ring */
+    disc(&spr, m, m, r - 27, th->ring1);
     for (int i = 0; i < 18; i++)                                                                  /* the flesh: paler at the edge */
-        gfx_fill_circle(&spr, m, m, r - 30 - i * (r - 36) / 18, lerp(0xff93a0u, 0xe0304au, i, 17));
+        disc(&spr, m, m, r - 30 - i * (r - 36) / 18, lerp(th->fl0, th->fl1, i, 17));
     gfx_blend_round_rect(&spr, m - r + 34, m - r + 28, 108, 46, 23, 0xffffffu, 46);              /* a shine */
+}
+
+static int theme_of(int lv)
+{
+    int t = (lv - 1) / PER_WORLD;
+    return t < 0 ? 0 : t > 3 ? 3 : t;
+}
+
+static void set_theme(int t)
+{
+    if (t == cur_theme && bgpic.px)
+        return;
+    cur_theme = t;
+    th = &themes[t];
+    make_pictures();
 }
 
 /* ---- the rules ---- */
@@ -234,27 +329,50 @@ static void add_burst(int x, int y, int n, uint32_t c1, uint32_t c2, int big)
     }
 }
 
+static void layout(void);
+
+static void remember(void)                       /* the game to carry on: level and score */
+{
+    sv.run_valid = 1;
+    sv.run_level = (uint32_t)level;
+    sv.run_score = (uint32_t)score;
+    if ((uint32_t)level > sv.best)
+        sv.best = (uint32_t)level;
+    save();
+}
+
 static void start_level(void)
 {
-    nstuck = 0;
+    int idx = (level - 1) % PER_WORLD, w = theme_of(level);
+    set_theme(w);
+    nstuck = nobs = 0;
     flying = 0;
     fall_y = -1;
     in_level_ms = 0;
+    score0 = score;
     mel_ang = (int)(rnd() % 36000);
-    int pre = level < 2 ? 0 : imin(1 + level, 7);
-    for (int i = 0; i < pre; i++)                /* knives already in it, spread so there is always a gap */
-        stuck[nstuck++] = (36000 * i / pre + (int)(rnd() % (uint32_t)(36000 / pre / 3))) % 36000;
-    left = imin(4 + level, 11);
+    int pre = idx < 3 ? 0 : imin(idx / 6 + 1 + w / 2, 4);
+    int ob = idx < 2 && w == 0 ? 0 : imin(w == 0 ? idx / 6 + 1 : 1 + idx / 8 + w / 2, MAX_OBS - (w > 1 ? 0 : 1));
+    int n = pre + ob;
+    for (int i = 0; i < n; i++) {                /* obstacles and knives already in it, spread so there is always a gap */
+        int a = (36000 * i / n + (int)(rnd() % (uint32_t)(36000 / n / 3))) % 36000;
+        if (i < ob)
+            obs[nobs++] = a;
+        else
+            stuck[nstuck++] = a;
+    }
+    left = imin(4 + idx / 4 + w, 9);
     screen = S_PLAY;
     screen_at = now_ms;
     hud_dirty = foot_dirty = 1;
+    remember();
 }
 
-static void start_game(void)
+static void start_game(int lv, int sc)
 {
-    level = 1;
-    score = 0;
-    new_best = 0;
+    level = lv;
+    score = sc;
+    won = 0;
     memset(parts, 0, sizeof(parts));
     pressed = 0;
     start_level();
@@ -265,7 +383,8 @@ static void start_game(void)
 /* How fast the melon turns, 1/100 degree a second: each level has its own way of turning. */
 static int spin_speed(void)
 {
-    int base = imin(9000 + level * 1100, 24000);
+    int idx = (level - 1) % PER_WORLD;
+    int base = imin(9000 + idx * 350 + theme_of(level) * 1800, 22000);
     int t = in_level_ms;
     switch (level % 4) {
     case 1:                                      /* steady */
@@ -287,11 +406,7 @@ static int spin_speed(void)
 
 static void finish_game(void)
 {
-    if (score > (int)sv.best) {
-        sv.best = (uint32_t)score;
-        new_best = 1;
-        save();
-    }
+    score = score0;                              /* the level is tried again from its start */
     screen = S_OVER;
     screen_at = now_ms;
 }
@@ -314,19 +429,30 @@ static void land(void)
 {
     int rel = norm(9000 - mel_ang);                 /* the bottom of the melon, in its own turning */
     flying = 0;
+    int bad = 0, from = rel;
     for (int i = 0; i < nstuck; i++)
-        if (angdiff(stuck[i], rel) < HIT_DEG) {      /* on top of one: it is over */
-            fall_x = cx;
-            fall_y = cy + MELON_R + 30;
-            fall_vx = (stuck[i] < rel || (stuck[i] - rel > 18000)) ? 380 : -380;
-            fall_rot = 0;
-            add_burst(cx, cy + MELON_R, 14, C_STEEL, C_STEEL_DK, 0);
-            k86_audio_beep(220, 90, 147, 220);
-            shake = 20;
-            screen = S_FAIL;
-            screen_at = now_ms;
-            return;
+        if (angdiff(stuck[i], rel) < HIT_DEG) {
+            bad = 1;
+            from = stuck[i];
         }
+    for (int i = 0; i < nobs; i++)
+        if (angdiff(obs[i], rel) < OBS_DEG) {
+            bad = 2;
+            from = obs[i];
+        }
+    if (bad) {                                       /* on top of a knife or an obstacle: the level is lost */
+        fail_obs = bad == 2;
+        fall_x = cx;
+        fall_y = cy + MELON_R + 30;
+        fall_vx = (from < rel || (from - rel > 18000)) ? 380 : -380;
+        fall_rot = 0;
+        add_burst(cx, cy + MELON_R, 14, C_STEEL, C_STEEL_DK, 0);
+        k86_audio_beep(220, 90, 147, 220);
+        shake = 20;
+        screen = S_FAIL;
+        screen_at = now_ms;
+        return;
+    }
     if (nstuck < MAX_STUCK)
         stuck[nstuck++] = rel;
     score++;
@@ -334,9 +460,9 @@ static void land(void)
     pulse = 14;
     shake = imax(shake, 5);
     hud_dirty = foot_dirty = 1;
-    add_burst(cx, cy + MELON_R - 10, 14, C_FLESH, 0xffa3b0u, 0);
+    add_burst(cx, cy + MELON_R - 10, 14, th->burst0, th->burst1, 0);
     if (left <= 0) {                                 /* the melon is cleared: it bursts */
-        add_burst(cx, cy, PART_MAX, C_FLESH, 0x4fc060u, 1);
+        add_burst(cx, cy, PART_MAX, th->burst0, th->burst1, 1);
         k86_audio_beep(660, 70, 990, 140);
         shake = 14;
         level++;
@@ -355,7 +481,7 @@ static void draw_knife(int tx, int ty, int a, int fade)
 {
     int dx = tcos(a), dy = tsin(a);
     int bx = tx + dx * BLADE / 1024, by = ty + dy * BLADE / 1024;
-    uint32_t steel = fade ? lerp(C_STEEL, 0x1f4d59u, fade, 100) : C_STEEL, dark = fade ? lerp(C_STEEL_DK, 0x1f4d59u, fade, 100) : C_STEEL_DK;
+    uint32_t steel = fade ? lerp(C_STEEL, th->bg0, fade, 100) : C_STEEL, dark = fade ? lerp(C_STEEL_DK, th->bg0, fade, 100) : C_STEEL_DK;
     strip(tx, ty, bx, by, 4, 12, dark);
     strip(tx, ty, bx, by, 2, 9, steel);
     if (fade)
@@ -367,9 +493,9 @@ static void draw_knife(int tx, int ty, int a, int fade)
     strip(bx, by, hx, hy, 11, 9, C_HANDLE);
     strip(bx, by, hx, hy, 3, 2, 0xa86d3fu);
     for (int k = 1; k <= 2; k++)
-        gfx_fill_circle(&canvas, bx + dx * (HANDLE * k / 3) / 1024, by + dy * (HANDLE * k / 3) / 1024, 3, 0xe9c46au);
-    gfx_fill_circle(&canvas, hx, hy, 11, 0x4e2f1bu);
-    gfx_fill_circle(&canvas, hx, hy, 9, C_HANDLE);
+        disc(&canvas, bx + dx * (HANDLE * k / 3) / 1024, by + dy * (HANDLE * k / 3) / 1024, 3, 0xe9c46au);
+    disc(&canvas, hx, hy, 11, 0x4e2f1bu);
+    disc(&canvas, hx, hy, 9, C_HANDLE);
 }
 
 static void text_c(int x, int y, const char *s, enum text_style st, uint32_t col)
@@ -399,6 +525,27 @@ static void copy_bg(int x, int y, int w, int h)
         gfx_blit(&canvas, x, y, &bgpic, x, y, w, h);
 }
 
+/* An obstacle on the rim: a themed spike (thorn, ice, rock, crystal) that a knife must not touch. */
+static void draw_obstacle(int mx, int my, int a)
+{
+    int dx = tcos(a), dy = tsin(a), px = -dy, py = dx;
+    int rb = MELON_R - 6 + pulse / 2, rt = MELON_R + 40 + pulse / 2, ri = MELON_R - 36;
+    int bx = mx + dx * rb / 1024, by = my + dy * rb / 1024;
+    int x[4] = { bx + px * 28 / 1024, mx + dx * rt / 1024, bx - px * 28 / 1024, mx + dx * ri / 1024 };
+    int y[4] = { by + py * 28 / 1024, my + dy * rt / 1024, by - py * 28 / 1024, my + dy * ri / 1024 };
+    quad(x, y, 0x0b1a1fu);
+    int rb2 = rb - 3, rt2 = rt - 8, ri2 = ri + 8;
+    int bx2 = mx + dx * rb2 / 1024, by2 = my + dy * rb2 / 1024;
+    int x2[4] = { bx2 + px * 22 / 1024, mx + dx * rt2 / 1024, bx2 - px * 22 / 1024, mx + dx * ri2 / 1024 };
+    int y2[4] = { by2 + py * 22 / 1024, my + dy * rt2 / 1024, by2 - py * 22 / 1024, my + dy * ri2 / 1024 };
+    quad(x2, y2, th->ob0);
+    int rb3 = rb - 6, rt3 = rt - 16, ri3 = ri + 24;
+    int bx3 = mx + dx * rb3 / 1024, by3 = my + dy * rb3 / 1024;
+    int x3[4] = { bx3 + px * 9 / 1024, mx + dx * rt3 / 1024, bx3 - px * 5 / 1024, mx + dx * ri3 / 1024 };
+    int y3[4] = { by3 + py * 9 / 1024, my + dy * rt3 / 1024, by3 - py * 5 / 1024, my + dy * ri3 / 1024 };
+    quad(x3, y3, th->ob1);
+}
+
 /* the melon: its picture, then what turns on it (the stripes and seeds), then the knives in it */
 static void draw_melon(int ox, int oy)
 {
@@ -407,28 +554,85 @@ static void draw_melon(int ox, int oy)
     int r = MELON_R + pulse / 2;
     for (int i = 0; i < 14; i++) {                                                  /* the rind's stripes */
         int a0 = mel_ang + i * 2570, a1 = a0 + 1500, rr = r - 11;
-        strip(mx + tcos(a0) * rr / 1024, my + tsin(a0) * rr / 1024, mx + tcos(a1) * rr / 1024, my + tsin(a1) * rr / 1024, 6, 6, 0x74d476u);
+        strip(mx + tcos(a0) * rr / 1024, my + tsin(a0) * rr / 1024, mx + tcos(a1) * rr / 1024, my + tsin(a1) * rr / 1024, 6, 6, th->stripe);
     }
     for (int i = 0; i < 10; i++) {                                                  /* seeds */
         int a = mel_ang + i * 3600, rr = 56 + (i % 3) * 22;
         int sx = mx + tcos(a) * rr / 1024, sy = my + tsin(a) * rr / 1024;
-        gfx_fill_circle(&canvas, sx, sy, 8, 0x2a1418u);
-        gfx_fill_circle(&canvas, sx - 2, sy - 3, 3, 0x6b4a4eu);
+        disc(&canvas, sx, sy, 8, th->seed);
+        disc(&canvas, sx - 2, sy - 3, 3, 0x6b4a4eu);
     }
+    for (int i = 0; i < nobs; i++)
+        draw_obstacle(mx, my, obs[i] + mel_ang);
     for (int i = 0; i < nstuck; i++) {
         int a = stuck[i] + mel_ang, rr = MELON_R - 30 + pulse / 2;
         draw_knife(mx + tcos(a) * rr / 1024, my + tsin(a) * rr / 1024, a, 0);
     }
 }
 
+static void draw_chip(int i)                    /* a world: a small melon in its colours, dim while locked */
+{
+    const struct world *t = &themes[i];
+    int x = chip[i].x + chip[i].w / 2, y = chip[i].y + 48, locked = i && sv.best < (uint32_t)(i * PER_WORLD + 1);
+    uint32_t a = t->rind0, b = t->rind1, c = t->ring1, d = t->fl1;
+    if (locked) {
+        a = lerp(a, 0x1a2a30u, 70, 100);
+        b = lerp(b, 0x1a2a30u, 70, 100);
+        c = lerp(c, 0x1a2a30u, 70, 100);
+        d = lerp(d, 0x1a2a30u, 70, 100);
+    }
+    if (i == cur_theme)
+        disc(&canvas, x, y, 40, C_GOLD);
+    disc(&canvas, x, y, 35, a);
+    disc(&canvas, x, y, 31, b);
+    disc(&canvas, x, y, 25, c);
+    disc(&canvas, x, y, 21, d);
+    if (locked) {                                                        /* a padlock */
+        gfx_fill_round_rect(&canvas, x - 12, y - 4, 24, 18, 4, 0xd8e4e8u);
+        disc(&canvas, x, y - 6, 8, 0xd8e4e8u);
+        disc(&canvas, x, y - 6, 4, c);
+    }
+    text_c(x, y + 50, t->name, TEXT_SMALL, locked ? 0x6f8890u : i == cur_theme ? C_GOLD : C_DIM);
+}
+
 static void draw_hud(void)
 {
-    char num[16], lv[24];
+    char num[40];
     copy_bg(0, 0, canvas.w, box.y);
+    if (screen == S_MENU) {
+        text_c(canvas.w / 2, 14, "MELON KNIFE", TEXT_LARGE, C_TEXT);
+        text_c(canvas.w / 2, 94, "100 levels  -  4 worlds", TEXT_SMALL, C_DIM);
+        return;
+    }
     snprintf(num, sizeof(num), "%d", score);
     text_c(canvas.w / 2, 30, num, TEXT_LARGE, C_TEXT);
-    snprintf(lv, sizeof(lv), "Level %d", imax(1, level - (screen == S_CLEAR ? 1 : 0)));
-    text_c(canvas.w / 2, 112, lv, TEXT_SMALL, C_DIM);
+    snprintf(num, sizeof(num), "Level %d  -  %s", imax(1, imin(LEVELS, level - (screen == S_CLEAR ? 1 : 0))), th->name);
+    text_c(canvas.w / 2, 108, num, TEXT_SMALL, C_DIM);
+    disc(&canvas, btn_pause.x + btn_pause.w / 2, btn_pause.y + btn_pause.h / 2, 38, 0x0b1a1fu);   /* the pause button */
+    disc(&canvas, btn_pause.x + btn_pause.w / 2, btn_pause.y + btn_pause.h / 2 - 2, 36, C_BTN);
+    gfx_fill_round_rect(&canvas, btn_pause.x + btn_pause.w / 2 - 13, btn_pause.y + btn_pause.h / 2 - 16, 9, 30, 3, C_TEXT);
+    gfx_fill_round_rect(&canvas, btn_pause.x + btn_pause.w / 2 + 4, btn_pause.y + btn_pause.h / 2 - 16, 9, 30, 3, C_TEXT);
+}
+
+static void draw_menu_foot(void)
+{
+    char b[64];
+    int lv = sv.run_valid ? imax(1, imin(LEVELS, (int)sv.run_level)) : 1;
+    if (sv.run_valid)
+        snprintf(b, sizeof(b), "Level %d of %d  -  %s", lv, LEVELS, themes[theme_of(lv)].name);
+    else
+        snprintf(b, sizeof(b), sv.best ? "Furthest: level %u" : "Ready when you are", (unsigned)sv.best);
+    text_c(canvas.w / 2, box.y + box.h + 6, b, TEXT_BODY, C_GOLD);
+    int bw = canvas.w - 160, bx = 80, py = btn_play.y - 8;                      /* a bar of how far through the 100 */
+    gfx_fill_round_rect(&canvas, bx, py + 2, bw, 8, 4, 0x0b1a1fu);
+    gfx_fill_round_rect(&canvas, bx, py, bw, 8, 4, 0x2a4651u);
+    if (sv.best)
+        gfx_fill_round_rect(&canvas, bx, py, imax(10, bw * imin(100, (int)sv.best) / 100), 8, 4, C_GOLD);
+    draw_button(btn_play, sv.run_valid ? "Continue" : "Play", 1, pressed == 1);
+    if (sv.run_valid)
+        draw_button(btn_menu, "New game", 0, pressed == 2);
+    for (int i = 0; i < 4; i++)
+        draw_chip(i);
 }
 
 /* the foot of the screen: the next knife, ready to throw, and the ones left behind it */
@@ -436,16 +640,20 @@ static void draw_foot(void)
 {
     int y0 = box.y + box.h;
     copy_bg(0, y0, canvas.w, canvas.h - y0);
-    if (screen == S_MENU || screen == S_OVER)
+    if (screen == S_MENU) {
+        draw_menu_foot();
+        return;
+    }
+    if (screen == S_OVER)
         return;
     for (int i = 0; i < left - (flying ? 1 : 0) - 1 && i < 11; i++) {               /* the knives still to come */
         int x = 40 + i * 30, y = canvas.h - 96;
         strip(x, y, x, y + 40, 4, 8, C_STEEL);
         strip(x, y + 40, x, y + 72, 8, 8, C_HANDLE);
     }
-    if (screen == S_PLAY && left > 0 && !flying) {
+    if ((screen == S_PLAY || screen == S_PAUSE) && left > 0 && !flying) {
         draw_knife(cx, ready_y(), 9000, 0);
-        if (now_ms - screen_at > 150)
+        if (screen == S_PLAY && now_ms - screen_at > 150)
             text_c(canvas.w / 2, canvas.h - 52, "Tap to throw", TEXT_SMALL, C_DIM);
     }
 }
@@ -462,44 +670,57 @@ static void draw_world(void)                    /* the melon's box: it is all re
                 draw_knife(cx, fly_y + g * 60, 9000, 52 + g * 14);
         draw_knife(cx, fly_y, 9000, 0);
     }
-    if (screen == S_FAIL && fall_y >= 0)
+    if ((screen == S_FAIL || (screen == S_OVER && !won)) && fall_y >= 0 && screen == S_FAIL)
         draw_knife(fall_x, fall_y, 9000 + fall_rot, 0);
     for (int i = 0; i < PART_MAX; i++)
         if (parts[i].life > 0 && parts[i].x > box.x && parts[i].x < box.x + box.w && parts[i].y > box.y && parts[i].y < box.y + box.h)
-            gfx_fill_circle(&canvas, parts[i].x, parts[i].y, parts[i].r, parts[i].col);
+            disc(&canvas, parts[i].x, parts[i].y, parts[i].r, parts[i].col);
     if (screen == S_CLEAR && now_ms - screen_at < 1100)
-        text_c(canvas.w / 2, cy - 36, "Splat!", TEXT_LARGE, C_TEXT);
-    if (screen == S_PLAY && now_ms - screen_at < 1300 && level > 1) {
-        char lv[24];
+        text_c(canvas.w / 2, cy - 36, level > LEVELS ? "All clear!" : "Splat!", TEXT_LARGE, C_TEXT);
+    if (screen == S_PLAY && now_ms - screen_at < 1300) {
+        char lv[40];
         snprintf(lv, sizeof(lv), "LEVEL %d", level);
-        text_c(canvas.w / 2, cy - 30, lv, TEXT_HEADING, C_GOLD);
+        text_c(canvas.w / 2, cy - 44, lv, TEXT_HEADING, C_GOLD);
+        if ((level - 1) % PER_WORLD == 0) {
+            snprintf(lv, sizeof(lv), "World %d  -  %s", theme_of(level) + 1, th->name);
+            text_c(canvas.w / 2, cy + 14, lv, TEXT_BODY, C_TEXT);
+        }
     }
 }
 
-static void draw_menu_extras(void)
+/* the pause card, and the card after a lost level or a win */
+static void draw_card(void)
 {
-    char b[40];
-    text_c(canvas.w / 2, 40, "MELON", TEXT_LARGE, C_FLESH);
-    text_c(canvas.w / 2, 112, "KNIFE", TEXT_LARGE, C_TEXT);
-    snprintf(b, sizeof(b), "Best  %u", (unsigned)sv.best);
-    text_c(canvas.w / 2, box.y + box.h + 6, b, TEXT_BODY, C_GOLD);
-    draw_button(btn_play, "Play", 1, pressed == 1);
-    text_c(canvas.w / 2, btn_play.y + btn_play.h + 36, "Tap to throw. Don't hit a knife.", TEXT_SMALL, C_DIM);
-}
-
-static void draw_over(void)
-{
+    char b[48];
+    int lv = imax(1, imin(LEVELS, level));
     gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, 150);
     gfx_fill_round_rect(&canvas, 60, 340, canvas.w - 120, 580, 40, 0x1d4550u);
     gfx_fill_round_rect(&canvas, 66, 346, canvas.w - 132, 568, 36, 0x153841u);
-    char b[40];
-    text_c(canvas.w / 2, 384, "GAME OVER", TEXT_HEADING, C_TEXT);
-    snprintf(b, sizeof(b), "%d", score);
-    text_c(canvas.w / 2, 450, b, TEXT_LARGE, new_best ? C_GOLD : C_TEXT);
-    text_c(canvas.w / 2, 540, new_best ? "NEW BEST!" : "knives stuck", TEXT_BODY, new_best ? C_GOLD : C_DIM);
-    snprintf(b, sizeof(b), "Best  %u    Level %d", (unsigned)sv.best, level);
-    text_c(canvas.w / 2, 590, b, TEXT_SMALL, C_DIM);
-    draw_button(btn_play, "Play again", 1, pressed == 1);
+    if (screen == S_PAUSE) {
+        snprintf(b, sizeof(b), "Level %d", lv);
+        text_c(canvas.w / 2, 384, "PAUSED", TEXT_HEADING, C_TEXT);
+        text_c(canvas.w / 2, 450, b, TEXT_LARGE, C_GOLD);
+        text_c(canvas.w / 2, 540, th->name, TEXT_BODY, C_DIM);
+        text_c(canvas.w / 2, 590, "Your game is saved. Come back any time.", TEXT_SMALL, C_DIM);
+        draw_button(btn_play, "Resume", 1, pressed == 1);
+        draw_button(btn_menu, "Menu", 0, pressed == 2);
+        return;
+    }
+    if (won) {
+        text_c(canvas.w / 2, 384, "YOU WIN!", TEXT_HEADING, C_GOLD);
+        text_c(canvas.w / 2, 450, "100", TEXT_LARGE, C_GOLD);
+        text_c(canvas.w / 2, 540, "Every level cleared", TEXT_BODY, C_TEXT);
+        text_c(canvas.w / 2, 590, "Nice one.", TEXT_SMALL, C_DIM);
+        draw_button(btn_play, "Play again", 1, pressed == 1);
+    } else {
+        snprintf(b, sizeof(b), "Level %d", lv);
+        text_c(canvas.w / 2, 384, "OOPS!", TEXT_HEADING, C_TEXT);
+        text_c(canvas.w / 2, 450, b, TEXT_LARGE, C_TEXT);
+        text_c(canvas.w / 2, 540, fail_obs ? "You hit an obstacle" : "You hit a knife", TEXT_BODY, C_DIM);
+        snprintf(b, sizeof(b), "Furthest  level %u", (unsigned)sv.best);
+        text_c(canvas.w / 2, 590, b, TEXT_SMALL, C_DIM);
+        draw_button(btn_play, "Retry level", 1, pressed == 1);
+    }
     draw_button(btn_menu, "Menu", 0, pressed == 2);
 }
 
@@ -507,12 +728,15 @@ static void layout(void)
 {
     cx = canvas.w / 2;
     cy = canvas.h * 40 / 100;
-    int bx = imax(0, cx - BOX), bw = imin(canvas.w, cx + BOX) - bx;
+    int bx = 0, bw = canvas.w;                   /* the box runs the whole width: nothing at the sides is left undrawn */
     int by = imax(0, cy - BOX), bh = imin(canvas.h - 200, cy + BOX) - by;
     box = (struct gfx_rect){ bx, by, bw, bh };
-    int bwid = imin(canvas.w - 160, 440);
-    btn_play = (struct gfx_rect){ (canvas.w - bwid) / 2, screen == S_OVER ? 690 : box.y + box.h + 56, bwid, 104 };
-    btn_menu = (struct gfx_rect){ (canvas.w - bwid) / 2, 810, bwid, 84 };
+    int bwid = imin(canvas.w - 160, 440), ov = screen == S_OVER || screen == S_PAUSE;
+    btn_play = (struct gfx_rect){ (canvas.w - bwid) / 2, ov ? 690 : box.y + box.h + 53, bwid, ov ? 104 : 96 };
+    btn_menu = (struct gfx_rect){ (canvas.w - bwid) / 2, ov ? 810 : canvas.h - 220, bwid, ov ? 84 : 72 };
+    btn_pause = (struct gfx_rect){ canvas.w - 132, 14, 120, 110 };
+    for (int i = 0; i < 4; i++)
+        chip[i] = (struct gfx_rect){ i * canvas.w / 4, canvas.h - 134, canvas.w / 4, 130 };
 }
 
 /* Draws what changed and shows it. force: everything. */
@@ -521,26 +745,24 @@ static void redraw(int force)
     if (!bgpic.px || !spr.px)
         return;
     uint32_t t0 = k86_uptime_ms();
-    int still = screen == S_MENU || screen == S_OVER;
-    int all = force || still;
+    int card = screen == S_OVER || screen == S_PAUSE;
+    int all = force || card;
     draw_world();
-    k86_present(box.x, box.y, box.w, box.h);
-    if (all || hud_dirty) {
+    if (all || hud_dirty)
         draw_hud();
-        if (still)
-            draw_menu_extras();
-        k86_present(0, 0, canvas.w, box.y);
-    }
-    if (all || foot_dirty || flying) {
+    if (all || foot_dirty || flying)
         draw_foot();
-        if (screen == S_MENU)
-            draw_menu_extras();
-        if (screen == S_OVER)
-            draw_over();
-        k86_present(0, box.y + box.h, canvas.w, canvas.h - box.y - box.h);
-    }
-    if (screen == S_OVER)
+    if (card)
+        draw_card();
+    if (all) {
         k86_present(0, 0, canvas.w, canvas.h);
+    } else {
+        k86_present(box.x, box.y, box.w, box.h);
+        if (hud_dirty)
+            k86_present(0, 0, canvas.w, box.y);
+        if (foot_dirty || flying)
+            k86_present(0, box.y + box.h, canvas.w, canvas.h - box.y - box.h);
+    }
     hud_dirty = foot_dirty = flying;                      /* (the knife's column is drawn while it flies, and once after) */
     perf_sum += k86_uptime_ms() - t0;
     perf_max = imax(perf_max, (int)(k86_uptime_ms() - t0));
@@ -566,9 +788,33 @@ static void to_menu(void)
 {
     screen = S_MENU;
     pressed = 0;
-    nstuck = 0;
+    nstuck = nobs = 0;
     flying = 0;
+    set_theme(theme_of(sv.run_valid ? imax(1, (int)sv.run_level) : 1));
     layout();
+    redraw(1);
+}
+
+static void pause_game(void)
+{
+    if (screen != S_PLAY)
+        return;
+    screen = S_PAUSE;
+    pressed = 0;
+    layout();
+    k86_timer_set(0);
+    redraw(1);
+}
+
+static void resume_game(void)
+{
+    screen = S_PLAY;
+    pressed = 0;
+    layout();
+    last_frame = now_ms = k86_uptime_ms();
+    screen_at = now_ms - 5000;
+    hud_dirty = foot_dirty = 1;
+    k86_timer_set(FRAME_MS);
     redraw(1);
 }
 
@@ -584,7 +830,7 @@ static void frame(void)
         redraw(0);
         return;
     }
-    if (screen == S_OVER) {
+    if (screen == S_OVER || screen == S_PAUSE) {
         k86_timer_set(0);
         return;
     }
@@ -619,12 +865,22 @@ static void frame(void)
             return;
         }
     }
-    if (screen == S_CLEAR && now_ms - screen_at > 1150)
+    if (screen == S_CLEAR && now_ms - screen_at > 1150) {
+        if (level > LEVELS) {                            /* all 100 done */
+            won = 1;
+            sv.run_valid = 0;
+            sv.best = LEVELS;
+            save();
+            screen = S_OVER;
+            layout();
+            k86_timer_set(0);
+            redraw(1);
+            return;
+        }
         start_level();
+    }
     if (!in_front() && screen == S_PLAY) {
-        screen = S_MENU;
-        layout();
-        redraw(1);
+        pause_game();
         return;
     }
     redraw(0);
@@ -635,26 +891,68 @@ static int hit(struct gfx_rect r, int x, int y)
     return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 }
 
+static int unlocked(int i)
+{
+    return i == 0 || sv.best >= (uint32_t)(i * PER_WORLD + 1);
+}
+
+static int press_id(int x, int y)
+{
+    if (hit(btn_play, x, y))
+        return 1;
+    if (hit(btn_menu, x, y) && (screen != S_MENU || sv.run_valid) && !(screen == S_OVER && won && 0))
+        return 2;
+    if (screen == S_MENU)
+        for (int i = 0; i < 4; i++)
+            if (hit(chip[i], x, y) && unlocked(i))
+                return 3 + i;
+    return 0;
+}
+
+static void act(int id)
+{
+    if (screen == S_MENU) {
+        if (id == 1 && sv.run_valid)
+            start_game(imax(1, imin(LEVELS, (int)sv.run_level)), (int)sv.run_score);
+        else if (id == 1 || id == 2)
+            start_game(1, 0);
+        else if (id >= 3)
+            start_game((id - 3) * PER_WORLD + 1, 0);
+    } else if (screen == S_OVER) {
+        if (id == 1)
+            won ? start_game(1, 0) : start_game(level, score0);
+        else if (id == 2)
+            to_menu();
+    } else if (screen == S_PAUSE) {
+        if (id == 1)
+            resume_game();
+        else if (id == 2)
+            to_menu();
+    }
+}
+
 static void pointer(const struct k86_event *ev)
 {
     int down = ev->buttons & 1, changed = ev->changed & 1;
     now_ms = k86_uptime_ms();
     if (screen == S_PLAY) {
-        if (down && changed)
-            throw_knife();
+        if (down && changed) {
+            if (hit(btn_pause, ev->x, ev->y))
+                pause_game();
+            else
+                throw_knife();
+        }
         return;
     }
-    if (screen == S_MENU || screen == S_OVER) {
+    if (screen == S_MENU || screen == S_OVER || screen == S_PAUSE) {
         if (down && changed) {
-            pressed = hit(btn_play, ev->x, ev->y) ? 1 : (screen == S_OVER && hit(btn_menu, ev->x, ev->y)) ? 2 : 0;
+            pressed = press_id(ev->x, ev->y);
             redraw(1);
         } else if (!down && changed) {
             int id = pressed;
             pressed = 0;
-            if (id == 1 && hit(btn_play, ev->x, ev->y))
-                start_game();
-            else if (id == 2 && hit(btn_menu, ev->x, ev->y))
-                to_menu();
+            if (id && press_id(ev->x, ev->y) == id)
+                act(id);
             else
                 redraw(1);
         }
@@ -665,13 +963,16 @@ int main(void)
 {
     if (k86_window_open(&win))
         return 1;
+    k86_window_bare(1);                         /* a game: no header bar, the whole window */
+    if (k86_window_open(&win))                  /* (the canvas is bigger now) */
+        return 1;
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
     trig_init();
     rng_state = k86_uptime_ms() ^ 0x5bd1e995u;
     now_ms = k86_uptime_ms();
     load();
     layout();
-    make_pictures();
+    set_theme(theme_of(sv.run_valid ? imax(1, (int)sv.run_level) : 1));
     mel_ang = 1200;
     k86_timer_set(FRAME_MS);
     redraw(1);
@@ -686,13 +987,16 @@ int main(void)
             pointer(&ev);
             break;
         case K86_EVENT_KEY:
-            if (ev.key.pressed && ev.key.key == KEY_ESC && screen != S_MENU)
-                to_menu();
-            else if (ev.key.pressed && (ev.key.key == KEY_SPACE || ev.key.key == KEY_ENTER)) {
+            if (ev.key.pressed && ev.key.key == KEY_ESC && screen != S_MENU) {
+                if (screen == S_PLAY)
+                    pause_game();
+                else
+                    to_menu();
+            } else if (ev.key.pressed && (ev.key.key == KEY_SPACE || ev.key.key == KEY_ENTER)) {
                 if (screen == S_PLAY)
                     throw_knife();
-                else if (screen == S_MENU || screen == S_OVER)
-                    start_game();
+                else if (screen == S_MENU || screen == S_OVER || screen == S_PAUSE)
+                    act(1);
             }
             break;
         case K86_EVENT_TIMER:
