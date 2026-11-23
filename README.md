@@ -2,91 +2,52 @@
   <img src="assets/logo.svg" width="96" alt="LiteKern Go logo">
 </p>
 
-<h1 align="center">LiteKern X</h1>
+<h1 align="center">LiteKern Go</h1>
 
 <p align="center">
-  A small operating system, written from scratch, for the ASUS Eee PC 1000HE netbook.
+  A phone operating system on the Linux kernel with its own touch interface, for the Samsung Galaxy A5 (2015).
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/tour.gif" width="640" alt="LiteKern X in action: opening apps, minimising and restoring a window">
+  <img src="docs/screenshots/go-setup-hello.png" width="200" alt="The first-run hello">
+  <img src="docs/screenshots/go-setup-look.png" width="200" alt="Choosing the look">
+  <img src="docs/screenshots/go-setup-wifi.png" width="200" alt="Wi-Fi setup">
 </p>
-
-> **This is the Linux port** (started 2026-10-19): LiteKern X's desktop and apps moving onto the Linux kernel, for Wi-Fi, a browser and Linux apps. The plan and its phases: [`LiteKernX-Roadmap/06-LiteKernX-Linux-Port.md`](LiteKernX-Roadmap/06-LiteKernX-Linux-Port.md). The own-kernel version lives on in `C:\Users\lhuir\LiteKern X`.
 
 ## What is it?
 
-LiteKern X is a complete operating system for one 2009 netbook, the ASUS Eee PC 1000HE. There's no Linux or Windows underneath: everything, from the code that starts the machine to the windows on the screen, is written for this project.
+LiteKern Go is the phone sibling of [LiteKern X](https://github.com/lhuizach/LiteKern-X). The phone starts Linux directly (Samsung bootloader, lk2nd, Linux 6.12, then our own init), and then our own C shell, `lkx-shell`, draws the whole interface: home screen, lock screen, apps. There is no Android underneath and no launcher on top.
 
-It boots in about a second to a clean, modern desktop with a dock, an app menu, and windows you can move around, like on Windows or GNOME.
-
-## Screenshots
-
-<table>
-  <tr>
-    <td><img src="docs/screenshots/desktop.png" alt="The desktop"></td>
-    <td><img src="docs/screenshots/windows.png" alt="Files and Calculator open side by side"></td>
-  </tr>
-  <tr>
-    <td align="center">The desktop</td>
-    <td align="center">Two apps at once</td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/appmenu.png" alt="The app menu"></td>
-    <td><img src="docs/screenshots/settings-light.png" alt="Settings in the light style"></td>
-  </tr>
-  <tr>
-    <td align="center">The app menu</td>
-    <td align="center">Light style, in Settings</td>
-  </tr>
-</table>
+It was made for one person to use on one phone, so it is not a general release. Some parts are rough, and Android apps will not run.
 
 ## What it can do
 
-- **Starts fast:** about a second from the boot menu to the desktop.
-- **Real windows:** move them, resize them, minimise, maximise or snap them to half the screen, with several apps open at once.
-- **A dock and an app menu:** favourites stay in the dock; open apps show a dot underneath.
-- **Apps:**
-  - **Files** browses the USB stick, makes folders and files, renames and deletes them, and opens text files and pictures (PNG, JPEG, BMP). Any picture can be your wallpaper.
-  - **Calculator** does exact decimal sums.
-  - **Blocksmith** lets you build programs by snapping blocks together, then runs them: drawings, animations, and games you play with the keys.
-  - **Settings** switches between dark and light, six accent colours and five backgrounds. Your choices, and a picture you made the wallpaper, are kept for the next time you switch on.
-  - **Log** shows what the system is doing.
-- **A lock screen:** a big clock and the date over its own wallpaper, sliding down like a curtain. Lock it from the power menu or with Super+L, or have it lock when the screen saver ends.
-- **Users:** up to eight people, each with an optional password, added in Settings → Users. With more than one, or a password, LiteKern X starts at a login screen. Then everyone has their own look and their own home folder (`/Users/<name>`); only admins can see other people's files, and Log Out in the power menu hands the EeePC to the next person.
-- **Stays up:** if an app crashes or freezes, only that app closes.
-- **Shut down and restart** from the power menu.
+- **Boot and first run:** a minimal boot animation, then on first run a setup that says hello in eight languages over the blurred wallpaper, joins Wi-Fi (with its own on-screen keyboard), sets the time zone and the look (dark or light, accent colour). No PIN is required.
+- **Home screen:** icons anywhere on the grid, folders, widgets (date, battery, clock, music, weather) you can resize, several pages, an apps menu with Recent, and a lock screen with a big clock that turns the screen off after a few seconds.
+- **Apps:** Files, Gallery, Camera (rear and front, autofocus), Browser (a real web engine, WPE WebKit, in a small sandbox), Music, Weather, Clock, Calculator, Task Manager, R3lay (a chat client), Blocksmith, and Settings.
+- **Games:** Traffic Racer (landscape, steer by tilting the phone, real 3D on the phone's GPU, five places to drive in), Snake, Brickfit and Stackfall.
+- **Hardware that works:** touch, display and brightness, Wi-Fi, sound (speaker, earpiece, headphones, microphone), both cameras, the accelerometer and the GPU. Calls and mobile data are not planned.
 
 ## Try it
 
-There's no download yet; the first release is coming (see Status). For now you build it yourself on Windows, using WSL:
+The shell runs on a PC for development, at the phone's size, with the mouse as the touchscreen. You need Windows with WSL (Ubuntu):
 
 1. Install [WSL](https://learn.microsoft.com/windows/wsl/install) with Ubuntu.
-2. In this folder, open PowerShell and run `wsl sudo bash tools/setup-wsl.sh` once.
-3. Run `wsl make run`. LiteKern X starts in a window.
+2. In this folder, run `wsl sudo bash tools/setup-wsl.sh` once.
+3. `wsl make -f platform/Makefile run` starts it in a window. `LKX_SETUP=1` starts it with the first-run setup.
 
-To run it on a real Eee PC 1000HE, see [Testing on the Eee PC](docs/HARDWARE-TEST.md).
+To put it on a phone you need the Galaxy A5 (SM-A500FU only) and the notes in [`CLAUDE.md`](CLAUDE.md) and [`phone/`](phone/). Never flash files for another model.
 
-## Status
+## Tests
 
-LiteKern X is a work in progress.
-
-- **Done:**
-  - Booting on the real Eee PC.
-  - The desktop, windows and apps.
-  - Themes and wallpapers.
-- **Next:**
-  - A full test on the real Eee PC.
-  - The first release: a download, a website and documentation.
-- **Later:**
-  - Battery status, sound and USB.
-
-The full plan is in [`LiteKernX-Roadmap/`](LiteKernX-Roadmap/).
+- `bash tools/check-app.sh NAME`: builds one app and opens it (about a minute).
+- `bash tests/linux/test-linux.sh`: the full suite (59 tests, about 10 minutes).
 
 ## For developers
 
-- [Developing LiteKern X](docs/DEVELOPING.md): building, testing, the VMs and where everything is
-- [Making an app](docs/APPS.md): write your own app for LiteKern X
-- [The roadmap](LiteKernX-Roadmap/): what's done and what's next
+- [`CLAUDE.md`](CLAUDE.md): the project's notes: the phone, the build, what works and what doesn't
+- [Setup plan](docs/SETUP-PLAN.md): the first-run setup and what is planned for it
+- [Making an app](docs/NEW-APP.md) and [the app list](docs/APPS.md): write your own app (the KERN86 model)
+- [The browser plan](docs/BROWSER-PLAN.md)
 
-LiteKern X is a clean-slate rewrite of LiteKern v1, keeping its app model (KERN86).
+LiteKern Go keeps LiteKern X's look, its app model (KERN86) and much of its shell code, reworked for touch and a portrait screen.
