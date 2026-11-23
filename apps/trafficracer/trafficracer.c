@@ -1531,15 +1531,14 @@ static void key_event(const struct k86_event *ev)
 
 int main(void)
 {
-    struct k86_header header;
     if (k86_window_open(&win))
+        return 1;
+    k86_window_bare(1);                         /* a game: no header bar, the whole window */
+    if (k86_window_open(&win))                  /* (the canvas is bigger now) */
         return 1;
     wcan = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
     land_alloc();
     acc_init();
-    memset(&header, 0, sizeof(header));
-    memcpy(header.title, "Traffic Racer", sizeof("Traffic Racer"));
-    k86_header(&header);
     rng_state = k86_uptime_ms() ^ 0x7ac3e517u;
     now_ms = k86_uptime_ms();
     load();

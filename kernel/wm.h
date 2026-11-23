@@ -105,6 +105,10 @@ void wm_press_control(struct wm_window *w, int which);      /* 0 minimise, 1 max
 void wm_draw_header_icon(struct gfx_surface *s, enum wm_icon icon, int cx, int cy, uint32_t colour);
 void wm_draw_control(struct gfx_surface *s, int which, int maximised, int cx, int cy, uint32_t bg, uint32_t fg);
 
+/* LiteKern Go: a bare window has no header bar at all (SYS_WINDOW_BARE): the content fills it. */
+void wm_set_bare(struct wm_window *w, int bare);
+int wm_is_bare(const struct wm_window *w);
+
 /* LiteKern Go's Back key: whether the app has something for Back to close
  * (SYS_WINDOW_BACK). Without, Back closes the app. */
 void wm_set_back_wanted(struct wm_window *w, int wanted);

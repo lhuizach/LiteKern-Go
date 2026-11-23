@@ -268,6 +268,14 @@ static inline int k86_back_wanted(int wanted)
     return k86_call(SYS_WINDOW_BACK, (uintptr_t)was, 0, 0, 0);
 }
 
+/* LiteKern Go: bare = 1 takes the window's header bar away (a full-screen game): the canvas
+ * grows, so wait for K86_EVENT_RESIZE (or re-read the size) and lay out again. 0 brings it
+ * back. Call it right after k86_window_open. */
+static inline int k86_window_bare(int bare)
+{
+    return k86_call(SYS_WINDOW_BARE, (uintptr_t)bare, 0, 0, 0);
+}
+
 /* LiteKern Go's on-screen keyboard: wanted = 1 (K86_KEYBOARD_TEXT) while a text
  * field is open, K86_KEYBOARD_NUMBERS for a PIN. Only calls the shell when it
  * changes, so it can be called before each wait. */

@@ -38,6 +38,7 @@ struct wm_window {
     struct gfx_rect r;          /* on screen */
     struct gfx_rect normal;     /* restored size and place */
     int maximised, minimised;
+    int bare;                   /* SYS_WINDOW_BARE: no header bar */
     int back_wanted;            /* SYS_WINDOW_BACK */
     int keyboard_wanted;        /* SYS_WINDOW_KEYBOARD */
     int hidden;                 /* left out while an animation draws it instead */
@@ -110,8 +111,7 @@ static int radius(const struct wm_window *w)
  * (UI-PLAN.md). LiteKern X put a maximised window's header in its top bar. */
 static int header_h(const struct wm_window *w)
 {
-    (void)w;
-    return T()->headerbar_h;
+    return w->bare ? 0 : T()->headerbar_h;      /* a bare window (SYS_WINDOW_BARE) has none */
 }
 
 static struct gfx_rect header_rect(const struct wm_window *w, struct gfx_rect r)
@@ -1258,7 +1258,22 @@ int wm_input_mouse(int x, int y, uint8_t buttons)
 
 int wm_header_hidden(const struct wm_window *w)
 {
-    return w && !header_h(w);
+    return w && !w->bare && !header_h(w);       /* (a bare window shows nothing in the top bar either) */
+}
+
+void wm_set_bare(struct wm_window *w, int bare)
+{
+    if (!w || !!w->bare == !!bare)
+        return;
+    w->bare = !!bare;
+    apply_size(w);                              /* the content grows or shrinks and the app is told */
+    if (!w->minimised)
+        damage(w);
+}
+
+int wm_is_bare(const struct wm_window *w)
+{
+    return w && w->bare;
 }
 
 int wm_button_count(const struct wm_window *w)

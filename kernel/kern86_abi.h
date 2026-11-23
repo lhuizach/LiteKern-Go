@@ -295,6 +295,11 @@ struct k86_dirent {
 /* LiteKern Go: ebx: const struct k86_lock *, ecx: uint32_t * out, edx: w, esi: h: the
  * lock screen as it would look with those choices (nothing is changed). */
 #define SYS_LOCK_PREVIEW    46
+/* LiteKern Go: ebx: 1 = take the window's header bar away (its title and buttons: the app
+ * gets the whole window below the status bar, K86_EVENT_RESIZE says the new size), 0 = give
+ * it back. For games and other full-screen apps; the app then closes through Back or the
+ * status bar. */
+#define SYS_WINDOW_BARE     47
 #define K86_TASKS_MAX       16
 #define K86_TASK_FRONT      1   /* flags: its window is the one in front */
 #define K86_TASK_SELF       2   /* ... it's the one asking */
