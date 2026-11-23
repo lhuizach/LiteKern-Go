@@ -674,9 +674,8 @@ check "the widget is kept across a restart" \
     '^home: 1 widgets$' \
     '!crashed|PANIC'
 
-# Home edit: a widget (Date) selected and made wider by the dot on its left side.
-path; go 360 200; add press:1 sleep:2.6 release sleep:0.3; go 223 1196; click; add sleep:1.2
-go 117 870; click; add sleep:0.8; go 630 783; click; add sleep:0.8
+# Home edit: the widget (Date, kept from the test before) selected and made wider by the dot on its right side.
+path; go 360 200; add press:1 sleep:2.6 release sleep:0.3
 go 360 820; click; add sleep:0.5
 go 474 819; add sleep:0.2 press:1 sleep:0.2; go 520 819; add sleep:0.1; go 590 819; add sleep:0.3 release sleep:0.8
 run $SHELL_BIN build-linux/test/disk.img "$P"
