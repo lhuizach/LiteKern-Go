@@ -271,6 +271,12 @@ static inline int k86_back_wanted(int wanted)
 /* LiteKern Go: bare = 1 takes the window's header bar away (a full-screen game): the canvas
  * grows, so wait for K86_EVENT_RESIZE (or re-read the size) and lay out again. 0 brings it
  * back. Call it right after k86_window_open. */
+/* LiteKern Go: show the first-run setup now (nothing is reset). */
+static inline int k86_setup_run(void)
+{
+    return k86_call(SYS_SETUP_RUN, 0, 0, 0, 0);
+}
+
 static inline int k86_window_bare(int bare)
 {
     return k86_call(SYS_WINDOW_BARE, (uintptr_t)bare, 0, 0, 0);

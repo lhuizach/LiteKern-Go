@@ -119,7 +119,7 @@ static const char *const saver_label[] = { "Off", "1 min", "2 min", "5 min", "10
 
 /* Things to tap: kind + index, and where they are (in the page, before scrolling). */
 enum kind { K_STYLE, K_ACCENT, K_WALLPAPER, K_NONE_WALLPAPER, K_SAVER, K_PREVIEW, K_LOCK_NOW, K_CLOCK_EDIT, K_CLOCK24,
-            K_ON_WAKE, K_LOCK_DESKTOP, K_LOCK_PICTURE, K_PIN_SET, K_PIN_CHANGE, K_PIN_REMOVE, K_RESET_SCREEN };
+            K_ON_WAKE, K_LOCK_DESKTOP, K_LOCK_PICTURE, K_PIN_SET, K_PIN_CHANGE, K_PIN_REMOVE, K_RESET_SCREEN, K_SETUP };
 struct spot {
     enum kind kind;
     int index;
@@ -213,6 +213,8 @@ static void layout(void)
         y += 3 * (bs + 16);
     } else if (page == P_LOCK) {
         add_spot(K_LOCK_NOW, 0, (struct gfx_rect){ MARGIN, y, w, bs });
+        y += bs + 16;
+        add_spot(K_SETUP, 0, (struct gfx_rect){ MARGIN, y, w, bs });            /* the first-run setup, to see it again (nothing is reset) */
         y += bs + SECTION_GAP;
         y = add_label(y, "PIN");
         y_pin_text = y;
@@ -414,6 +416,9 @@ static void spots_draw(void)
         case K_LOCK_NOW:
             pill(r, "Lock Now", 0, lit, 1);
             break;
+        case K_SETUP:
+            pill(r, "Run Setup Again", 0, lit, 0);
+            break;
         case K_RESET_SCREEN:
             pill(r, "Reset Screen", 0, lit, 1);
             break;
@@ -601,6 +606,10 @@ static void choose(const struct spot *s)
         return;
     case K_LOCK_PICTURE:
         set_lock_wallpaper("Custom", "its picture");
+        return;
+    case K_SETUP:
+        k86_log("settings: run the setup again");
+        k86_setup_run();
         return;
     case K_LOCK_NOW:
         k86_log("settings: lock now");

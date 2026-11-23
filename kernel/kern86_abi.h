@@ -300,6 +300,9 @@ struct k86_dirent {
  * it back. For games and other full-screen apps; the app then closes through Back or the
  * status bar. */
 #define SYS_WINDOW_BARE     47
+/* LiteKern Go: show the first-run setup now (kernel/setup.h), over everything; nothing is reset or lost
+ * (it only sets the look again). Settings > Lock's Run Setup Again. */
+#define SYS_SETUP_RUN       48
 #define K86_TASKS_MAX       16
 #define K86_TASK_FRONT      1   /* flags: its window is the one in front */
 #define K86_TASK_SELF       2   /* ... it's the one asking */

@@ -1,4 +1,5 @@
 #include "kernel/sys_app.h"
+#include "kernel/setup.h"
 #include "kernel/errno.h"
 #include "kernel/desktop.h"
 #include "kernel/driver.h"
@@ -649,6 +650,10 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
         if (!lkx_window())
             return -EINVAL;
         wm_set_back_wanted(lkx_window(), a1 != 0);
+        return 0;
+    case SYS_SETUP_RUN:
+        if (!setup_active())
+            setup_start();
         return 0;
     case SYS_WINDOW_BARE:
         if (!lkx_window())

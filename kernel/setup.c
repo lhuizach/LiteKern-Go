@@ -291,6 +291,9 @@ void setup_start(void)
         kprintf("setup: out of memory; skipped\n");
         return;
     }
+    /* the scratch holds a whole word at 240 px ("bonjour" is about 900 wide): the screen's pixels, shaped wide */
+    su.tmp.w = su.tmp.stride = 2048;
+    su.tmp.h = (int)((uint32_t)S()->w * (uint32_t)S()->h / 2048);
     su.light = theme_is_light();
     su.accent = theme_accent_index();
     su.naccents = 0;
