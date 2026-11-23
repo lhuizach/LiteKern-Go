@@ -27,9 +27,15 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <gbm.h>
 #include <wayland-server.h>
 #include <wpe/webkit.h>
 #include <wpe/fdo.h>
+#include <wpe/fdo-egl.h>
 #include <wpe/unstable/fdo-shm.h>
 
 #define FRAME_FILE "/dev/shm/lkxweb.frame"
@@ -90,6 +96,149 @@ static void on_shm(void *data, struct wpe_fdo_shm_exported_buffer *b)
     if (fh) { __sync_synchronize(); fh->seq++; }
     frames++;
     wpe_view_backend_exportable_fdo_dispatch_release_shm_exported_buffer(exportable, b);
+    wpe_view_backend_exportable_fdo_dispatch_frame_complete(exportable);
+}
+
+/* ---- the GPU path ---------------------------------------------------------------------------------
+ * With the software path above, WebKit composites with llvmpipe on the CPU (one thread at 99%). Here this host
+ * makes an EGL display on the phone's GPU (the Adreno 306, through Mesa's freedreno, on the render node with
+ * GBM) and gives it to WPEBackend-fdo: WebKit then draws and composites on the GPU and hands over each frame
+ * as an EGLImage (a dmabuf). We draw it once into a small framebuffer, swapping red and blue, and read the
+ * pixels back into FRAME_FILE, so the app needs no change. If anything fails we use the software path. */
+static int use_gpu;
+static EGLDisplay edpy = EGL_NO_DISPLAY;
+static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC image_target;
+static GLuint g_prog, g_tex, g_fbo, g_out;       /* program, the frame's texture, framebuffer, its picture */
+static int g_w, g_h;
+static unsigned char *g_tmp;
+
+static GLuint compile(GLenum type, const char *src)
+{
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) { char log[300]; glGetShaderInfoLog(s, sizeof(log), NULL, log); fprintf(stderr, "lkx-webd: shader: %s\n", log); return 0; }
+    return s;
+}
+
+static int gpu_init(void)
+{
+    int fd = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+    if (fd < 0) { perror("lkx-webd: gpu: renderD128"); return -1; }
+    struct gbm_device *gbm = gbm_create_device(fd);
+    if (!gbm) { fprintf(stderr, "lkx-webd: gpu: no gbm device\n"); return -1; }
+    edpy = eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, gbm, NULL);
+    EGLint maj, min;
+    if (edpy == EGL_NO_DISPLAY || !eglInitialize(edpy, &maj, &min)) { fprintf(stderr, "lkx-webd: gpu: eglInitialize failed\n"); return -1; }
+    eglBindAPI(EGL_OPENGL_ES_API);
+    static const EGLint ca[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
+    EGLConfig cfg;
+    EGLint n = 0;
+    if (!eglChooseConfig(edpy, ca, &cfg, 1, &n) || n < 1) { fprintf(stderr, "lkx-webd: gpu: no EGL config\n"); return -1; }
+    static const EGLint xa[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    EGLContext ctx = eglCreateContext(edpy, cfg, EGL_NO_CONTEXT, xa);
+    if (ctx == EGL_NO_CONTEXT || !eglMakeCurrent(edpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) {
+        fprintf(stderr, "lkx-webd: gpu: no GL context (0x%x)\n", eglGetError());
+        return -1;
+    }
+    image_target = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    if (!image_target) { fprintf(stderr, "lkx-webd: gpu: no glEGLImageTargetTexture2DOES\n"); return -1; }
+    GLuint vs = compile(GL_VERTEX_SHADER, "attribute vec2 p; attribute vec2 t; varying vec2 uv;"
+                                          "void main(){ uv = t; gl_Position = vec4(p, 0.0, 1.0); }");
+    GLuint fs = compile(GL_FRAGMENT_SHADER, "precision mediump float; varying vec2 uv; uniform sampler2D s;"
+                                            "void main(){ gl_FragColor = texture2D(s, uv).bgra; }");
+    if (!vs || !fs) return -1;
+    g_prog = glCreateProgram();
+    glAttachShader(g_prog, vs);
+    glAttachShader(g_prog, fs);
+    glBindAttribLocation(g_prog, 0, "p");
+    glBindAttribLocation(g_prog, 1, "t");
+    glLinkProgram(g_prog);
+    GLint ok = 0;
+    glGetProgramiv(g_prog, GL_LINK_STATUS, &ok);
+    if (!ok) { fprintf(stderr, "lkx-webd: gpu: link failed\n"); return -1; }
+    glGenTextures(1, &g_tex);
+    glBindTexture(GL_TEXTURE_2D, g_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &g_fbo);
+    glGenTextures(1, &g_out);
+    fprintf(stderr, "lkx-webd: gpu: %s, %s\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
+    return 0;
+}
+
+/* an exported image to pixels in the frame buffer (top row first, BGRA) */
+static void gpu_readback(EGLImageKHR img, int iw, int ih)
+{
+    if (iw != g_w || ih != g_h) {                   /* (re)make the framebuffer's picture for this size */
+        glBindTexture(GL_TEXTURE_2D, g_out);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_out, 0);
+        GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (st != GL_FRAMEBUFFER_COMPLETE) fprintf(stderr, "lkx-webd: gpu: framebuffer incomplete (0x%x)\n", st);
+        g_w = iw;
+        g_h = ih;
+        free(g_tmp);
+        g_tmp = NULL;
+    }
+    glBindTexture(GL_TEXTURE_2D, g_tex);
+    image_target(GL_TEXTURE_2D, img);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glViewport(0, 0, iw, ih);
+    glUseProgram(g_prog);
+    static const GLfloat pos[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
+    static const GLfloat tex[] = { 0, 0, 1, 0, 0, 1, 1, 1 };   /* the image's first row lands in the framebuffer's first row */
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, pos);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, tex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    unsigned char *dst = shm ? shm + HEADER_BYTES : last;
+    if (!dst) dst = last = calloc((size_t)W * H, 4);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    if (iw == W && ih <= H) {
+        glReadPixels(0, 0, iw, ih, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+    } else {
+        if (!g_tmp) g_tmp = malloc((size_t)iw * ih * 4);
+        glReadPixels(0, 0, iw, ih, GL_RGBA, GL_UNSIGNED_BYTE, g_tmp);
+        for (int y = 0; y < ih && y < H; y++)
+            memcpy(dst + (size_t)y * W * 4, g_tmp + (size_t)y * iw * 4, (size_t)(iw < W ? iw : W) * 4);
+    }
+}
+
+static void on_egl_image(void *data, struct wpe_fdo_egl_exported_image *im)
+{
+    (void)data;
+    gpu_readback(wpe_fdo_egl_exported_image_get_egl_image(im),
+                 (int)wpe_fdo_egl_exported_image_get_width(im), (int)wpe_fdo_egl_exported_image_get_height(im));
+    if (fh) { __sync_synchronize(); fh->seq++; }
+    frames++;
+    wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(exportable, im);
+    wpe_view_backend_exportable_fdo_dispatch_frame_complete(exportable);
+}
+
+static void on_egl_shm(void *data, struct wpe_fdo_shm_exported_buffer *b)   /* WebKit may still send a few in memory */
+{
+    (void)data;
+    struct wl_shm_buffer *sb = wpe_fdo_shm_exported_buffer_get_shm_buffer(b);
+    int w = wl_shm_buffer_get_width(sb), h = wl_shm_buffer_get_height(sb), st = wl_shm_buffer_get_stride(sb);
+    wl_shm_buffer_begin_access(sb);
+    const unsigned char *p = wl_shm_buffer_get_data(sb);
+    unsigned char *dst = shm ? shm + HEADER_BYTES : last;
+    if (!dst) dst = last = calloc((size_t)W * H, 4);
+    for (int y = 0; y < h && y < H; y++)
+        memcpy(dst + (size_t)y * W * 4, p + (size_t)y * st, (size_t)(w < W ? w : W) * 4);
+    wl_shm_buffer_end_access(sb);
+    if (fh) { __sync_synchronize(); fh->seq++; }
+    frames++;
+    wpe_view_backend_exportable_fdo_egl_dispatch_release_shm_exported_buffer(exportable, b);
     wpe_view_backend_exportable_fdo_dispatch_frame_complete(exportable);
 }
 
@@ -372,6 +521,7 @@ int main(int argc, char **argv)
     const char *ua = NULL;
     int desktop = 0;
     double zoom_arg = 0;
+    int force_shm = 0;
     const char *url = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
@@ -381,6 +531,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--ua") && i + 1 < argc) ua = argv[++i];
         else if (!strcmp(argv[i], "--desktop")) desktop = 1;
         else if (!strcmp(argv[i], "--bench")) bench = 1;
+        else if (!strcmp(argv[i], "--shm")) force_shm = 1;          /* the software path, as before */
         else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_arg = atof(argv[++i]);
         else if (!strcmp(argv[i], "--vscale") && i + 1 < argc) vscale = atof(argv[++i]);
         else url = argv[i];
@@ -389,9 +540,22 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     wpe_loader_init("libWPEBackend-fdo-1.0.so.1");
-    if (!wpe_fdo_initialize_shm()) { fprintf(stderr, "lkx-webd: wpe_fdo_initialize_shm failed\n"); return 1; }
-    static const struct wpe_view_backend_exportable_fdo_client fclient = { .export_shm_buffer = on_shm };
-    exportable = wpe_view_backend_exportable_fdo_create(&fclient, NULL, W, H);
+    if (!force_shm && gpu_init() == 0) {
+        if (wpe_fdo_initialize_for_egl_display(edpy)) {
+            static const struct wpe_view_backend_exportable_fdo_egl_client eclient = {
+                .export_fdo_egl_image = on_egl_image, .export_shm_buffer = on_egl_shm };
+            exportable = wpe_view_backend_exportable_fdo_egl_create(&eclient, NULL, (uint32_t)W, (uint32_t)H);
+            use_gpu = 1;
+        } else {
+            fprintf(stderr, "lkx-webd: wpe_fdo_initialize_for_egl_display failed, using software\n");
+        }
+    }
+    if (!use_gpu) {
+        if (!wpe_fdo_initialize_shm()) { fprintf(stderr, "lkx-webd: wpe_fdo_initialize_shm failed\n"); return 1; }
+        static const struct wpe_view_backend_exportable_fdo_client fclient = { .export_shm_buffer = on_shm };
+        exportable = wpe_view_backend_exportable_fdo_create(&fclient, NULL, W, H);
+    }
+    fprintf(stderr, "lkx-webd: drawing with the %s\n", use_gpu ? "GPU" : "CPU (software GL)");
     vb = wpe_view_backend_exportable_fdo_get_view_backend(exportable);
     WebKitWebViewBackend *wb = webkit_web_view_backend_new(vb, NULL, NULL);
     view = WEBKIT_WEB_VIEW(webkit_web_view_new(wb));

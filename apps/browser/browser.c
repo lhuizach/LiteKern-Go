@@ -178,7 +178,7 @@ static void engine_spawn(void)
         if (out >= 0) { dup2(out, 1); dup2(out, 2); }
         for (int fd = 3; fd < 64; fd++) close(fd);
         execl(ENTER, ENTER, "env", "XDG_RUNTIME_DIR=/run/u", "HOME=/root", "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
-              "LIBGL_ALWAYS_SOFTWARE=1", "/usr/local/bin/lkx-webd", "--serve", "--size", size,
+              "/usr/local/bin/lkx-webd", "--serve", "--size", size,
               "--zoom", zoomarg, "--vscale", vscalearg, HOME_URL, (char *)NULL);
         _exit(127);
     }

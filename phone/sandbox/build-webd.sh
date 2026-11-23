@@ -8,4 +8,4 @@ cd "$(dirname "$0")"
 KEY=${LKX_PHONE_KEY:-$HOME/.ssh/litekern-phone}
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 "${LKX_PHONE:-root@172.16.42.1}")
 "${SSH[@]}" 'cat > /extras/alpine/root/webd.c' < webd.c
-"${SSH[@]}" '/extras/enter.sh sh -c "mkdir -p /usr/local/bin; cd /root && gcc -O2 -Wall -o /usr/local/bin/lkx-webd webd.c \$(pkg-config --cflags --libs wpe-webkit-2.0 wpebackend-fdo-1.0 wayland-server glib-2.0) && ls -l /usr/local/bin/lkx-webd"'
+"${SSH[@]}" '/extras/enter.sh sh -c "mkdir -p /usr/local/bin; cd /root && gcc -O2 -Wall -o /usr/local/bin/lkx-webd webd.c \$(pkg-config --cflags --libs wpe-webkit-2.0 wpebackend-fdo-1.0 wayland-server glib-2.0 egl glesv2 gbm) && ls -l /usr/local/bin/lkx-webd"'
