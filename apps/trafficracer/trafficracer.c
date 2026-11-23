@@ -121,7 +121,7 @@ static int zp, zfar, zcut;              /* the player's distance (a row near the
 /* the game */
 static struct car cars[CARS_MAX];
 static struct particle parts[PART_MAX];
-static int play_ms, v, scroll;
+static int play_ms, v, v_rem, scroll;
 static int dist, bonus, score, new_best;
 static int xp;                          /* the player's sideways place, units from the road's middle */
 static int steer, steer_s, braking;     /* wanted steering and smoothed (-1000..1000), the brake held */
@@ -1034,6 +1034,7 @@ static void start_game(void)
     memset(parts, 0, sizeof(parts));
     play_ms = 0;
     v = V_START;
+    v_rem = 0;
     scroll = 0;
     dist = 0;
     bonus = 0;
@@ -1128,8 +1129,11 @@ static void update(int dt)
      * brake is hard; never below the crawl */
     if (braking)
         v -= BRAKE_DECEL * dt / 1000;
-    else
-        v += (1100 - 700 * v / V_MAX) * 611 / 10000 * dt / 1000;
+    else {                                      /* about 134 units/s per second at 30 km/h (2.2 km/h a second), less as it goes faster */
+        v_rem += (1100 - 700 * v / V_MAX) * 611 / 5 * dt;      /* in millionths of a unit, so that nothing is lost to rounding */
+        v += v_rem / 1000000;
+        v_rem %= 1000000;
+    }
     v = iclamp(v, V_MIN, V_MAX);
     scroll += v * dt / 1000;
     dist += v * dt / 1000;
