@@ -47,7 +47,8 @@
 #define PICK_GAP    150                 /* between the picker's avatars */
 #define FIELD_W     280
 #define FIELD_H     40
-#define PROMPT_IDLE_MS 30000            /* the prompt untouched this long: back to the clock */
+#define LOCK_OFF_MS 5000                /* the clock untouched this long: the screen goes off */
+#define PROMPT_IDLE_MS 30000           /* the prompt untouched this long: back to the clock */
 #ifndef ANIM_SLOW                       /* recordings: make EXTRA_CFLAGS=-DANIM_SLOW=N */
 #define ANIM_SLOW 1
 #endif
@@ -1177,6 +1178,17 @@ void lockscreen_tick(void)
     }
     if (ls.view == V_PROMPT && uptime_ms() - ls.last_input > PROMPT_IDLE_MS)
         show(V_CLOCK);                      /* left alone: back to the clock */
+    /* Left alone on the clock for LOCK_OFF_MS (counted from when the screen came on): the screen goes off, the lock stays. */
+    static int was_on;
+    int on = machine_screen_on();
+    if (on && !was_on)
+        ls.last_input = uptime_ms();
+    was_on = on;
+    if (on && ls.view == V_CLOCK && !ls.menu_open && !ls.power_down_ms && uptime_ms() - ls.last_input > LOCK_OFF_MS) {
+        kprintf("lock: screen off (5 s alone)\n");
+        machine_screen(0);
+        was_on = 0;
+    }
     if (ls.message && ls.wait_until && (int32_t)(ls.wait_until - uptime_ms()) <= 0) {
         ls.wait_until = 0;                  /* the wait's over: say so */
         ls.message = "Wrong PIN. Try again.";
