@@ -83,7 +83,9 @@ static int desktop_site;                /* 1: asks sites for their desktop versi
 static int pinching;
 static double zoom_mul = 1.0;           /* the pinch's factor on the page's usual zoom */
 static double pinch_d0, pinch_m0;
-static uint32_t zoom_sent_ms;
+static double applied_mul = 1.0;       /* the factor the engine has drawn the page at */
+static int pinch_cx, pinch_cy;          /* where the fingers are, in the view */
+static uint32_t pinch_draw_ms;
 static struct gfx_rect sheet_close[TABS_MAX], sheet_card[TABS_MAX], sheet_new, sheet_desk;
 
 /* The view's tallest height so far (the keyboard down). The engine draws for it, and when the on-screen keyboard
@@ -352,6 +354,37 @@ static void draw_message(const char *a, const char *b)
         wg_label_centred(&canvas, canvas.w / 2, BAR + view_h() / 2 + 20, b, WG_TEXT_BODY);
 }
 
+/* While the fingers pinch: the engine's last picture, scaled about the fingers by what the pinch has done since. */
+static void draw_view_scaled(void)
+{
+    const uint32_t *src = (const uint32_t *)(frame + HEADER_BYTES);
+    int dw = canvas.w, dh = view_h(), ref = ref_h();
+    int f = (int)(zoom_mul * 1000 / applied_mul);
+    if (f < 100)
+        f = 100;
+    static uint16_t xm[2048];
+    if (dw > 2048 || frame_w == 0 || frame_h == 0)
+        return;
+    for (int x = 0; x < dw; x++) {
+        int vx = pinch_cx + (x - pinch_cx) * 1000 / f;
+        xm[x] = vx < 0 || vx >= dw ? 0xffff : (uint16_t)((uint32_t)vx * frame_w / (uint32_t)dw);
+    }
+    uint32_t bg = theme_get()->window_bg;
+    for (int y = 0; y < dh; y++) {
+        uint32_t *dst = (uint32_t *)(canvas.px + (size_t)(BAR + y) * canvas.stride);
+        int vy = pinch_cy + (y - pinch_cy) * 1000 / f;
+        if (vy < 0 || vy >= dh) {
+            for (int x = 0; x < dw; x++)
+                dst[x] = bg;
+            continue;
+        }
+        uint32_t sy = (uint32_t)vy * frame_h / (uint32_t)ref;
+        const uint32_t *row = src + (size_t)(sy < frame_h ? sy : frame_h - 1) * frame_w;
+        for (int x = 0; x < dw; x++)
+            dst[x] = xm[x] == 0xffff ? bg : row[xm[x]];
+    }
+}
+
 static void draw_view(void)
 {
     if (engine == ENGINE_NONE) {
@@ -364,6 +397,10 @@ static void draw_view(void)
     }
     if (!frame || !got_frame) {
         draw_message("Starting the engine...", "The first page takes a few seconds");
+        return;
+    }
+    if (pinching) {
+        draw_view_scaled();
         return;
     }
     const uint32_t *src = (const uint32_t *)(frame + HEADER_BYTES);
@@ -453,6 +490,9 @@ static void redraw(void)
 /* A new picture from the engine and nothing else changed: copy and show only the page area. */
 static void redraw_view(void)
 {
+    if (sheet) {                        /* the sheet is over the page: the page behind it needn't move */
+        return;
+    }
     draw_view();
     draw_progress();
     k86_present(0, BAR, canvas.w, view_h());
@@ -628,30 +668,33 @@ static double fsqrt(double v)           /* (the apps have no maths library) */
     return r;
 }
 
-static void pinch_update(void)
+static void pinch_update(const struct k86_event *ev)
 {
     struct k86_touch2 t;
     if (!k86_touch2(&t) || t.n < 2) {
-        if (pinching) { pinching = 0; dragged = 1; }
+        if (pinching) {                 /* the fingers lifted: the engine draws the page at the new zoom */
+            pinching = 0;
+            dragged = 1;
+            applied_mul = zoom_mul;
+            say("zoom %.3f", base_zoom() * zoom_mul);
+        }
         return;
     }
     double dx = t.x1 - t.x2, dy = t.y1 - t.y2, d = dx * dx + dy * dy;
     d = d > 0 ? fsqrt(d) : 1;
+    pinch_cx = (t.x1 + t.x2) / 2 + (ev->x - t.x1);
+    pinch_cy = (t.y1 + t.y2) / 2 + (ev->y - t.y1) - BAR;
     if (!pinching) {
         pinching = 1;
         dragged = 1;                    /* not a tap, not a scroll */
         pend_dy = 0;
         pinch_d0 = d;
         pinch_m0 = zoom_mul;
+        applied_mul = zoom_mul;
         return;
     }
     double m = pinch_m0 * d / pinch_d0;
     zoom_mul = m < 0.5 ? 0.5 : m > 2.5 ? 2.5 : m;
-    uint32_t now = k86_uptime_ms();
-    if (now - zoom_sent_ms >= 120) {
-        zoom_sent_ms = now;
-        say("zoom %.3f", base_zoom() * zoom_mul);
-    }
 }
 
 static int on_pointer(const struct k86_event *ev)
@@ -660,9 +703,14 @@ static int on_pointer(const struct k86_event *ev)
         return on_sheet_pointer(ev);
     int down = ev->buttons & 1, changed = ev->changed & 1;
     int x = ev->x, y = ev->y;
-    pinch_update();
-    if (pinching)
-        return 0;
+    pinch_update(ev);
+    if (pinching) {                     /* redraw the scaled picture, at most about 25 times a second */
+        uint32_t now = k86_uptime_ms();
+        if (now - pinch_draw_ms < 40)
+            return 0;
+        pinch_draw_ms = now;
+        return 1;
+    }
     if (down && changed) {              /* finger down */
         ptr_down = 1; ptr_in_view = 1; dragged = 0;
         sx = x; sy = last_y = y;
@@ -679,7 +727,6 @@ static int on_pointer(const struct k86_event *ev)
         }
         return 0;
     } else if (!down && changed && ptr_down) {      /* finger up */
-        say("zoom %.3f", base_zoom() * zoom_mul);                /* the last of a pinch */
         flush_scroll(1);
         if (ptr_in_view && !dragged && sock >= 0) say("click %d %d", x, y - BAR);
         ptr_down = 0;

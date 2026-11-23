@@ -489,10 +489,10 @@ run $SHELL_BIN build-linux/test/settings.img "sleep:0.5"
 check "Settings' choices are kept across a restart" \
     '^settings: loaded( for User)?: light, '
 
-# The PIN: Lock Screen (360,392), Set PIN (360,420), 1234 twice (the
+# The PIN: Lock Screen (360,392), Set PIN (360,504: under Lock Now and Run Setup Again), 1234 twice (the
 # keyboard comes up for it). Then Power locks; a swipe up asks for the PIN.
 cp build/litekernx.img build-linux/test/pin.img
-path; open_app "Settings"; go 360 392; click; add sleep:1; go 360 420; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
+path; open_app "Settings"; go 360 392; click; add sleep:1; go 360 504; click; add sleep:0.8 1 2 3 4 ret sleep:0.5 1 2 3 4 ret sleep:2
 add phone_power sleep:1.5 press:1; go 360 300; go 360 200; go 360 100; add release sleep:1 1 2 3 4 ret sleep:2
 add phone_home sleep:0.8; tap_app "Gallery"; add sleep:1.5
 run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
@@ -508,9 +508,9 @@ check "Settings sets a PIN; the lock screen then asks for it" \
     '^lock: PIN for User$' \
     '^lock: unlocked$' \
     '!refused|crashed|PANIC'
-# After a restart, it's needed to log in; then Remove PIN (530,420) takes
+# After a restart, it's needed to log in; then Remove PIN (530,504) takes
 # the PIN once, and the next start needs none.
-path; add sleep:0.6 ret sleep:0.3 1 2 3 4 ret sleep:2; open_app "Settings"; go 360 392; click; add sleep:1; go 530 420; click
+path; add sleep:0.6 ret sleep:0.3 1 2 3 4 ret sleep:2; open_app "Settings"; go 360 392; click; add sleep:1; go 530 504; click
 add sleep:0.8 1 2 3 4 ret sleep:2
 run $SHELL_BIN build-linux/test/pin.img "$P" --keyboard qwerty
 check "the PIN at the next start; Remove PIN" \
