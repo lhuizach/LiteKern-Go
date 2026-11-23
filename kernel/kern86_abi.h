@@ -109,11 +109,13 @@ struct k86_header {
     char title[48];
     int32_t nbuttons;
     struct {
-        int32_t side;       /* 0 left, 1 right */
-        int32_t icon;       /* 0 text, 1 back, 2 add, 3 up (kernel/wm.h's order) */
+        int32_t side;       /* 0 left, 1 right, 2 a field: a wide box between the others that shows the
+                             * title, left aligned (at most one; the Browser's address bar) */
+        int32_t icon;       /* 0 text, 1 back, 2 add, 3 up, 4 forward, 5 reload, 6 stop, 7 home
+                             * (kernel/wm.h's order) */
         int32_t id;
         char label[16];
-        int32_t selected;   /* 1: shown as the current one (a tab: Settings' pages) */
+        int32_t selected;   /* 1: shown as the current one (a tab: Settings' pages), 2: dimmed */
     } buttons[K86_MAX_BUTTONS];
 };
 

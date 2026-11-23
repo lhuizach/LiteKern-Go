@@ -81,13 +81,13 @@ static int window_header(uintptr_t req)
     if (h.nbuttons < 0 || h.nbuttons > K86_MAX_BUTTONS)
         return -EINVAL;
     for (int i = 0; i < h.nbuttons; i++)
-        if (h.buttons[i].icon < WM_ICON_NONE || h.buttons[i].icon > WM_ICON_UP)
+        if (h.buttons[i].icon < WM_ICON_NONE || h.buttons[i].icon > WM_ICON_HOME)
             return -EINVAL;
     wm_clear_buttons(w);
     for (int i = 0; i < h.nbuttons; i++) {
         h.buttons[i].label[sizeof(h.buttons[i].label) - 1] = '\0';
-        wm_add_button(w, h.buttons[i].side ? WM_RIGHT : WM_LEFT, (enum wm_icon)h.buttons[i].icon,
-                      h.buttons[i].label, h.buttons[i].id);
+        wm_add_button(w, h.buttons[i].side == 2 ? WM_FIELD : h.buttons[i].side ? WM_RIGHT : WM_LEFT,
+                      (enum wm_icon)h.buttons[i].icon, h.buttons[i].label, h.buttons[i].id);
         wm_select_button(w, i, h.buttons[i].selected);
     }
     wm_set_title(w, h.title);

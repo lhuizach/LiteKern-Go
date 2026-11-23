@@ -158,6 +158,10 @@ static void layout(const struct wm_window *w, struct gfx_rect r, struct gfx_rect
             continue;
         }
         const struct button *b = &w->buttons[i];
+        if (b->side == WM_FIELD) {              /* placed below, in what is left */
+            out[i] = (struct gfx_rect){ 0, 0, 0, 0 };
+            continue;
+        }
         int bw = b->icon != WM_ICON_NONE ? size : text_width(b->label, TEXT_BOLD) + 2 * t->margin;
         if (b->side == WM_LEFT) {
             out[i] = (struct gfx_rect){ left, top, bw, size };
@@ -167,6 +171,11 @@ static void layout(const struct wm_window *w, struct gfx_rect r, struct gfx_rect
             right -= bw + t->spacing;
         }
     }
+    for (int i = 0; i < w->nbuttons && i < WM_MAX_BUTTONS; i++)
+        if (w->buttons[i].side == WM_FIELD && right > left) {
+            out[i] = (struct gfx_rect){ left, top, right - left, size };
+            break;
+        }
 }
 
 struct gfx_rect wm_bounds(const struct wm_window *w)
@@ -473,9 +482,11 @@ int wm_add_button(struct wm_window *w, enum wm_side side, enum wm_icon icon, con
 
 void wm_select_button(struct wm_window *w, int i, int selected)
 {
-    if (i < 0 || i >= w->nbuttons || w->buttons[i].selected == !!selected)
+    if (selected < 0 || selected > 2)
+        selected = selected ? 1 : 0;
+    if (i < 0 || i >= w->nbuttons || w->buttons[i].selected == selected)
         return;
-    w->buttons[i].selected = !!selected;
+    w->buttons[i].selected = selected;
     if (!w->minimised)
         damage_header(w);
 }
@@ -667,6 +678,35 @@ static void draw_icon(struct gfx_surface *s, enum wm_icon icon, int cx, int cy, 
         gfx_thick_line(s, cx - 13, cy, cx + 13, cy, 5, c);
         gfx_thick_line(s, cx, cy - 13, cx, cy + 13, 5, c);
         break;
+    case WM_ICON_FORWARD:
+        gfx_thick_line(s, cx - 6, cy - 12, cx + 6, cy, 5, c);
+        gfx_thick_line(s, cx + 6, cy, cx - 6, cy + 12, 5, c);
+        break;
+    case WM_ICON_RELOAD: {              /* a ring open at the top right, with an arrowhead at the open end */
+        static const int16_t ring[16] = { 1024, 946, 724, 392, 0, -392, -724, -946, -1024, -946, -724, -392, 0, 392, 724, 946 };
+        int r = 12, px = 0, py = 0;
+        for (int k = 0; k <= 12; k++) {  /* from 3 o'clock round the bottom and left to 12 o'clock (y is down) */
+            int x = cx + r * ring[k & 15] / 1024, y = cy + r * ring[(k + 12) & 15] / 1024;
+            if (k > 0)
+                gfx_thick_line(s, px, py, x, y, 4, c);
+            px = x;
+            py = y;
+        }
+        gfx_thick_line(s, px + 5, py, px - 4, py - 7, 4, c);    /* the arrowhead, pointing right */
+        gfx_thick_line(s, px + 5, py, px - 4, py + 7, 4, c);
+        break;
+    }
+    case WM_ICON_STOP:
+        gfx_thick_line(s, cx - 10, cy - 10, cx + 10, cy + 10, 5, c);
+        gfx_thick_line(s, cx + 10, cy - 10, cx - 10, cy + 10, 5, c);
+        break;
+    case WM_ICON_HOME:
+        gfx_thick_line(s, cx - 13, cy, cx, cy - 12, 4, c);
+        gfx_thick_line(s, cx, cy - 12, cx + 13, cy, 4, c);
+        gfx_thick_line(s, cx - 9, cy - 3, cx - 9, cy + 11, 4, c);
+        gfx_thick_line(s, cx + 9, cy - 3, cx + 9, cy + 11, 4, c);
+        gfx_thick_line(s, cx - 9, cy + 11, cx + 9, cy + 11, 4, c);
+        break;
     case WM_ICON_NONE:
         break;
     }
@@ -728,12 +768,22 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
             continue;
         }
         const struct button *bt = &w->buttons[b];
-        if (!bg && bt->selected)    /* the current tab: a soft background */
+        if (!rs[b].w)
+            continue;                       /* a field that found no room */
+        if (bt->side == WM_FIELD) {         /* a wide box with the title in it, left aligned */
+            uint32_t fb = bt->selected == 1 ? t->view_bg : bg ? bg : t->button_bg;
+            gfx_fill_round_rect(s, rs[b].x - ox, rs[b].y - oy, rs[b].w, rs[b].h, rs[b].h / 2, fb);
+            text_draw_fit(s, rs[b].x + t->spacing + 8 - ox, cy - text_height(TEXT_BODY) / 2, w->title,
+                          rs[b].w - 2 * (t->spacing + 8), TEXT_BODY, bt->selected == 1 ? t->fg : fg);
+            continue;
+        }
+        if (!bg && bt->selected == 1)       /* the current tab: a soft background */
             bg = t->button_bg;
+        uint32_t bfg = bt->selected == 2 ? t->fg_dim : fg;
         if (bg)     /* flat header-bar buttons only show a background when hovered (or current) */
             gfx_fill_round_rect(s, rs[b].x - ox, rs[b].y - oy, rs[b].w, rs[b].h, t->radius, bg);
         if (bt->icon != WM_ICON_NONE)
-            draw_icon(s, bt->icon, cx, cy, fg);
+            draw_icon(s, bt->icon, cx, cy, bfg);
         else
             text_draw(s, cx - text_width(bt->label, TEXT_BOLD) / 2, cy - text_height(TEXT_BOLD) / 2,
                       bt->label, TEXT_BOLD, fg);
@@ -750,7 +800,11 @@ static void draw_header(struct gfx_view *v, struct wm_window *w, struct gfx_rect
     }
     int gl = lmax + t->spacing, gr = rmin - t->spacing, avail = gr - gl;
     int tw = text_width(w->title, TEXT_BOLD);
-    if (avail > 0) {
+    int has_field = 0;                      /* the title is shown inside the field instead */
+    for (int b = 0; b < w->nbuttons; b++)
+        if (w->buttons[b].side == WM_FIELD && rs[b].w)
+            has_field = 1;
+    if (avail > 0 && !has_field) {
         int shown = tw < avail ? tw : avail, x = h.x + (h.w - shown) / 2;
         if (x < gl)
             x = gl;

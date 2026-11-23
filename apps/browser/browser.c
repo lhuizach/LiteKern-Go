@@ -27,13 +27,17 @@
 #define WEBD "/extras/alpine/usr/local/bin/lkx-webd"
 #define FRAME_FILE "/dev/shm/lkxweb.frame"
 #define SOCK_FILE "/dev/shm/lkxweb.sock"
-#define HOME_URL "https://duckduckgo.com/"
-#define BAR 96                          /* the address bar on top and the buttons at the bottom */
+#define HOME_URL "https://html.duckduckgo.com/html/"   /* DuckDuckGo's page without JavaScript: much quicker here */
+#define SEARCH_URL "https://html.duckduckgo.com/html/?q="
+#define BAR 0                           /* the page starts at the top: the buttons and the address bar are in the
+                                         * window's header bar (publish_header), where the app's name was */
 #define HEADER_BYTES 64
 #define FRAME_MAGIC 0x4657574cu
 #define DRAG_SLOP 14
 #define URL_MAX 512
-#define NBTN 4
+
+/* the header buttons' ids */
+enum { HB_BACK = 1, HB_FWD, HB_RELOAD, HB_HOME, HB_ADDR };
 
 struct frame_header { uint32_t magic, seq, w, h, stride, reserved[3]; };
 
@@ -56,15 +60,13 @@ static size_t inlen;
 static char title[128], uri[URL_MAX], errtext[128];
 static int loading, progress, can_back, can_fwd, page_kb;
 static int editing;                     /* the address bar has the keyboard */
+static int edit_fresh;                  /* nothing typed yet: the first key replaces the address */
 static char url_edit[URL_MAX];
 static int url_len;
 
 static int ptr_down, ptr_in_view, dragged, sx, sy, last_y;
-static int btn_down = -1;
 static uint32_t last_change_ms;
 static uint32_t timer_ms;
-
-static const char *const btn_label[NBTN] = { "Back", "Next", "Reload", "Home" };
 
 static int view_h(void) { return canvas.h - 2 * BAR; }
 
@@ -270,7 +272,7 @@ static void go(const char *text)
     if (strstr(text, "://")) snprintf(url, sizeof(url), "%s", text);
     else if (!space && strchr(text, '.')) snprintf(url, sizeof(url), "https://%s", text);
     else {                              /* a search */
-        int n = snprintf(url, sizeof(url), "https://duckduckgo.com/?q=");
+        int n = snprintf(url, sizeof(url), "%s", SEARCH_URL);
         for (const char *c = text; *c && n < (int)sizeof(url) - 4; c++) {
             if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9')) url[n++] = *c;
             else n += snprintf(url + n, 4, "%%%02X", (unsigned char)*c);
@@ -282,40 +284,45 @@ static void go(const char *text)
 
 /* ---- drawing ------------------------------------------------------------------------------- */
 
-static void draw_bars(void)
+/* The buttons and the address bar are the window's header bar, drawn by the shell (kernel/wm.c) where the app's
+ * name was: back, forward, reload or stop, the address (the title, in a field) and home. The header is sent
+ * again only when something in it changed. */
+static void publish_header(void)
 {
-    const struct theme *t = theme_get();
-    gfx_fill_rect(&canvas, 0, 0, canvas.w, BAR, t->headerbar_bg);
-    gfx_fill_rect(&canvas, 0, BAR - 1, canvas.w, 1, t->headerbar_border);
-    gfx_fill_rect(&canvas, 16, 16, canvas.w - 32, BAR - 32, editing ? t->view_bg : t->button_bg);
-    gfx_round_corners(&canvas, 16, 16, canvas.w - 32, BAR - 32, 14, t->headerbar_bg);
-    const char *shown = editing ? url_edit : (uri[0] ? uri : (title[0] ? title : "Search or type an address"));
-    uint32_t col = (editing || uri[0]) ? t->fg : t->fg_dim;
-    int th = text_height(TEXT_BODY);
-    text_draw_fit(&canvas, 34, 16 + (BAR - 32 - th) / 2, shown, canvas.w - 68 - (editing ? 14 : 0), TEXT_BODY, col);
-    if (editing) {
-        int cx = 34 + text_width(url_edit, TEXT_BODY);
-        if (cx > canvas.w - 40) cx = canvas.w - 40;
-        gfx_fill_rect(&canvas, cx + 2, 16 + (BAR - 32 - th) / 2, 2, th, t->accent);
+    static struct k86_header last;
+    static int have_last;
+    struct k86_header h;
+    memset(&h, 0, sizeof(h));
+    if (editing) {                      /* the end of what is typed, with a cursor */
+        size_t n = strlen(url_edit), room = sizeof(h.title) - 2;
+        snprintf(h.title, sizeof(h.title), "%.46s|", n > room ? url_edit + (n - room) : url_edit);
+    } else if (uri[0]) {                /* the address without its https:// and www. */
+        const char *u = uri;
+        if (!strncmp(u, "https://", 8)) u += 8;
+        else if (!strncmp(u, "http://", 7)) u += 7;
+        if (!strncmp(u, "www.", 4)) u += 4;
+        snprintf(h.title, sizeof(h.title), "%.47s", u);
+    } else {
+        snprintf(h.title, sizeof(h.title), "Search or type URL");
     }
-    if (loading)
-        gfx_fill_rect(&canvas, 0, BAR - 4, canvas.w * progress / 100, 4, t->accent);
+    h.nbuttons = 5;
+    h.buttons[0].side = 0; h.buttons[0].icon = 1; h.buttons[0].id = HB_BACK;   h.buttons[0].selected = can_back ? 0 : 2;
+    h.buttons[1].side = 0; h.buttons[1].icon = 4; h.buttons[1].id = HB_FWD;    h.buttons[1].selected = can_fwd ? 0 : 2;
+    h.buttons[2].side = 0; h.buttons[2].icon = loading ? 6 : 5; h.buttons[2].id = HB_RELOAD;
+    h.buttons[3].side = 1; h.buttons[3].icon = 7; h.buttons[3].id = HB_HOME;
+    h.buttons[4].side = 2; h.buttons[4].icon = 0; h.buttons[4].id = HB_ADDR;   h.buttons[4].selected = editing ? 1 : 0;
+    if (have_last && !memcmp(&h, &last, sizeof(h)))
+        return;
+    k86_header(&h);
+    last = h;
+    have_last = 1;
+}
 
-    int y = canvas.h - BAR;
-    gfx_fill_rect(&canvas, 0, y, canvas.w, BAR, t->headerbar_bg);
-    gfx_fill_rect(&canvas, 0, y, canvas.w, 1, t->headerbar_border);
-    int bw = canvas.w / NBTN;
-    for (int i = 0; i < NBTN; i++) {
-        const char *label = btn_label[i];
-        int off = (i == 0 && !can_back) || (i == 1 && !can_fwd);
-        if (i == 2 && loading) label = "Stop";
-        if (btn_down == i)
-            gfx_fill_rect(&canvas, i * bw + 6, y + 8, bw - 12, BAR - 16, t->button_active);
-        wg_label_centred(&canvas, i * bw + bw / 2, y + (BAR - wg_label_height(WG_TEXT_BODY)) / 2, label, WG_TEXT_BODY);
-        if (off)                         /* a greyed label: draw it over again dimmer */
-            gfx_fill_rect(&canvas, i * bw + 8, y + 10, bw - 16, BAR - 20, t->headerbar_bg),
-            wg_label_centred(&canvas, i * bw + bw / 2, y + (BAR - wg_label_height(WG_TEXT_BODY)) / 2, label, WG_TEXT_SMALL);
-    }
+/* A thin line along the top of the page while it loads. */
+static void draw_progress(void)
+{
+    if (loading && progress > 0)
+        gfx_fill_rect(&canvas, 0, 0, canvas.w * progress / 100, 4, theme_get()->accent);
 }
 
 static void draw_message(const char *a, const char *b)
@@ -382,7 +389,8 @@ static void draw_view(void)
 static void redraw(void)
 {
     draw_view();
-    draw_bars();
+    draw_progress();
+    publish_header();
     k86_present(0, 0, canvas.w, canvas.h);
 }
 
@@ -390,6 +398,7 @@ static void redraw(void)
 static void redraw_view(void)
 {
     draw_view();
+    draw_progress();
     k86_present(0, BAR, canvas.w, view_h());
 }
 
@@ -433,8 +442,10 @@ static void on_key(const struct key_event *k)
             if (url_len)
                 go(url_edit);
         } else if (k->key == KEY_BACKSPACE || k->ascii == 8) {
-            if (url_len) url_edit[--url_len] = 0;
+            if (edit_fresh) { url_len = 0; url_edit[0] = 0; edit_fresh = 0; }
+            else if (url_len) url_edit[--url_len] = 0;
         } else if (k->ascii >= 32 && k->ascii < 127 && url_len < URL_MAX - 2) {
+            if (edit_fresh) { url_len = 0; edit_fresh = 0; }
             url_edit[url_len++] = (char)k->ascii;
             url_edit[url_len] = 0;
         }
@@ -452,12 +463,24 @@ static void on_key(const struct key_event *k)
     }
 }
 
-static void press_button(int i)
+/* A press in the header bar (the shell sends the button's id). */
+static void on_header(int id)
 {
-    if (i == 0 && can_back) say("back");
-    else if (i == 1 && can_fwd) say("forward");
-    else if (i == 2) say(loading ? "stop" : "reload");
-    else if (i == 3) say("load %s", HOME_URL);
+    if (id != HB_ADDR)
+        editing = 0;
+    switch (id) {
+    case HB_BACK: if (can_back) say("back"); break;
+    case HB_FWD: if (can_fwd) say("forward"); break;
+    case HB_RELOAD: say(loading ? "stop" : "reload"); break;
+    case HB_HOME: say("load %s", HOME_URL); break;
+    case HB_ADDR:
+        editing = 1;
+        edit_fresh = 1;                 /* what is typed replaces the address */
+        snprintf(url_edit, sizeof(url_edit), "%s", uri);
+        url_len = (int)strlen(url_edit);
+        page_kb = 0;
+        break;
+    }
 }
 
 /* Returns 0 when the move only scrolled the page (nothing of ours to redraw). */
@@ -466,19 +489,9 @@ static int on_pointer(const struct k86_event *ev)
     int down = ev->buttons & 1, changed = ev->changed & 1;
     int x = ev->x, y = ev->y;
     if (down && changed) {              /* finger down */
-        ptr_down = 1; ptr_in_view = 0; dragged = 0; btn_down = -1;
+        ptr_down = 1; ptr_in_view = 1; dragged = 0;
         sx = x; sy = last_y = y;
-        if (y < BAR) {
-            editing = 1;
-            snprintf(url_edit, sizeof(url_edit), "%s", uri);
-            url_len = (int)strlen(url_edit);
-            page_kb = 0;
-        } else if (y >= canvas.h - BAR) {
-            btn_down = x * NBTN / canvas.w;
-        } else {
-            ptr_in_view = 1;
-            if (editing) editing = 0;
-        }
+        if (editing) editing = 0;
     } else if (down && ptr_down && ptr_in_view) {   /* moving */
         if (!dragged && (abs(y - sy) > DRAG_SLOP || abs(x - sx) > DRAG_SLOP))
             dragged = 1;
@@ -493,9 +506,7 @@ static int on_pointer(const struct k86_event *ev)
     } else if (!down && changed && ptr_down) {      /* finger up */
         flush_scroll(1);
         if (ptr_in_view && !dragged && sock >= 0) say("click %d %d", x, y - BAR);
-        if (btn_down >= 0 && y >= canvas.h - BAR && x * NBTN / canvas.w == btn_down)
-            press_button(btn_down);
-        ptr_down = 0; btn_down = -1;
+        ptr_down = 0;
     }
     return 1;
 }
@@ -567,6 +578,11 @@ int main(void)
             break;
         case K86_EVENT_KEY:
             on_key(&ev.key);
+            last_change_ms = k86_uptime_ms();
+            redraw();
+            break;
+        case K86_EVENT_HEADER:
+            on_header(ev.id);
             last_change_ms = k86_uptime_ms();
             redraw();
             break;

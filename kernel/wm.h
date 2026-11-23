@@ -35,9 +35,17 @@ enum wm_icon {
     WM_ICON_BACK,       /* < */
     WM_ICON_ADD,        /* + */
     WM_ICON_UP,         /* ^ (parent folder) */
+    WM_ICON_FORWARD,    /* > */
+    WM_ICON_RELOAD,     /* a ring with an arrowhead */
+    WM_ICON_STOP,       /* x */
+    WM_ICON_HOME,       /* a house */
 };
 
-enum wm_side { WM_LEFT, WM_RIGHT };
+/* WM_FIELD: not a button but a wide box that fills the room between the left and right buttons and shows
+ * the window's title in it, left aligned (the Browser's address bar). Pressing it is a header press like
+ * any other. At most one. A button's `selected`: 1 = the current one (a soft background), 2 = dimmed (it
+ * does nothing now). */
+enum wm_side { WM_LEFT, WM_RIGHT, WM_FIELD };
 
 enum wm_event_type {
     WM_EVENT_KEY,           /* key: a key was pressed */
