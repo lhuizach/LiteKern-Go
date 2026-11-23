@@ -13,6 +13,7 @@
 #include "kernel/rtc.h"
 #include "kernel/screen.h"
 #include "kernel/screensaver.h"
+#include "kernel/setup.h"
 #include "kernel/string.h"
 #include "kernel/text.h"
 #include "kernel/theme.h"
@@ -1191,7 +1192,7 @@ void lockscreen_tick(void)
     if (on && !was_on)
         ls.last_input = uptime_ms();
     was_on = on;
-    if (on && ls.view == V_CLOCK && !ls.menu_open && !ls.power_down_ms && uptime_ms() - ls.last_input > LOCK_OFF_MS) {
+    if (on && !setup_active() && ls.view == V_CLOCK && !ls.menu_open && !ls.power_down_ms && uptime_ms() - ls.last_input > LOCK_OFF_MS) {
         kprintf("lock: screen off (5 s alone)\n");
         machine_screen(0);
         was_on = 0;

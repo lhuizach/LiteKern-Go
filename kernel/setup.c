@@ -5,6 +5,7 @@
 #include "kernel/input.h"
 #include "kernel/kern86_abi.h"
 #include "kernel/lockscreen.h"
+#include "kernel/machine.h"
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/screen.h"
@@ -277,6 +278,8 @@ static void finish(void)
     desktop_refresh();
     wm_theme_changed();
     settings_save();
+    if (lockscreen_active())
+        lockscreen_redraw();                    /* it was waiting underneath (the login at boot): show it */
     plat_setup_finished();
 }
 
@@ -410,6 +413,17 @@ void setup_pointer(int x, int y, uint8_t buttons)
 
 void setup_key(uint16_t key, int pressed)
 {
+    if (key == KEY_PHONE_POWER) {               /* Power: the screen off and on again; the setup waits */
+        if (!pressed) {
+            int on = !machine_screen_on();
+            machine_screen(on);
+            if (on) {
+                screen_damage_all();
+                screen_present();
+            }
+        }
+        return;
+    }
     if (!pressed || uptime_ms() - su.page_at < FADE_MS)
         return;
     if (key == KEY_ENTER || key == KEY_SPACE) {
