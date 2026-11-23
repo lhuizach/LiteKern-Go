@@ -22,6 +22,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
+#include "sdk/touch2.h"
 
 #define ENTER "/extras/enter.sh"
 #define WEBD "/extras/alpine/usr/local/bin/lkx-webd"
@@ -37,7 +38,7 @@
 #define URL_MAX 512
 
 /* the header buttons' ids */
-enum { HB_BACK = 1, HB_FWD, HB_RELOAD, HB_HOME, HB_ADDR };
+enum { HB_BACK = 1, HB_FWD, HB_RELOAD, HB_HOME, HB_ADDR, HB_TABS };
 
 struct frame_header { uint32_t magic, seq, w, h, stride, reserved[3]; };
 
@@ -69,6 +70,21 @@ static uint32_t last_change_ms;
 static uint32_t timer_ms;
 
 static int view_h(void) { return canvas.h - 2 * BAR; }
+
+/* ---- tabs and the page's zoom ---------------------------------------------------------------------------------
+ * A tab is an address and a title. There is one engine (the phone has little memory for more), so a tab you
+ * come back to is loaded again, from the top. */
+#define TABS_MAX 8
+struct tab { char uri[URL_MAX]; char title[64]; };
+static struct tab tabs[TABS_MAX];
+static int ntabs = 1, cur_tab;
+static int sheet;                       /* the tabs sheet is open */
+static int desktop_site;                /* 1: asks sites for their desktop versions */
+static int pinching;
+static double zoom_mul = 1.0;           /* the pinch's factor on the page's usual zoom */
+static double pinch_d0, pinch_m0;
+static uint32_t zoom_sent_ms;
+static struct gfx_rect sheet_close[TABS_MAX], sheet_card[TABS_MAX], sheet_new, sheet_desk;
 
 /* The view's tallest height so far (the keyboard down). The engine draws for it, and when the on-screen keyboard
  * makes the window shorter the page is not squashed to fit: the keyboard covers the bottom of it. */
@@ -305,12 +321,14 @@ static void publish_header(void)
     } else {
         snprintf(h.title, sizeof(h.title), "Search or type URL");
     }
-    h.nbuttons = 5;
+    h.nbuttons = 6;
     h.buttons[0].side = 0; h.buttons[0].icon = 1; h.buttons[0].id = HB_BACK;   h.buttons[0].selected = can_back ? 0 : 2;
     h.buttons[1].side = 0; h.buttons[1].icon = 4; h.buttons[1].id = HB_FWD;    h.buttons[1].selected = can_fwd ? 0 : 2;
     h.buttons[2].side = 0; h.buttons[2].icon = loading ? 6 : 5; h.buttons[2].id = HB_RELOAD;
     h.buttons[3].side = 1; h.buttons[3].icon = 7; h.buttons[3].id = HB_HOME;
     h.buttons[4].side = 2; h.buttons[4].icon = 0; h.buttons[4].id = HB_ADDR;   h.buttons[4].selected = editing ? 1 : 0;
+    h.buttons[5].side = 1; h.buttons[5].icon = 0; h.buttons[5].id = HB_TABS;   h.buttons[5].selected = sheet ? 1 : 0;
+    snprintf(h.buttons[5].label, sizeof(h.buttons[5].label), "%d", ntabs);
     if (have_last && !memcmp(&h, &last, sizeof(h)))
         return;
     k86_header(&h);
@@ -386,9 +404,47 @@ static void draw_view(void)
     }
 }
 
+static void draw_sheet(void)
+{
+    const struct theme *t = theme_get();
+    int w = canvas.w, h = canvas.h, pad = 24;
+    gfx_darken(&canvas, 0, 0, w, h, 170);
+    int ch = 112, y = 32;
+    memset(sheet_close, 0, sizeof(sheet_close));
+    memset(sheet_card, 0, sizeof(sheet_card));
+    for (int i = 0; i < ntabs; i++) {
+        struct gfx_rect r = { pad, y, w - 2 * pad, ch };
+        sheet_card[i] = r;
+        sheet_close[i] = (struct gfx_rect){ r.x + r.w - 96, r.y, 96, r.h };
+        gfx_fill_round_rect(&canvas, r.x, r.y, r.w, r.h, 26, i == cur_tab ? t->accent_bg : t->view_bg);
+        uint32_t fg = i == cur_tab ? t->accent_fg : t->fg;
+        const char *tt = i == cur_tab ? title : tabs[i].title;
+        const char *uu = i == cur_tab ? uri : tabs[i].uri;
+        text_draw_fit(&canvas, r.x + 28, r.y + 18, tt[0] ? tt : "New tab", r.w - 150, TEXT_BOLD, fg);
+        text_draw_fit(&canvas, r.x + 28, r.y + 62, uu[0] ? uu : "Search or type URL", r.w - 150, TEXT_SMALL, fg);
+        int cx = r.x + r.w - 48, cy = r.y + r.h / 2;
+        gfx_thick_line(&canvas, cx - 10, cy - 10, cx + 10, cy + 10, 3, fg);
+        gfx_thick_line(&canvas, cx + 10, cy - 10, cx - 10, cy + 10, 3, fg);
+        y += ch + 14;
+    }
+    sheet_new = (struct gfx_rect){ pad, y, w - 2 * pad, 96 };
+    gfx_fill_round_rect(&canvas, sheet_new.x, sheet_new.y, sheet_new.w, sheet_new.h, 48, ntabs < TABS_MAX ? t->view_bg : t->window_bg);
+    text_draw(&canvas, w / 2 - text_width("New tab", TEXT_BOLD) / 2, sheet_new.y + (96 - text_height(TEXT_BOLD)) / 2, "New tab", TEXT_BOLD,
+              ntabs < TABS_MAX ? t->fg : t->fg_dim);
+    y += 96 + 14;
+    sheet_desk = (struct gfx_rect){ pad, y, w - 2 * pad, 96 };
+    gfx_fill_round_rect(&canvas, sheet_desk.x, sheet_desk.y, sheet_desk.w, sheet_desk.h, 48, t->view_bg);
+    text_draw(&canvas, sheet_desk.x + 36, sheet_desk.y + (96 - text_height(TEXT_BOLD)) / 2, "Desktop site", TEXT_BOLD, t->fg);
+    struct gfx_rect sw = { sheet_desk.x + sheet_desk.w - 36 - 96, sheet_desk.y + 28, 96, 40 };
+    gfx_fill_round_rect(&canvas, sw.x, sw.y, sw.w, sw.h, 20, desktop_site ? t->accent_bg : t->window_bg);
+    gfx_fill_circle(&canvas, desktop_site ? sw.x + sw.w - 20 : sw.x + 20, sw.y + 20, 16, desktop_site ? t->accent_fg : t->fg_dim);
+}
+
 static void redraw(void)
 {
     draw_view();
+    if (sheet)
+        draw_sheet();
     draw_progress();
     publish_header();
     k86_present(0, 0, canvas.w, canvas.h);
@@ -464,11 +520,74 @@ static void on_key(const struct key_event *k)
 }
 
 /* A press in the header bar (the shell sends the button's id). */
+static void tab_save(void)
+{
+    snprintf(tabs[cur_tab].uri, sizeof(tabs[cur_tab].uri), "%.*s", URL_MAX - 1, uri);
+    snprintf(tabs[cur_tab].title, sizeof(tabs[cur_tab].title), "%.63s", title);
+}
+
+static void tab_open(int i)             /* come to tab i: its page is loaded again */
+{
+    tab_save();
+    cur_tab = i;
+    sheet = 0;
+    zoom_mul = 1.0;
+    say("load %s", tabs[i].uri[0] ? tabs[i].uri : HOME_URL);
+}
+
+static void tab_new(void)
+{
+    if (ntabs >= TABS_MAX)
+        return;
+    tab_save();
+    cur_tab = ntabs++;
+    tabs[cur_tab].uri[0] = tabs[cur_tab].title[0] = 0;
+    sheet = 0;
+    zoom_mul = 1.0;
+    say("load %s", HOME_URL);
+}
+
+static void tab_close(int i)
+{
+    tab_save();
+    for (int k = i; k < ntabs - 1; k++)
+        tabs[k] = tabs[k + 1];
+    if (ntabs > 1)
+        ntabs--;
+    else
+        tabs[0].uri[0] = tabs[0].title[0] = 0;
+    if (cur_tab >= ntabs || cur_tab > i)
+        cur_tab = cur_tab > i ? cur_tab - 1 : ntabs - 1;
+    if (i == cur_tab || ntabs == 1) {
+        zoom_mul = 1.0;
+        say("load %s", tabs[cur_tab].uri[0] ? tabs[cur_tab].uri : HOME_URL);
+    }
+}
+
+static double base_zoom(void)
+{
+    return (desktop_site ? 1.0 : 2.0) * render_pct / 100;
+}
+
+static void set_desktop(int on)
+{
+    desktop_site = on;
+    zoom_mul = 1.0;
+    say("desktop %d %.3f", on, base_zoom());
+}
+
 static void on_header(int id)
 {
     if (id != HB_ADDR)
         editing = 0;
+    if (id != HB_TABS)
+        sheet = 0;
     switch (id) {
+    case HB_TABS:
+        sheet = !sheet;
+        if (sheet)
+            tab_save();
+        break;
     case HB_BACK: if (can_back) say("back"); break;
     case HB_FWD: if (can_fwd) say("forward"); break;
     case HB_RELOAD: say(loading ? "stop" : "reload"); break;
@@ -484,10 +603,66 @@ static void on_header(int id)
 }
 
 /* Returns 0 when the move only scrolled the page (nothing of ours to redraw). */
+static int on_sheet_pointer(const struct k86_event *ev)
+{
+    if (!(ev->changed & 1) || (ev->buttons & 1))
+        return 1;                       /* acts when the finger lifts */
+    int x = ev->x, y = ev->y;
+#define IN(r) (x >= (r).x && y >= (r).y && x < (r).x + (r).w && y < (r).y + (r).h)
+    for (int i = 0; i < ntabs; i++) {
+        if (IN(sheet_close[i])) { tab_close(i); return 1; }
+        if (IN(sheet_card[i])) { tab_open(i); return 1; }
+    }
+    if (IN(sheet_new)) { tab_new(); return 1; }
+    if (IN(sheet_desk)) { set_desktop(!desktop_site); sheet = 0; return 1; }
+#undef IN
+    sheet = 0;                          /* a tap outside closes it */
+    return 1;
+}
+
+static double fsqrt(double v)           /* (the apps have no maths library) */
+{
+    double r = v > 1 ? v / 2 : 1;
+    for (int i = 0; i < 24; i++)
+        r = (r + v / r) / 2;
+    return r;
+}
+
+static void pinch_update(void)
+{
+    struct k86_touch2 t;
+    if (!k86_touch2(&t) || t.n < 2) {
+        if (pinching) { pinching = 0; dragged = 1; }
+        return;
+    }
+    double dx = t.x1 - t.x2, dy = t.y1 - t.y2, d = dx * dx + dy * dy;
+    d = d > 0 ? fsqrt(d) : 1;
+    if (!pinching) {
+        pinching = 1;
+        dragged = 1;                    /* not a tap, not a scroll */
+        pend_dy = 0;
+        pinch_d0 = d;
+        pinch_m0 = zoom_mul;
+        return;
+    }
+    double m = pinch_m0 * d / pinch_d0;
+    zoom_mul = m < 0.5 ? 0.5 : m > 2.5 ? 2.5 : m;
+    uint32_t now = k86_uptime_ms();
+    if (now - zoom_sent_ms >= 120) {
+        zoom_sent_ms = now;
+        say("zoom %.3f", base_zoom() * zoom_mul);
+    }
+}
+
 static int on_pointer(const struct k86_event *ev)
 {
+    if (sheet)
+        return on_sheet_pointer(ev);
     int down = ev->buttons & 1, changed = ev->changed & 1;
     int x = ev->x, y = ev->y;
+    pinch_update();
+    if (pinching)
+        return 0;
     if (down && changed) {              /* finger down */
         ptr_down = 1; ptr_in_view = 1; dragged = 0;
         sx = x; sy = last_y = y;
@@ -504,6 +679,7 @@ static int on_pointer(const struct k86_event *ev)
         }
         return 0;
     } else if (!down && changed && ptr_down) {      /* finger up */
+        say("zoom %.3f", base_zoom() * zoom_mul);                /* the last of a pinch */
         flush_scroll(1);
         if (ptr_in_view && !dragged && sock >= 0) say("click %d %d", x, y - BAR);
         ptr_down = 0;

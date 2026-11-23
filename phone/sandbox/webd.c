@@ -280,9 +280,12 @@ static gboolean check_editable(gpointer d)
     return G_SOURCE_REMOVE;
 }
 
+static const char *mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1";
+
 static void command(char *line)
 {
-    int x, y, dy;
+    int x, y, dy, d;
+    double z;
     unsigned sym, down;
     if (!strncmp(line, "load ", 5)) webkit_web_view_load_uri(view, line + 5);
     else if (!strcmp(line, "back")) webkit_web_view_go_back(view);
@@ -290,6 +293,18 @@ static void command(char *line)
     else if (!strcmp(line, "reload")) webkit_web_view_reload(view);
     else if (!strcmp(line, "stop")) webkit_web_view_stop_loading(view);
     else if (!strcmp(line, "quit")) g_main_loop_quit(loop);
+    else if (sscanf(line, "zoom %lf", &z) == 1) {                    /* a pinch: the page's zoom now */
+        if (z < 0.4) z = 0.4;
+        if (z > 6) z = 6;
+        zoom = z;
+        webkit_web_view_set_zoom_level(view, zoom);
+    } else if (sscanf(line, "desktop %d %lf", &d, &z) == 2) {        /* the desktop or the phone's site, and its zoom */
+        WebKitSettings *st = webkit_web_view_get_settings(view);
+        webkit_settings_set_user_agent(st, d ? NULL : mobile_ua);       /* NULL: the engine's own (a desktop browser) */
+        zoom = z > 0.4 ? z : 1.0;
+        webkit_web_view_set_zoom_level(view, zoom);
+        webkit_web_view_reload(view);
+    }
     else if (sscanf(line, "click %d %d", &x, &y) == 2) {
         x = (int)(x * vscale); y = (int)(y * vscale);      /* the app's pixels to the picture's */
         pointer(wpe_input_pointer_event_type_motion, x, y, 0, 0);
@@ -574,7 +589,7 @@ int main(int argc, char **argv)
     if (!desktop) {
         zoom = 2.0;
         webkit_web_view_set_zoom_level(view, zoom);
-        if (!ua) ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1";
+        if (!ua) ua = mobile_ua;
     }
     if (zoom_arg > 0) { zoom = zoom_arg; webkit_web_view_set_zoom_level(view, zoom); }
     if (ua) webkit_settings_set_user_agent(webkit_web_view_get_settings(view), ua);
