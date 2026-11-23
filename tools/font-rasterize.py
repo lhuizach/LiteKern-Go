@@ -87,7 +87,8 @@ def main():
         info = {"name": name, "size": size, "weight": weight, "ascent": ascent,
                 "descent": descent, "glyphs": []}
         for ch in CHARS[:99] if clock else CHARS:     # the clock's: no Latin-1
-            if clock and ch not in (CLOCK_CHARS - set("AMP") if named else CLOCK_CHARS):
+            only = set(os.environ["LKX_FONT_CHARS"]) if os.environ.get("LKX_FONT_CHARS") else None   # the setup's hello: its letters
+            if clock and ch not in (only or (CLOCK_CHARS - set("AMP") if named else CLOCK_CHARS)):
                 info["glyphs"].append({"c": ord(ch), "w": 0, "h": 0, "xoff": 0, "yoff": 0, "adv64": 0})
                 rows.append((len(meta["faces"]), ch, None))
                 continue

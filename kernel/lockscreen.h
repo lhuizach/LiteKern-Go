@@ -91,5 +91,7 @@ void lockscreen_home_clock_draw(struct gfx_surface *s, int ox, int oy, const str
 /* The big bold clock's face (the home screen uses it too). */
 struct text_face;
 const struct text_face *lockscreen_clock_face(void);
+/* One of the big (320 px) clock faces by K86_CLOCK_FONTS number (0 bold, 1 light, 2 thin...; K86_CLOCK_FONTS + 1: the setup's hello, lower-case letters). 0 if unreadable. */
+const struct text_face *lockscreen_face(int n);
 
 #endif

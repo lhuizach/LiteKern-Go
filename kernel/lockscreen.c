@@ -96,12 +96,12 @@ static struct gfx_surface *S(void) { return screen_surface(); }
  * stays sharp. The last, fonts/clock.lkxf at 180 px, is the home screen's. */
 #define HOME_FACE K86_CLOCK_FONTS
 #define CLOCK_PX 180                    /* how big the clock is at 100% */
-static struct text_glyph clock_glyphs[K86_CLOCK_FONTS + 1][CLOCK_GLYPHS];
-static struct text_face clock_faces[K86_CLOCK_FONTS + 1];
-static const char *const clock_files[K86_CLOCK_FONTS + 1] = {
+static struct text_glyph clock_glyphs[K86_CLOCK_FONTS + 2][CLOCK_GLYPHS];
+static struct text_face clock_faces[K86_CLOCK_FONTS + 2];
+static const char *const clock_files[K86_CLOCK_FONTS + 2] = {
     "fonts/clock-hd-bold.lkxf", "fonts/clock-hd-light.lkxf", "fonts/clock-hd-thin.lkxf",
     "fonts/clock-hd-condensed.lkxf", "fonts/clock-hd-mono.lkxf", "fonts/clock-hd-serif.lkxf",
-    "fonts/clock-hd-slim.lkxf", "fonts/clock.lkxf",
+    "fonts/clock-hd-slim.lkxf", "fonts/clock.lkxf", "fonts/clock-hello.lkxf",   /* the last: the setup's hello (letters) */
 };
 
 static uint32_t le(const uint8_t *p, int n)
@@ -135,6 +135,13 @@ static int load_clock_face(int n)
     clock_faces[n] = (struct text_face){ "clock", (int)le(d + 4, 2), (int)le(d + 6, 2), (int)le(d + 8, 2),
                                          clock_glyphs[n], cov };
     return 0;
+}
+
+const struct text_face *lockscreen_face(int n)
+{
+    if (n < 0 || n > K86_CLOCK_FONTS + 1 || load_clock_face(n))
+        return 0;
+    return &clock_faces[n];
 }
 
 /* The clock's face, or the heading style's if it couldn't be read. */

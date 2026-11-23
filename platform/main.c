@@ -23,6 +23,7 @@
 #include "kernel/input.h"
 #include "kernel/lkx.h"
 #include "kernel/lockscreen.h"
+#include "kernel/setup.h"
 #include "kernel/machine.h"
 #include "kernel/printk.h"
 #include "kernel/screen.h"
@@ -42,6 +43,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+#define SETUP_FLAG "/extras/lkx-setup"
+
+void plat_setup_finished(void)
+{
+    unlink(SETUP_FLAG);
+}
 
 extern const uint8_t vga_font_8x16[4096];      /* build-linux/gen/vgafont.c */
 #ifdef LKX_SELFTEST_GFX
@@ -152,6 +161,8 @@ static int sleep_ms(int busy)
 {
     if (busy || (desktop_busy() && !screensaver_active()))
         return 1;
+    if (setup_active())
+        return 12;                          /* the setup's animation */
     uint32_t hz = plat_wake_hz();
     if (hz)
         return (int)(1000 / hz);
@@ -163,6 +174,7 @@ void idle_step(int busy)
     struct key_event keys[8];
     struct mouse_event moves[16];
     desktop_tick();
+    setup_tick();
     lockscreen_tick();
     screensaver_poll();
     net_poll();
@@ -180,6 +192,18 @@ void idle_step(int busy)
     }
     if ((nk > 0 || nm > 0) && screensaver_input())
         return;
+    if (setup_active()) {                   /* the first-run setup has the whole screen */
+        for (int i = 0; i < nk / (int)sizeof(keys[0]); i++)
+            setup_key(keys[i].key, keys[i].pressed);
+        for (int i = 0; i < nm / (int)sizeof(moves[0]); i++) {
+            move_to(&moves[i]);
+            in.buttons = moves[i].buttons;
+            setup_pointer(in.x, in.y, moves[i].buttons);
+        }
+        if (!setup_active() && (in.buttons & MOUSE_LEFT))
+            in.swallow = 1;
+        return;
+    }
     if (lockscreen_active()) {
         locked_input(keys, nk > 0 ? nk / (int)sizeof(keys[0]) : 0, moves, nm > 0 ? nm / (int)sizeof(moves[0]) : 0);
         /* The last PIN digit unlocks on touch-down: the finger's still on the glass, and the
@@ -368,6 +392,10 @@ int main(int argc, char **argv)
     log_pointer(in.x, in.y, in.buttons, 1);
 #ifndef LKX_SELFTEST_GFX
     desktop_start();
+    /* The first-run setup: on the phone when /extras/lkx-setup exists (made by a fresh install, or by hand),
+     * on the PC with LKX_SETUP=1. */
+    if (getenv("LKX_SETUP") || access(SETUP_FLAG, F_OK) == 0)
+        setup_start();
 #endif
     ready = 1;
     for (;;)

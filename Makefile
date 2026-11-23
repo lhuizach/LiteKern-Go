@@ -43,7 +43,7 @@ WALLPAPER_THUMBS := $(patsubst assets/wallpapers/%.png,$(BUILD)/gen/wallpapers/%
 
 # The lock screen's, drawn large and shrunk to fit, so a stretched clock stays sharp
 # (fonts/clock.lkxf is the home screen's).
-CLOCK_FONTS := hd-bold hd-light hd-thin hd-condensed hd-mono hd-serif hd-slim
+CLOCK_FONTS := hd-bold hd-light hd-thin hd-condensed hd-mono hd-serif hd-slim hello
 
 # Apps: each folder in apps/ holds kerns.json and C sources. Their programs are
 # built by platform/Makefile; the ramdisk carries the manifests, which is how
