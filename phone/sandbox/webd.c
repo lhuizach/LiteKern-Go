@@ -52,6 +52,9 @@ static unsigned char *last;                 /* --shot mode: newest frame */
 static unsigned frames;
 static const char *shot;
 static GMainLoop *loop;
+static gint64 last_scroll_us;               /* when the last scroll command came (see command()) */
+static char *start_url;                     /* loaded once the ad filter is in (or has failed) */
+static int started;
 static int client = -1;
 static char inbuf[4096];
 static size_t inlen;
@@ -144,13 +147,21 @@ static void command(char *line)
         g_timeout_add(200, check_editable, NULL);
     } else if (sscanf(line, "scroll %d %d %d", &x, &y, &dy) == 3) {
         /* WPE's wheel events move the page a fixed 40 px a notch whatever the value, too coarse for a finger
-         * following the page, so a small script moves the nearest scrollable thing under the finger (or the page) */
-        char js[600];
+         * following the page, so a small script moves the nearest scrollable thing under the finger (or the page).
+         * The thing is looked up only when a drag starts (more than 250 ms since the last scroll) and kept in
+         * window.__lkxT after that: walking the page with getComputedStyle on every move was slow on the A53. */
+        gint64 now = g_get_monotonic_time();
+        int fresh = now - last_scroll_us > 250000;
+        last_scroll_us = now;
+        char js[900];
         snprintf(js, sizeof(js),
-                 "(function(x,y,dy){var e=document.elementFromPoint(x,y);"
+                 "(function(x,y,dy,f){var t=window.__lkxT;"
+                 "if(f||t===undefined||(t&&!t.isConnected)){t=null;var e=document.elementFromPoint(x,y);"
                  "while(e&&e!==document.body&&e!==document.documentElement){var s=getComputedStyle(e);"
-                 "if(/(auto|scroll)/.test(s.overflowY)&&e.scrollHeight>e.clientHeight){var b=e.scrollTop;e.scrollTop+=dy;if(e.scrollTop!==b)return;}"
-                 "e=e.parentElement;}window.scrollBy(0,dy);})(%f,%f,%f)", x / zoom, y / zoom, dy / zoom);   /* the page's own pixels */
+                 "if(/(auto|scroll)/.test(s.overflowY)&&e.scrollHeight>e.clientHeight){t=e;break;}"
+                 "e=e.parentElement;}window.__lkxT=t;}"
+                 "if(t){var b=t.scrollTop;t.scrollTop+=dy;if(t.scrollTop!==b)return;}"
+                 "window.scrollBy(0,dy);})(%f,%f,%f,%d)", x / zoom, y / zoom, dy / zoom, fresh);   /* the page's own pixels */
         webkit_web_view_evaluate_javascript(view, js, -1, NULL, NULL, NULL, NULL, NULL);
     } else if (sscanf(line, "key %i %u", &sym, &down) == 2) key(sym, (int)down);
 }
@@ -247,6 +258,61 @@ static gboolean finish(gpointer d)
     return FALSE;
 }
 
+/* ---- ad and tracker blocking -----------------------------------------------------------------
+ * Most of a page's JavaScript on a slow CPU is ads and trackers. WebKit's content filter blocks requests whose
+ * address contains one of these names, before they are fetched. Kept short and to well-known ad/tracking hosts. */
+static const char *const blocked[] = {
+    "doubleclick.net", "googlesyndication.com", "googleadservices.com", "googletagservices.com",
+    "googletagmanager.com", "google-analytics.com", "adservice.google.", "2mdn.net", "facebook.net/en_US/fbevents",
+    "scorecardresearch.com", "quantserve.com", "taboola.com", "outbrain.com", "criteo.com", "criteo.net",
+    "adnxs.com", "amazon-adsystem.com", "hotjar.com", "moatads.com", "adsrvr.org", "rubiconproject.com",
+    "pubmatic.com", "openx.net", "casalemedia.com", "mathtag.com", "bluekai.com", "krxd.net", "chartbeat.com",
+    "yieldmo.com", "adform.net", "smartadserver.com","zedo.com", "serving-sys.com",
+};
+
+static gboolean begin_load(gpointer d)
+{
+    (void)d;
+    if (started) return G_SOURCE_REMOVE;
+    started = 1;
+    if (start_url) webkit_web_view_load_uri(view, start_url);
+    return G_SOURCE_REMOVE;
+}
+
+static void filter_saved(GObject *o, GAsyncResult *res, gpointer d)
+{
+    (void)d;
+    GError *err = NULL;
+    WebKitUserContentFilter *f = webkit_user_content_filter_store_save_finish(WEBKIT_USER_CONTENT_FILTER_STORE(o), res, &err);
+    if (f) {
+        webkit_user_content_manager_add_filter(webkit_web_view_get_user_content_manager(view), f);
+        webkit_user_content_filter_unref(f);
+        fprintf(stderr, "lkx-webd: ad filter on (%d hosts)\n", (int)(sizeof(blocked) / sizeof(blocked[0])));
+    } else {
+        fprintf(stderr, "lkx-webd: ad filter failed: %s\n", err ? err->message : "?");
+    }
+    if (err) g_error_free(err);
+    begin_load(NULL);
+}
+
+static void install_filter(void)
+{
+    GString *js = g_string_new("[");
+    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
+        if (i) g_string_append_c(js, ',');
+        g_string_append(js, "{\"trigger\":{\"url-filter\":\"");
+        for (const char *c = blocked[i]; *c; c++) {
+            if (*c == '.') g_string_append(js, "\\\\.");      /* a dot in the regular expression, in JSON */
+            else g_string_append_c(js, *c);
+        }
+        g_string_append(js, "\"},\"action\":{\"type\":\"block\"}}");
+    }
+    g_string_append_c(js, ']');
+    WebKitUserContentFilterStore *store = webkit_user_content_filter_store_new("/root/.cache/lkx-filters");
+    webkit_user_content_filter_store_save(store, "ads", g_string_free_to_bytes(js), NULL, filter_saved, NULL);
+    g_timeout_add_seconds(5, begin_load, NULL);               /* never wait longer than this for it */
+}
+
 static int listen_socket(void)
 {
     int s = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -306,6 +372,12 @@ int main(int argc, char **argv)
         if (!ua) ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1";
     }
     if (ua) webkit_settings_set_user_agent(webkit_web_view_get_settings(view), ua);
+    /* Less work for the A53: no WebGL, no smooth-scroll animation (our drag already moves the page in small
+     * steps), and no video starting by itself. */
+    WebKitSettings *st = webkit_web_view_get_settings(view);
+    webkit_settings_set_enable_webgl(st, FALSE);
+    webkit_settings_set_enable_smooth_scrolling(st, FALSE);
+    webkit_settings_set_media_playback_requires_user_gesture(st, TRUE);
     g_signal_connect(view, "load-changed", G_CALLBACK(on_load), NULL);
     g_signal_connect(view, "load-failed", G_CALLBACK(on_load_failed), NULL);
     g_signal_connect(view, "notify::title", G_CALLBACK(on_title), NULL);
@@ -320,7 +392,8 @@ int main(int argc, char **argv)
     } else {
         g_timeout_add_seconds((guint)wait_s, finish, NULL);
     }
-    if (url) webkit_web_view_load_uri(view, url);
+    start_url = url ? g_strdup(url) : NULL;
+    install_filter();                       /* the first page loads when the filter is in, or after 5 s */
     g_main_loop_run(loop);
     unlink(SOCK_FILE);
     _exit(0);                               /* the web processes go with us: nothing else holds the caller's pipes */

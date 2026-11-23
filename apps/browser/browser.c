@@ -325,6 +325,31 @@ static void redraw(void)
     k86_present(0, 0, canvas.w, canvas.h);
 }
 
+/* A new picture from the engine and nothing else changed: copy and show only the page area. */
+static void redraw_view(void)
+{
+    draw_view();
+    k86_present(0, BAR, canvas.w, view_h());
+}
+
+/* Finger moves are sent to the engine in batches (at most one every SCROLL_MS, the distance added up): one
+ * script run and one repaint per move event was more than the phone's CPU could keep up with. */
+#define SCROLL_MS 45
+static int pend_dy, pend_x, pend_y;
+static uint32_t scroll_sent_ms;
+
+static void flush_scroll(int force)
+{
+    if (!pend_dy || sock < 0)
+        return;
+    uint32_t now = k86_uptime_ms();
+    if (!force && now - scroll_sent_ms < SCROLL_MS)
+        return;
+    say("scroll %d %d %d", pend_x, pend_y, pend_dy);
+    pend_dy = 0;
+    scroll_sent_ms = now;
+}
+
 /* ---- input --------------------------------------------------------------------------------- */
 
 static uint32_t keysym(const struct key_event *k)
@@ -374,7 +399,8 @@ static void press_button(int i)
     else if (i == 3) say("load %s", HOME_URL);
 }
 
-static void on_pointer(const struct k86_event *ev)
+/* Returns 0 when the move only scrolled the page (nothing of ours to redraw). */
+static int on_pointer(const struct k86_event *ev)
 {
     int down = ev->buttons & 1, changed = ev->changed & 1;
     int x = ev->x, y = ev->y;
@@ -396,15 +422,21 @@ static void on_pointer(const struct k86_event *ev)
         if (!dragged && (abs(y - sy) > DRAG_SLOP || abs(x - sx) > DRAG_SLOP))
             dragged = 1;
         if (dragged && y != last_y) {
-            say("scroll %d %d %d", x, y - BAR, last_y - y);
+            pend_dy += last_y - y;
+            pend_x = x;
+            pend_y = y - BAR;
             last_y = y;
+            flush_scroll(0);
         }
+        return 0;
     } else if (!down && changed && ptr_down) {      /* finger up */
+        flush_scroll(1);
         if (ptr_in_view && !dragged && sock >= 0) say("click %d %d", x, y - BAR);
         if (btn_down >= 0 && y >= canvas.h - BAR && x * NBTN / canvas.w == btn_down)
             press_button(btn_down);
         ptr_down = 0; btn_down = -1;
     }
+    return 1;
 }
 
 /* ---- main ---------------------------------------------------------------------------------- */
@@ -420,7 +452,8 @@ static void set_timer(void)
 
 static void tick(void)
 {
-    int changed = 0;
+    int changed = 0, frame_new = 0;
+    flush_scroll(0);
     if (engine == ENGINE_STARTING) {
         if (sock < 0 && try_connect() == 0)
             changed = 1;
@@ -436,12 +469,15 @@ static void tick(void)
         if (seq != seen_seq) {
             seen_seq = seq;
             got_frame = 1;
-            changed = 1;
+            frame_new = 1;
         }
     }
-    if (changed) {
+    if (changed || frame_new) {
         last_change_ms = k86_uptime_ms();
-        redraw();
+        if (changed)
+            redraw();
+        else
+            redraw_view();
     }
 }
 
@@ -463,9 +499,9 @@ int main(void)
             break;
         switch (ev.type) {
         case K86_EVENT_POINTER:
-            on_pointer(&ev);
+            if (on_pointer(&ev))
+                redraw();
             last_change_ms = k86_uptime_ms();
-            redraw();
             break;
         case K86_EVENT_KEY:
             on_key(&ev.key);
