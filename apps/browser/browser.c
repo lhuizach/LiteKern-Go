@@ -132,10 +132,29 @@ static int try_connect(void)
     return 0;
 }
 
+/* How big the engine draws, as a percent of the view. WebKit's cost goes with the pixels it paints (on the
+ * phone: 25 fps at 100, 41 at 75, 80 at 50 while scrolling), and the app enlarges the picture, which is cheap.
+ * 75 by default; a number from 40 to 100 in /extras/web-scale changes it (takes effect when the engine starts). */
+static int render_pct = 75;
+
+static void load_render_pct(void)
+{
+    FILE *f = fopen("/extras/web-scale", "r");
+    int v;
+    if (f) {
+        if (fscanf(f, "%d", &v) == 1 && v >= 40 && v <= 100)
+            render_pct = v;
+        fclose(f);
+    }
+}
+
 static void engine_spawn(void)
 {
-    char size[24];
-    snprintf(size, sizeof(size), "%dx%d", canvas.w, view_h());
+    char size[24], zoomarg[16], vscalearg[16];
+    load_render_pct();
+    snprintf(size, sizeof(size), "%dx%d", (canvas.w * render_pct / 100) & ~1, (view_h() * render_pct / 100) & ~1);
+    snprintf(zoomarg, sizeof(zoomarg), "%.3f", 2.0 * render_pct / 100);
+    snprintf(vscalearg, sizeof(vscalearg), "%.3f", render_pct / 100.0);
     mkdir("/extras/alpine/run", 0755);
     mkdir("/extras/alpine/run/u", 0700);
     unlink(SOCK_FILE);
@@ -149,7 +168,8 @@ static void engine_spawn(void)
         if (out >= 0) { dup2(out, 1); dup2(out, 2); }
         for (int fd = 3; fd < 64; fd++) close(fd);
         execl(ENTER, ENTER, "env", "XDG_RUNTIME_DIR=/run/u", "HOME=/root", "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1",
-              "LIBGL_ALWAYS_SOFTWARE=1", "/usr/local/bin/lkx-webd", "--serve", "--size", size, HOME_URL, (char *)NULL);
+              "LIBGL_ALWAYS_SOFTWARE=1", "/usr/local/bin/lkx-webd", "--serve", "--size", size,
+              "--zoom", zoomarg, "--vscale", vscalearg, HOME_URL, (char *)NULL);
         _exit(127);
     }
     webd_pid = p;
@@ -312,10 +332,40 @@ static void draw_view(void)
         return;
     }
     const uint32_t *src = (const uint32_t *)(frame + HEADER_BYTES);
-    int w = (int)frame_w < canvas.w ? (int)frame_w : canvas.w;
-    int h = (int)frame_h < view_h() ? (int)frame_h : view_h();
-    for (int y = 0; y < h; y++)
-        memcpy(canvas.px + (size_t)(BAR + y) * canvas.stride, src + (size_t)y * frame_w, (size_t)w * 4);
+    int dw = canvas.w, dh = view_h();
+    if ((int)frame_w == dw) {           /* full size: straight copy */
+        int h = (int)frame_h < dh ? (int)frame_h : dh;
+        for (int y = 0; y < h; y++)
+            memcpy(canvas.px + (size_t)(BAR + y) * canvas.stride, src + (size_t)y * frame_w, (size_t)dw * 4);
+        return;
+    }
+    /* A smaller picture (render_pct): enlarged to the view, nearest pixel. A column map is made once, a row that
+     * maps to the same source row as the one above is a copy of it. */
+    static uint16_t xmap[2048];
+    static int map_dw, map_fw;
+    if (dw > 2048 || frame_w == 0 || frame_h == 0)
+        return;
+    if (map_dw != dw || map_fw != (int)frame_w) {
+        for (int x = 0; x < dw; x++)
+            xmap[x] = (uint16_t)((uint32_t)x * frame_w / (uint32_t)dw);
+        map_dw = dw;
+        map_fw = (int)frame_w;
+    }
+    int prev_sy = -1;
+    uint32_t *prev = NULL;
+    for (int y = 0; y < dh; y++) {
+        int sy = (int)((uint32_t)y * frame_h / (uint32_t)dh);
+        uint32_t *dst = (uint32_t *)(canvas.px + (size_t)(BAR + y) * canvas.stride);
+        if (sy == prev_sy && prev) {
+            memcpy(dst, prev, (size_t)dw * 4);
+        } else {
+            const uint32_t *row = src + (size_t)sy * frame_w;
+            for (int x = 0; x < dw; x++)
+                dst[x] = row[xmap[x]];
+        }
+        prev_sy = sy;
+        prev = dst;
+    }
 }
 
 static void redraw(void)

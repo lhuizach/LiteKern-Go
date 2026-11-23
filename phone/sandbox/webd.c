@@ -45,7 +45,8 @@ static struct wpe_view_backend_exportable_fdo *exportable;
 static struct wpe_view_backend *vb;
 static WebKitWebView *view;
 static int W = 720, H = 1032;
-static double zoom = 1.0;                   /* the page's zoom: 2 = a 360 px wide page on the 720 px picture */
+static double vscale = 1.0;                 /* picture pixels per app pixel: the app shows a smaller picture enlarged */
+static double zoom = 1.0;                  /* the page's zoom: 2 = a 360 px wide page on the 720 px picture */
 static unsigned char *shm;                  /* the mapped FRAME_FILE */
 static struct frame_header *fh;
 static unsigned char *last;                 /* --shot mode: newest frame */
@@ -141,6 +142,7 @@ static void command(char *line)
     else if (!strcmp(line, "stop")) webkit_web_view_stop_loading(view);
     else if (!strcmp(line, "quit")) g_main_loop_quit(loop);
     else if (sscanf(line, "click %d %d", &x, &y) == 2) {
+        x = (int)(x * vscale); y = (int)(y * vscale);      /* the app's pixels to the picture's */
         pointer(wpe_input_pointer_event_type_motion, x, y, 0, 0);
         pointer(wpe_input_pointer_event_type_button, x, y, 1, 1);
         pointer(wpe_input_pointer_event_type_button, x, y, 1, 0);
@@ -161,7 +163,7 @@ static void command(char *line)
                  "if(/(auto|scroll)/.test(s.overflowY)&&e.scrollHeight>e.clientHeight){t=e;break;}"
                  "e=e.parentElement;}window.__lkxT=t;}"
                  "if(t){var b=t.scrollTop;t.scrollTop+=dy;if(t.scrollTop!==b)return;}"
-                 "window.scrollBy(0,dy);})(%f,%f,%f,%d)", x / zoom, y / zoom, dy / zoom, fresh);   /* the page's own pixels */
+                 "window.scrollBy(0,dy);})(%f,%f,%f,%d)", x * vscale / zoom, y * vscale / zoom, dy * vscale / zoom, fresh);   /* the page's own pixels */
         webkit_web_view_evaluate_javascript(view, js, -1, NULL, NULL, NULL, NULL, NULL);
     } else if (sscanf(line, "key %i %u", &sym, &down) == 2) key(sym, (int)down);
 }
@@ -313,6 +315,33 @@ static void install_filter(void)
     g_timeout_add_seconds(5, begin_load, NULL);               /* never wait longer than this for it */
 }
 
+/* ---- --bench: how many frames a second while the page scrolls (10 s of 20 ms steps, no finger needed) ---- */
+static int bench, bench_i;
+static gint64 bench_t0;
+static unsigned bench_f0;
+
+static gboolean bench_step(gpointer d)
+{
+    (void)d;
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "scroll 360 400 %d", (bench_i / 80) % 2 ? -40 : 40);
+    command(cmd);
+    if (++bench_i < 500) return G_SOURCE_CONTINUE;
+    double s = (g_get_monotonic_time() - bench_t0) / 1e6;
+    fprintf(stderr, "lkx-webd: bench: %u frames in %.1f s = %.1f fps\n", frames - bench_f0, s, (frames - bench_f0) / s);
+    g_main_loop_quit(loop);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean bench_start(gpointer d)
+{
+    (void)d;
+    bench_t0 = g_get_monotonic_time();
+    bench_f0 = frames;
+    g_timeout_add(20, bench_step, NULL);
+    return G_SOURCE_REMOVE;
+}
+
 static int listen_socket(void)
 {
     int s = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -342,6 +371,7 @@ int main(int argc, char **argv)
     int wait_s = 8, serve = 0;
     const char *ua = NULL;
     int desktop = 0;
+    double zoom_arg = 0;
     const char *url = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
@@ -350,6 +380,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--serve")) serve = 1;
         else if (!strcmp(argv[i], "--ua") && i + 1 < argc) ua = argv[++i];
         else if (!strcmp(argv[i], "--desktop")) desktop = 1;
+        else if (!strcmp(argv[i], "--bench")) bench = 1;
+        else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_arg = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--vscale") && i + 1 < argc) vscale = atof(argv[++i]);
         else url = argv[i];
     }
     if (!serve && !url) { fprintf(stderr, "usage: lkx-webd --serve [--size WxH] [URL] | [--wait S] --shot F.ppm URL\n"); return 2; }
@@ -371,6 +404,7 @@ int main(int argc, char **argv)
         webkit_web_view_set_zoom_level(view, zoom);
         if (!ua) ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1";
     }
+    if (zoom_arg > 0) { zoom = zoom_arg; webkit_web_view_set_zoom_level(view, zoom); }
     if (ua) webkit_settings_set_user_agent(webkit_web_view_get_settings(view), ua);
     /* Less work for the A53: no WebGL, no smooth-scroll animation (our drag already moves the page in small
      * steps), and no video starting by itself. */
@@ -390,7 +424,7 @@ int main(int argc, char **argv)
         g_unix_fd_add(s, G_IO_IN, on_listener, NULL);
         fprintf(stderr, "lkx-webd: serving %dx%d on %s\n", W, H, SOCK_FILE);
     } else {
-        g_timeout_add_seconds((guint)wait_s, finish, NULL);
+        g_timeout_add_seconds((guint)wait_s, bench ? bench_start : finish, NULL);
     }
     start_url = url ? g_strdup(url) : NULL;
     install_filter();                       /* the first page loads when the filter is in, or after 5 s */
