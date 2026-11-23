@@ -1129,8 +1129,9 @@ static void update(int dt)
      * brake is hard; never below the crawl */
     if (braking)
         v -= BRAKE_DECEL * dt / 1000;
-    else {                                      /* about 134 units/s per second at 30 km/h (2.2 km/h a second), less as it goes faster */
-        v_rem += (1100 - 700 * v / V_MAX) * 611 / 5 * dt;      /* in millionths of a unit, so that nothing is lost to rounding */
+    else {                                      /* a normal car: about 11.8 km/h a second from rest, less as it goes faster, so
+                                                 * 30 to 100 km/h takes about 7 s and 100 to 200 about 13 s */
+        v_rem += (1180 - 649 * v / V_MAX) * 611 * dt;           /* in millionths of a unit, so that nothing is lost to rounding */
         v += v_rem / 1000000;
         v_rem %= 1000000;
     }
