@@ -56,6 +56,7 @@ struct gl_scene {
     int32_t ncars, player_vis;
     uint32_t player_col;
     int32_t player_lean;                    /* -40..40, as the game has it */
+    int32_t env;                            /* the place: 0 desert, 1 sunset, 2 night, 3 snow, 4 forest */
     struct gl_car cars[MAX_CARS];
 };
 struct scene_f { float xp, zp, scroll, curve, speed, shake_x, shake_y; int ncars, player_vis; uint32_t player_col; float player_lean; const struct gl_car *cars; };
@@ -249,6 +250,14 @@ static struct mesh build_rock(void)
     blob(0.18f, 0.42f, -0.06f, 0.3f, 0xb28350u, 0.6f);
     return finish_mesh();
 }
+static struct mesh build_tree(void)
+{
+    box(-0.07f, 0, -0.07f, 0.07f, 0.30f, 0.07f, 0x5a3d26u, 0);
+    box(-0.42f, 0.22f, -0.42f, 0.42f, 0.52f, 0.42f, 0x2f6b3au, 0);
+    box(-0.32f, 0.50f, -0.32f, 0.32f, 0.78f, 0.32f, 0x347a40u, 0);
+    box(-0.20f, 0.76f, -0.20f, 0.20f, 1.05f, 0.20f, 0x3a8a47u, 0);
+    return finish_mesh();
+}
 static struct mesh build_cactus(void)
 {
     box(-0.12f, 0, -0.12f, 0.12f, 1.0f, 0.12f, 0x3f8a4au, 0);
@@ -306,8 +315,8 @@ static GLuint program(const char *vs, const char *fs)
 /* The road bends: a point `u` units beyond the player moves sideways by bendk * u * u (the game's bend()). */
 #define BEND "uniform float u_bendk; uniform float u_zp;\n" \
              "vec3 bend(vec3 p){ float u = max(p.z - u_zp, 0.0); p.x += u_bendk * u * u; return p; }\n"
-#define HAZE "const vec3 HAZE = vec3(0.92, 0.85, 0.70);\n" \
-             "vec3 fog(vec3 c, float d){ float f = clamp((d - 14000.0) / 50000.0, 0.0, 1.0); return mix(c, HAZE, f * f * (3.0 - 2.0 * f)); }\n" \
+#define HAZE "uniform vec3 u_haze;\n" \
+             "vec3 fog(vec3 c, float d){ float f = clamp((d - 14000.0) / 50000.0, 0.0, 1.0); return mix(c, u_haze, f * f * (3.0 - 2.0 * f)); }\n" \
              "vec3 srgb(vec3 c){ return c; }\n"
 
 /* instanced things: cars and scenery */
@@ -329,10 +338,11 @@ static const char *obj_vs = HEAD BEND
     "}\n";
 static const char *obj_fs = HEAD HAZE
     "in vec3 v_nrm; in vec3 v_col; in float v_mode; in float v_dist; out vec4 o;\n"
+    "uniform float u_light; uniform vec3 u_tint;\n"
     "void main(){\n"
     "  vec3 n = normalize(v_nrm), L = normalize(vec3(-0.45, 0.8, -0.35));\n"
     "  float d = max(dot(n, L), 0.0), sky = 0.5 + 0.5 * n.y;\n"
-    "  vec3 c = v_mode > 1.5 ? v_col * 1.15 : v_col * (0.38 + 0.30 * sky + 0.62 * d);\n"
+    "  vec3 c = v_mode > 1.5 ? v_col * 1.15 : v_col * u_tint * (0.38 + 0.30 * sky + 0.62 * d) * u_light;\n"
     "  o = vec4(fog(c, v_dist).bgr, 1.0);\n"
     "}\n";
 
@@ -351,7 +361,7 @@ static const char *ground_vs = HEAD BEND
     "out vec2 v_xz; out float v_dist;\n"
     "void main(){ v_xz = a_xz; vec3 p = bend(vec3(a_xz.x, 0.0, a_xz.y)); gl_Position = u_vp * vec4(p, 1.0); v_dist = gl_Position.w; }\n";
 static const char *ground_fs = HEAD HAZE
-    "uniform float u_scroll;\n"
+    "uniform float u_scroll; uniform vec3 u_sand1, u_sand2, u_asph; uniform float u_light;\n"
     "in vec2 v_xz; in float v_dist; out vec4 o;\n"
     "float band(float d, float hw){ float fw = fwidth(d) + 0.0001; return clamp((hw - abs(d)) / fw + 0.5, 0.0, 1.0); }\n"
     "float stripe(float g, float period, float duty){ float t = mod(g, period) / period; float fw = fwidth(g) / period + 0.0001;\n"
@@ -359,11 +369,11 @@ static const char *ground_fs = HEAD HAZE
     "void main(){\n"
     "  float x = v_xz.x, g = v_xz.y + u_scroll;\n"
     "  float odd = floor(mod(g, 1024.0) / 512.0);\n"
-    "  vec3 sand = mix(vec3(0.863, 0.749, 0.502), vec3(0.827, 0.710, 0.455), odd);\n"
-    "  vec3 asph = mix(vec3(0.302, 0.314, 0.349), vec3(0.278, 0.290, 0.325), odd);\n"
+    "  vec3 sand = mix(u_sand1, u_sand2, odd);\n"
+    "  vec3 asph = mix(u_asph, u_asph * 0.92, odd);\n"
     "  float road = band(x - 0.0, 1000.0) ;\n"
     "  vec3 c = mix(sand, asph, road);\n"
-    "  vec3 line = vec3(0.945, 0.945, 0.918);\n"
+    "  vec3 line = vec3(0.945, 0.945, 0.918) * (0.5 + 0.5 * u_light);\n"
     "  float l = band(abs(x) - 910.0, 20.0) + band(x, 14.0);\n"
     "  l += band(abs(x) - 500.0, 14.0) * stripe(g, 1024.0, 0.25);\n"
     "  c = mix(c, line, clamp(l, 0.0, 1.0) * road);\n"
@@ -374,10 +384,12 @@ static const char *ground_fs = HEAD HAZE
 static const char *sky_vs = HEAD
     "void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 1.0, 1.0); }\n";
 static const char *sky_fs = HEAD
-    "uniform float u_hz; uniform float u_h; out vec4 o;\n"
+    "uniform float u_hz; uniform float u_h; uniform vec3 u_top, u_hor; uniform float u_stars; out vec4 o;\n"
     "void main(){ float r = gl_FragCoord.y / u_h; float t = clamp(r / max(u_hz, 0.01), 0.0, 1.0);\n"
-    "  vec3 top = vec3(0.27, 0.58, 0.90), hor = vec3(0.92, 0.85, 0.70);\n"
-    "  o = vec4(mix(top, hor, pow(t, 1.6)).bgr, 1.0); }\n";
+    "  vec3 c = mix(u_top, u_hor, pow(t, 1.6));\n"
+    "  float st = step(0.9975, fract(sin(dot(floor(gl_FragCoord.xy / 2.0), vec2(12.9898, 78.233))) * 43758.5453));\n"
+    "  c += vec3(st * u_stars * (1.0 - t));\n"
+    "  o = vec4(c.bgr, 1.0); }\n";
 
 /* blob shadows under the cars */
 static const char *sh_vs = HEAD BEND
@@ -393,7 +405,7 @@ static const char *sh_fs = HEAD
 /* ---- the scene ----------------------------------------------------------------------------------- */
 
 static GLuint p_obj, p_rail, p_ground, p_sky, p_sh;
-static struct mesh m_car[4], m_bush, m_rock, m_cactus, m_rails;
+static struct mesh m_car[4], m_bush, m_rock, m_cactus, m_tree, m_rails;
 static GLuint ground_vao, ground_vbo, ground_n, inst_vbo, sh_vao, sh_vbo, empty_vao;
 static GLuint fbo_ms, rb_col, rb_depth, fbo_res, tex_res, rb_res_depth;
 static int ms_on;
@@ -444,6 +456,7 @@ static void gl_init_resources(void)
     m_bush = build_bush();
     m_rock = build_rock();
     m_cactus = build_cactus();
+    m_tree = build_tree();
     m_rails = build_rails();
     /* the ground: rows across the road, close together near the player and far apart far off */
     static float g[400 * 4 * 3 * 2];
@@ -524,8 +537,28 @@ static void make_targets(void)
     fprintf(stderr, "lkx-gld: %dx%d, %s\n", W, H, ms_on ? "multisampled" : "no antialiasing");
 }
 
+/* the places: colours as red, green, blue 0..1 (the shaders swap them for the screen) */
+struct env {
+    float haze[3], top[3], sand1[3], sand2[3], asph[3], light, stars, tint_bush[3], tint_rock[3], tint_big[3];
+    int tree;
+};
+static const struct env envs[5] = {
+    /* desert */ { { .92f, .85f, .70f }, { .27f, .58f, .90f }, { .863f, .749f, .502f }, { .827f, .710f, .455f }, { .302f, .314f, .349f }, 1.0f, 0,
+                   { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, 0 },
+    /* sunset */ { { 1.0f, .60f, .36f }, { .26f, .20f, .46f }, { .80f, .55f, .38f }, { .76f, .50f, .34f }, { .27f, .27f, .31f }, .85f, 0,
+                   { .95f, .75f, .6f }, { 1, .8f, .7f }, { 1, .8f, .7f }, 0 },
+    /* night */ { { .06f, .08f, .17f }, { .01f, .02f, .07f }, { .14f, .16f, .24f }, { .12f, .14f, .21f }, { .13f, .14f, .18f }, .42f, 1.0f,
+                   { .7f, .8f, 1 }, { .7f, .8f, 1 }, { .7f, .85f, 1 }, 0 },
+    /* snow */ { { .86f, .91f, .97f }, { .45f, .62f, .86f }, { .96f, .98f, 1.0f }, { .89f, .93f, .98f }, { .36f, .38f, .42f }, 1.0f, 0,
+                 { .85f, .95f, .95f }, { .85f, .9f, 1 }, { 1.15f, 1.2f, 1.25f }, 1 },
+    /* forest */ { { .78f, .88f, .85f }, { .25f, .55f, .85f }, { .30f, .55f, .22f }, { .27f, .50f, .20f }, { .30f, .31f, .34f }, 1.0f, 0,
+                   { .95f, 1.05f, .9f }, { .75f, .8f, .85f }, { 1, 1, 1 }, 1 },
+};
+static const struct env *cur_env = &envs[0];
+
 static void render(const struct gl_scene *in_scene)
 {
+    cur_env = &envs[(unsigned)in_scene->env < 5 ? in_scene->env : 0];
     struct scene_f fsc = { (float)in_scene->xp, (float)in_scene->zp, (float)in_scene->scroll, (float)in_scene->curve,
                            (float)in_scene->speed, (float)in_scene->shake_x, (float)in_scene->shake_y, in_scene->ncars,
                            in_scene->player_vis, in_scene->player_col, (float)in_scene->player_lean, in_scene->cars };
@@ -563,7 +596,7 @@ static void render(const struct gl_scene *in_scene)
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-#define SETUP(p) do { glUseProgram(p); glUniformMatrix4fv(glGetUniformLocation(p, "u_vp"), 1, GL_FALSE, vp);                       glUniform1f(glGetUniformLocation(p, "u_bendk"), bendk); glUniform1f(glGetUniformLocation(p, "u_zp"), sc->zp); } while (0)
+#define SETUP(p) do { glUseProgram(p); glUniformMatrix4fv(glGetUniformLocation(p, "u_vp"), 1, GL_FALSE, vp);                       glUniform1f(glGetUniformLocation(p, "u_bendk"), bendk); glUniform1f(glGetUniformLocation(p, "u_zp"), sc->zp);                       glUniform3fv(glGetUniformLocation(p, "u_haze"), 1, cur_env->haze); glUniform1f(glGetUniformLocation(p, "u_light"), cur_env->light);                       glUniform3f(glGetUniformLocation(p, "u_tint"), 1, 1, 1); } while (0)
 
     /* what is on the road: the cars (and the player), each kind in one instanced draw */
     static struct inst by_kind[4][MAX_CARS + 1], shadows[MAX_CARS + 1];
@@ -609,8 +642,12 @@ static void render(const struct gl_scene *in_scene)
     SETUP(p_obj);
     for (int k = 0; k < 4; k++)
         draw_instances(&m_car[k], by_kind[k], cnt[k]);
-    draw_instances(&m_cactus, sc_list[2], sn[2]);
+    GLint tint = glGetUniformLocation(p_obj, "u_tint");
+    glUniform3fv(tint, 1, cur_env->tint_big);
+    draw_instances(cur_env->tree ? &m_tree : &m_cactus, sc_list[2], sn[2]);
+    glUniform3fv(tint, 1, cur_env->tint_rock);
     draw_instances(&m_rock, sc_list[1], sn[1]);
+    glUniform3fv(tint, 1, cur_env->tint_bush);
     draw_instances(&m_bush, sc_list[0], sn[0]);
 
     SETUP(p_rail);
@@ -621,6 +658,9 @@ static void render(const struct gl_scene *in_scene)
 
     SETUP(p_ground);
     glUniform1f(glGetUniformLocation(p_ground, "u_scroll"), sc->scroll);
+    glUniform3fv(glGetUniformLocation(p_ground, "u_sand1"), 1, cur_env->sand1);
+    glUniform3fv(glGetUniformLocation(p_ground, "u_sand2"), 1, cur_env->sand2);
+    glUniform3fv(glGetUniformLocation(p_ground, "u_asph"), 1, cur_env->asph);
     glBindVertexArray(ground_vao);
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)ground_n);
 
@@ -638,6 +678,9 @@ static void render(const struct gl_scene *in_scene)
     glUseProgram(p_sky);                                /* only where nothing was drawn: above the horizon */
     glUniform1f(glGetUniformLocation(p_sky, "u_hz"), hzrow);
     glUniform1f(glGetUniformLocation(p_sky, "u_h"), (float)H);
+    glUniform3fv(glGetUniformLocation(p_sky, "u_top"), 1, cur_env->top);
+    glUniform3fv(glGetUniformLocation(p_sky, "u_hor"), 1, cur_env->haze);
+    glUniform1f(glGetUniformLocation(p_sky, "u_stars"), cur_env->stars);
     glBindVertexArray(empty_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glDepthMask(GL_TRUE);

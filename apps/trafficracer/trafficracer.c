@@ -73,21 +73,28 @@
 #define C_CARD      0x111a3cu
 #define C_CARD_EDGE 0x3d4c99u
 
-static const uint32_t skin_col[4] = { 0xe8384fu, 0x3b82f6u, 0xffa21fu, 0x35d07fu };
+#define SKINS 8
+#define ENVS 5
+static const uint32_t skin_col[SKINS] = { 0xe8384fu, 0x3b82f6u, 0xffa21fu, 0x35d07fu, 0xb06bffu, 0xf5f5f5u, 0x2b2f3au, 0xff6fb5u };
+static const char *const env_name[ENVS] = { "Desert", "Sunset", "Night", "Snow", "Forest" };
+/* a swatch for each place on its card: the sky, then the ground */
+static const uint32_t env_sky[ENVS] = { 0x4594e6u, 0x42337du, 0x03051cu, 0x739edeu, 0x408cd9u };
+static const uint32_t env_ground[ENVS] = { 0xdcbf80u, 0xcc8c61u, 0x24293du, 0xf5faffu, 0x4d8c38u };
 static const uint32_t traffic_col[8] = { 0xf2f2f4u, 0x2b2f3au, 0x8a94a6u, 0x2e7dd1u, 0xe3b21fu, 0x7e57c2u,
                                          0xe05a2au, 0x2fa36bu };
 /* body shapes: hatchback, saloon, van, lorry. Width and length along the road, in units */
 static const int car_w[4] = { 410, 420, 430, 460 };
 static const int car_h[4] = { 570, 640, 700, 960 };
 
-enum screen { S_MENU, S_PLAY, S_DYING, S_PAUSE, S_OVER };
-enum { B_NONE = -1, B_PLAY, B_SKIN0, B_SKIN1, B_SKIN2, B_SKIN3, B_SOUND, B_PAUSE, B_RESUME, B_RESTART, B_MENU,
-       B_AGAIN, B_FLIP, B_GFX, B_COUNT };
+enum screen { S_MENU, S_PLAY, S_DYING, S_PAUSE, S_OVER, S_GARAGE, S_PLACES, S_SETTINGS };
+enum { B_NONE = -1, B_PLAY, B_SKIN0, B_SKIN7 = B_SKIN0 + SKINS - 1, B_SOUND, B_PAUSE, B_RESUME, B_RESTART, B_MENU,
+       B_AGAIN, B_FLIP, B_GFX, B_GARAGE, B_PLACES, B_SETTINGS, B_BACK, B_ENV0, B_ENV4 = B_ENV0 + ENVS - 1, B_COUNT };
 
 struct save {
     uint32_t magic;
     uint32_t best;
     uint8_t sound, skin, flip, gfx;           /* flip: steering the other way round; gfx: 0 high, 1 low (smaller 3D picture) */
+    uint8_t env, pad[3];                      /* the place (env_name); older saves are 12 bytes, without these */
 };
 
 struct car {
@@ -336,8 +343,9 @@ static void load(void)
     sv.magic = SAVE_MAGIC;
     sv.sound = 1;
     vol = k86_home(home);
-    if (vol >= 0 && k86_read(vol, home, SAVE_FILE, &s, sizeof(s)) == (int)sizeof(s) && s.magic == SAVE_MAGIC &&
-        s.skin < 4)
+    memset(&s, 0, sizeof(s));
+    int n = vol >= 0 ? k86_read(vol, home, SAVE_FILE, &s, sizeof(s)) : -1;
+    if ((n == (int)sizeof(s) || n == 12) && s.magic == SAVE_MAGIC && s.skin < SKINS && s.env < ENVS)
         sv = s;
 }
 
@@ -641,6 +649,7 @@ struct gl_scene {
     int32_t xp, zp, scroll, curve, speed, shake_x, shake_y, time_ms, ncars, player_vis;
     uint32_t player_col;
     int32_t player_lean;
+    int32_t env;
     struct gl_car cars[GL_CARS];
 };
 
@@ -818,6 +827,7 @@ static void gl_send(int ox, int oy)
     sc.player_vis = screen != S_DYING || (now_ms - crash_since) / 90 % 2 == 0;
     sc.player_col = skin_col[sv.skin];
     sc.player_lean = player_lean();
+    sc.env = sv.env;
     for (int i = 0; i < CARS_MAX && sc.ncars < GL_CARS; i++)
         if (cars[i].used && cars[i].z > zp - 3500) {
             struct gl_car *c = &sc.cars[sc.ncars++];
@@ -991,15 +1001,31 @@ static void layout_buttons(void)
     if (screen == S_MENU) {
         int pw = imin(w - 160, 440), x = (w - pw) / 2, y = h * 47 / 100;
         btn[B_PLAY] = (struct gfx_rect){ x, y, pw, 112 };
-        y += 112 + 36;
-        int dot = 76, gap = (pw - 4 * dot) / 3;
-        for (int i = 0; i < 4; i++)
-            btn[B_SKIN0 + i] = (struct gfx_rect){ x + i * (dot + gap), y, dot, dot };
-        y += dot + 34;
+        y += 112 + 30;
         int rw = imin(w - 80, 700), rx = (w - rw) / 2, hw3 = (rw - 40) / 3;
-        btn[B_SOUND] = (struct gfx_rect){ rx, y, hw3, 84 };
-        btn[B_FLIP] = (struct gfx_rect){ rx + hw3 + 20, y, hw3, 84 };
-        btn[B_GFX] = (struct gfx_rect){ rx + 2 * (hw3 + 20), y, hw3, 84 };
+        btn[B_GARAGE] = (struct gfx_rect){ rx, y, hw3, 88 };
+        btn[B_PLACES] = (struct gfx_rect){ rx + hw3 + 20, y, hw3, 88 };
+        btn[B_SETTINGS] = (struct gfx_rect){ rx + 2 * (hw3 + 20), y, hw3, 88 };
+    } else if (screen == S_GARAGE || screen == S_PLACES) {
+        card_r = (struct gfx_rect){ 40, h - 290, w - 80, 262 };
+        int n = screen == S_GARAGE ? SKINS : ENVS, gap = 16, iw = (card_r.w - 60 - (n - 1) * gap) / n;
+        for (int i = 0; i < n; i++) {
+            if (screen == S_GARAGE) {
+                int d = imin(iw, 96);
+                btn[B_SKIN0 + i] = (struct gfx_rect){ card_r.x + 30 + i * (iw + gap) + (iw - d) / 2, card_r.y + 34, d, d };
+            } else {
+                btn[B_ENV0 + i] = (struct gfx_rect){ card_r.x + 30 + i * (iw + gap), card_r.y + 34, iw, 110 };
+            }
+        }
+        btn[B_BACK] = (struct gfx_rect){ card_r.x + (card_r.w - 300) / 2, card_r.y + 164, 300, 76 };
+    } else if (screen == S_SETTINGS) {
+        int cw = imin(w - 80, 560), ch = 600;
+        card_r = (struct gfx_rect){ (w - cw) / 2, (h - ch) / 2, cw, ch };
+        int bw = cw - 80, bh = 84, x = card_r.x + 40, y = card_r.y + 100;
+        btn[B_SOUND] = (struct gfx_rect){ x, y, bw, bh };
+        btn[B_FLIP] = (struct gfx_rect){ x, y + bh + 18, bw, bh };
+        btn[B_GFX] = (struct gfx_rect){ x, y + 2 * (bh + 18), bw, bh };
+        btn[B_BACK] = (struct gfx_rect){ x, y + 3 * (bh + 18) + 6, bw, bh };
     } else if (screen == S_PLAY) {
         btn[B_PAUSE] = (struct gfx_rect){ w - 12 - 96, 12, 96, 96 };
     } else if (screen == S_PAUSE) {
@@ -1096,13 +1122,18 @@ static void add_burst(int x, int y)
     }
 }
 
+static int is_menu(enum screen s)                /* the home screen and the screens off it */
+{
+    return s == S_MENU || s == S_GARAGE || s == S_PLACES || s == S_SETTINGS;
+}
+
 static void to_screen(enum screen s)
 {
     screen = s;
     pressed = B_NONE;
     g_on = 0;
     layout_buttons();
-    k86_timer_set(s == S_PLAY || s == S_DYING ? FRAME_MS : s == S_MENU ? 300 : 0);
+    k86_timer_set(s == S_PLAY || s == S_DYING ? FRAME_MS : is_menu(s) ? 300 : 0);
 }
 
 static void crash(void)
@@ -1309,29 +1340,69 @@ static void draw_card(const char *title)
     text_c(card_r.x + card_r.w / 2, card_r.y + 36, title, TEXT_HEADING, C_TEXT);
 }
 
-static void draw_menu(void)
+static void draw_menu_bg(void)
 {
-    char num[16], line[32] = "Best  ";
     demo_scene();
     draw_scene(0, 0);
+}
+
+static void draw_menu(void)
+{
+    char num[16], line[48] = "Best  ";
+    draw_menu_bg();
     int ty = canvas.h * 8 / 100;
     gfx_blend_round_rect(&canvas, 70, ty - 20, canvas.w - 140, 270, 32, 0x14100au, 150);
     text_shadow_c(canvas.w / 2, ty, "TRAFFIC", TEXT_LARGE, C_TEXT);
     text_shadow_c(canvas.w / 2, ty + 70, "RACER", TEXT_LARGE, C_GOLD);
     num_text((int)sv.best, num);
     cat(line, num);
+    cat(line, "   -   ");
+    cat(line, env_name[sv.env]);
     text_shadow_c(canvas.w / 2, ty + 165, line, TEXT_BODY, C_TEXT);
     draw_button(B_PLAY, "Drive", 1);
-    for (int i = 0; i < 4; i++) {
+    draw_button(B_GARAGE, "Garage", 0);
+    draw_button(B_PLACES, "Places", 0);
+    draw_button(B_SETTINGS, "Settings", 0);
+    text_shadow_c(canvas.w / 2, btn[B_GARAGE].y + btn[B_GARAGE].h + 18, acc_ok ? "Tilt to steer, bottom half brakes" : "No tilt sensor: drag in the top half", TEXT_SMALL, C_TEXT);
+}
+
+static void draw_garage(void)
+{
+    draw_menu_bg();
+    box(card_r, 28, C_CARD, C_CARD_EDGE);
+    for (int i = 0; i < SKINS; i++) {
         struct gfx_rect r = btn[B_SKIN0 + i];
         int sel = i == sv.skin;
         gfx_fill_circle(&canvas, r.x + r.w / 2, r.y + r.h / 2, r.w / 2, sel ? C_TEXT : C_CARD_EDGE);
-        gfx_fill_circle(&canvas, r.x + r.w / 2, r.y + r.h / 2, r.w / 2 - 5, skin_col[i]);
+        gfx_fill_circle(&canvas, r.x + r.w / 2, r.y + r.h / 2, r.w / 2 - 6, skin_col[i]);
     }
+    draw_button(B_BACK, "Back", 0);
+}
+
+static void draw_places(void)
+{
+    draw_menu_bg();
+    box(card_r, 28, C_CARD, C_CARD_EDGE);
+    for (int i = 0; i < ENVS; i++) {
+        struct gfx_rect r = btn[B_ENV0 + i];
+        int sel = i == sv.env;
+        gfx_fill_round_rect(&canvas, r.x - 4, r.y - 4, r.w + 8, r.h + 8, 22, sel ? C_GOLD : C_CARD_EDGE);
+        gfx_fill_round_rect(&canvas, r.x, r.y, r.w, r.h / 2 + 12, 18, env_sky[i]);
+        gfx_fill_rect(&canvas, r.x, r.y + r.h / 2, r.w, r.h / 2 - 8, env_ground[i]);
+        gfx_fill_round_rect(&canvas, r.x, r.y + r.h - 22, r.w, 22, 12, env_ground[i]);
+        text_shadow_c(r.x + r.w / 2, r.y + r.h / 2 - text_height(TEXT_BOLD) / 2, env_name[i], TEXT_BOLD, 0xffffffu);
+    }
+    draw_button(B_BACK, "Back", 0);
+}
+
+static void draw_settings(void)
+{
+    draw_menu_bg();
+    draw_card("SETTINGS");
     draw_button(B_SOUND, sv.sound ? "Sound: on" : "Sound: off", 0);
-    draw_button(B_FLIP, sv.flip ? "Steer: flip" : "Steer: normal", 0);
+    draw_button(B_FLIP, sv.flip ? "Steering: flipped" : "Steering: normal", 0);
     draw_button(B_GFX, sv.gfx ? "Graphics: low" : "Graphics: high", 0);
-    text_shadow_c(canvas.w / 2, btn[B_SOUND].y + btn[B_SOUND].h + 16, acc_ok ? "Tilt to steer, bottom half brakes" : "No tilt sensor: drag in the top half", TEXT_SMALL, C_TEXT);
+    draw_button(B_BACK, "Back", 1);
 }
 
 static void draw_over(void)
@@ -1361,6 +1432,15 @@ static void redraw(void)
     switch (screen) {
     case S_MENU:
         draw_menu();
+        break;
+    case S_GARAGE:
+        draw_garage();
+        break;
+    case S_PLACES:
+        draw_places();
+        break;
+    case S_SETTINGS:
+        draw_settings();
         break;
     case S_PLAY:
         draw_scene(0, 0);
@@ -1397,7 +1477,7 @@ static void pause_game(void)
 static void frame(void)
 {
     now_ms = k86_uptime_ms();
-    if (screen == S_MENU) {                 /* waiting for the GPU renderer, and for the phone to be turned */
+    if (is_menu(screen)) {                  /* waiting for the GPU renderer, and for the phone to be turned */
         int changed = gl_check();
         if (!acc_ok && (int)now_ms - acc_tried_ms > 2000)
             acc_init();
@@ -1462,10 +1542,18 @@ static void press_action(int id)
         sound(520, 40, 780, 70);
         start_game();
         break;
-    case B_SKIN0: case B_SKIN1: case B_SKIN2: case B_SKIN3:
-        sv.skin = (uint8_t)(id - B_SKIN0);
-        save();
+    case B_GARAGE:
+        to_screen(S_GARAGE);
+        break;
+    case B_PLACES:
+        to_screen(S_PLACES);
+        break;
+    case B_SETTINGS:
+        to_screen(S_SETTINGS);
+        break;
+    case B_BACK:
         sound(400, 30, 0, 0);
+        to_screen(S_MENU);
         break;
     case B_SOUND:
         sv.sound = !sv.sound;
@@ -1495,6 +1583,15 @@ static void press_action(int id)
         to_screen(S_MENU);
         break;
     default:
+        if (id >= B_SKIN0 && id <= B_SKIN7) {
+            sv.skin = (uint8_t)(id - B_SKIN0);
+            save();
+            sound(400, 30, 0, 0);
+        } else if (id >= B_ENV0 && id <= B_ENV4) {
+            sv.env = (uint8_t)(id - B_ENV0);
+            save();
+            sound(400, 30, 0, 0);
+        }
         break;
     }
     redraw();
@@ -1582,6 +1679,8 @@ static void key_event(const struct k86_event *ev)
             press_action(B_RESUME);
         else if (screen == S_OVER)
             press_action(B_MENU);
+        else if (screen == S_GARAGE || screen == S_PLACES || screen == S_SETTINGS)
+            press_action(B_BACK);
         return;
     }
     if (screen == S_MENU && (k == KEY_ENTER || k == KEY_SPACE))
