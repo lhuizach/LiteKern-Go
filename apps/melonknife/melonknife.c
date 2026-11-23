@@ -3,8 +3,10 @@
  * harder, turns round and starts with knives already in it. Our own game with our own art, drawn in code.
  *
  * Whole numbers only (the apps have no floating point): angles are 1/100 of a degree, and sine and cosine come
- * from a table made at the start. To stay smooth on the phone the background (with its glow) and the melon's
- * still parts are drawn once into pictures of their own; a frame copies them, then draws what moves. */
+ * from a table made at the start. To stay smooth on the phone: the background (with its glow) and the melon's
+ * still parts are drawn once into pictures of their own; each frame copies the box the melon and knives move in
+ * and draws what moves (knives are filled four-sided shapes, quick, unlike thick lines); the score and the
+ * knives left are redrawn only when they change; and only the parts that changed are shown. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,14 +21,15 @@
 #define SAVE_FILE "melonknife.dat"
 #define SAVE_MAGIC 0x4d4b4e31u
 #define FRAME_MS 33
-#define MELON_R 190                     /* the melon's radius, px */
-#define SPR (2 * MELON_R + 56)          /* the melon's still picture: a square this big */
+#define MELON_R 170                     /* the melon's radius, px */
+#define SPR (2 * MELON_R + 48)          /* the melon's still picture: a square this big */
 #define MAX_STUCK 40
 #define PART_MAX 48
-#define HIT_DEG 800                     /* two knives closer than this (1/100 degree) hit each other */
-#define THROW_SPEED 3200                /* px a second */
-#define KNIFE_BLADE 124
-#define KNIFE_HANDLE 100
+#define HIT_DEG 880                     /* two knives closer than this (1/100 degree) hit each other */
+#define THROW_SPEED 2600                /* px a second */
+#define BLADE 104
+#define HANDLE 72
+#define BOX 350                         /* the box the melon and its knives move in: this far from its middle, each way */
 
 #define C_TEXT 0xffffffu
 #define C_DIM 0xaec4cau
@@ -59,7 +62,8 @@ static int sin_t[362], cos_t[362];      /* *1024, per degree */
 
 static enum screen screen = S_MENU;
 static uint32_t now_ms, last_frame, screen_at, rng_state;
-static int cx, cy, split_y;             /* the melon's middle; the picture is redrawn in two parts, split here */
+static int cx, cy;                      /* the melon's middle */
+static struct gfx_rect box;             /* what the melon, its knives and the juice are drawn in */
 static int level, score, left, in_level_ms;
 static int mel_ang;                     /* 1/100 degree */
 static int stuck[MAX_STUCK], nstuck;    /* each knife's angle on the melon, 1/100 degree (0 = right, 90 = down) */
@@ -67,11 +71,13 @@ static int flying, fly_y;               /* a knife on its way: where its tip is 
 static int fall_y, fall_x, fall_vx, fall_rot;   /* the knife that hit one: it drops */
 static struct particle parts[PART_MAX];
 static int pulse;                       /* the melon's bump when a knife lands, px */
-static int shake;                       /* the whole picture's shake, px */
-static int bottom_dirty = 1;
+static int shake;                       /* the melon's shake, px */
+static int hud_dirty = 1, foot_dirty = 1;
 static struct gfx_rect btn_play, btn_menu;
 static int pressed;                     /* 1 play, 2 menu */
 static int new_best;
+static uint32_t perf_sum;
+static int perf_n, perf_max;
 
 static int imin(int a, int b) { return a < b ? a : b; }
 static int imax(int a, int b) { return a > b ? a : b; }
@@ -150,6 +156,48 @@ static void save(void)
         k86_write(vol, home, SAVE_FILE, &sv, sizeof(sv));
 }
 
+/* ---- filled shapes ---- */
+
+/* A convex four-sided shape, filled by rows. */
+static void quad(const int *x, const int *y, uint32_t c)
+{
+    int ymin = y[0], ymax = y[0];
+    for (int i = 1; i < 4; i++) {
+        ymin = imin(ymin, y[i]);
+        ymax = imax(ymax, y[i]);
+    }
+    ymin = imax(ymin, 0);
+    ymax = imin(ymax, canvas.h - 1);
+    for (int yy = ymin; yy <= ymax; yy++) {
+        int xl = 1 << 30, xr = -(1 << 30);
+        for (int e = 0; e < 4; e++) {
+            int x0 = x[e], y0 = y[e], x1 = x[(e + 1) & 3], y1 = y[(e + 1) & 3];
+            if (y0 == y1 || yy < imin(y0, y1) || yy > imax(y0, y1))
+                continue;
+            int xi = x0 + (x1 - x0) * (yy - y0) / (y1 - y0);
+            xl = imin(xl, xi);
+            xr = imax(xr, xi);
+        }
+        xl = imax(xl, 0);
+        xr = imin(xr, canvas.w - 1);
+        uint32_t *row = canvas.px + (size_t)yy * canvas.stride;
+        for (int xx = xl; xx <= xr; xx++)
+            row[xx] = c;
+    }
+}
+
+/* A strip from (px, py) to (qx, qy), w0 half wide at the start and w1 at the end. */
+static void strip(int px, int py, int qx, int qy, int w0, int w1, uint32_t c)
+{
+    int dx = qx - px, dy = qy - py, len = 1;
+    while ((len + 1) * (len + 1) <= dx * dx + dy * dy)           /* the length, by the square root's way up */
+        len++;
+    int nx = -dy * 1024 / len, ny = dx * 1024 / len;               /* the sideways direction, *1024 */
+    int x[4] = { px + nx * w0 / 1024, qx + nx * w1 / 1024, qx - nx * w1 / 1024, px - nx * w0 / 1024 };
+    int y[4] = { py + ny * w0 / 1024, qy + ny * w1 / 1024, qy - ny * w1 / 1024, py - ny * w0 / 1024 };
+    quad(x, y, c);
+}
+
 /* ---- the pictures that are drawn once ---- */
 static void make_pictures(void)
 {
@@ -159,27 +207,21 @@ static void make_pictures(void)
     spr = (struct gfx_surface){ (uint32_t *)calloc((size_t)SPR * (size_t)SPR, 4), SPR, SPR, SPR };
     if (!bgpic.px || !spr.px)
         return;
-    for (int y = 0; y < canvas.h; y++)                                       /* a deep teal, darker at the foot */
-        gfx_fill_rect(&bgpic, 0, y, canvas.w, 1, lerp(0x1d4550u, 0x0a161au, y, canvas.h));
-    for (int i = 0; i < 30; i++)                                             /* a soft glow behind the melon */
-        gfx_fill_circle(&bgpic, cx, cy, MELON_R + 330 - i * 11, lerp(0x1f4a55u, 0x3a8a8cu, i, 30) & 0xfefefeu);
-    for (int y = 0; y < canvas.h; y++)                                       /* (the glow's rings, blended into the tone) */
-        for (int x = 0; x < canvas.w; x++) {
-            uint32_t g = lerp(0x1d4550u, 0x0a161au, y, canvas.h), p = bgpic.px[y * bgpic.stride + x];
-            bgpic.px[y * bgpic.stride + x] = lerp(g, p, 60, 100);
-        }
+    for (int y = 0; y < canvas.h; y++)                                       /* a deep teal, never black */
+        gfx_fill_rect(&bgpic, 0, y, canvas.w, 1, lerp(0x1f4d59u, 0x153944u, y, canvas.h));
+    for (int i = 0; i < 24; i++)                                             /* a soft glow behind the melon */
+        gfx_fill_circle(&bgpic, cx, cy, MELON_R + 300 - i * 12, lerp(0x214f5bu, 0x3b8789u, i, 24));
     /* the melon, still parts: its picture starts as the background behind it */
-    int ox = cx - SPR / 2, oy = cy - SPR / 2;
-    gfx_blit(&spr, 0, 0, &bgpic, ox, oy, SPR, SPR);
+    gfx_blit(&spr, 0, 0, &bgpic, cx - SPR / 2, cy - SPR / 2, SPR, SPR);
     int m = SPR / 2, r = MELON_R;
-    gfx_blend_round_rect(&spr, m - r + 4, m - r + 16, 2 * r, 2 * r, r, 0x050c0eu, 150);          /* its shadow */
+    gfx_blend_round_rect(&spr, m - r + 4, m - r + 14, 2 * r, 2 * r, r, 0x050c0eu, 140);          /* its shadow */
     gfx_fill_circle(&spr, m, m, r, 0x1b6b30u);                                                    /* rind */
     gfx_fill_circle(&spr, m, m, r - 5, 0x2e9d46u);
-    gfx_fill_circle(&spr, m, m, r - 22, 0xf1f6e8u);                                               /* the white ring */
-    gfx_fill_circle(&spr, m, m, r - 30, 0xdfeacfu);
+    gfx_fill_circle(&spr, m, m, r - 20, 0xf1f6e8u);                                               /* the white ring */
+    gfx_fill_circle(&spr, m, m, r - 27, 0xdfeacfu);
     for (int i = 0; i < 18; i++)                                                                  /* the flesh: paler at the edge */
-        gfx_fill_circle(&spr, m, m, r - 34 - i * (r - 40) / 18, lerp(0xff93a0u, 0xe0304au, i, 17));
-    gfx_blend_round_rect(&spr, m - r + 36, m - r + 30, 120, 52, 26, 0xffffffu, 46);              /* a shine */
+        gfx_fill_circle(&spr, m, m, r - 30 - i * (r - 36) / 18, lerp(0xff93a0u, 0xe0304au, i, 17));
+    gfx_blend_round_rect(&spr, m - r + 34, m - r + 28, 108, 46, 23, 0xffffffu, 46);              /* a shine */
 }
 
 /* ---- the rules ---- */
@@ -205,7 +247,7 @@ static void start_level(void)
     left = imin(4 + level, 11);
     screen = S_PLAY;
     screen_at = now_ms;
-    bottom_dirty = 1;
+    hud_dirty = foot_dirty = 1;
 }
 
 static void start_game(void)
@@ -252,7 +294,11 @@ static void finish_game(void)
     }
     screen = S_OVER;
     screen_at = now_ms;
-    bottom_dirty = 1;
+}
+
+static int ready_y(void)                         /* where the next knife's tip waits, at the foot of the screen */
+{
+    return canvas.h - 300;
 }
 
 static void throw_knife(void)
@@ -260,7 +306,7 @@ static void throw_knife(void)
     if (screen != S_PLAY || flying || left <= 0)
         return;
     flying = 1;
-    fly_y = canvas.h - 130;
+    fly_y = ready_y();
     k86_audio_beep(520, 25, 0, 0);
 }
 
@@ -276,7 +322,7 @@ static void land(void)
             fall_rot = 0;
             add_burst(cx, cy + MELON_R, 14, C_STEEL, C_STEEL_DK, 0);
             k86_audio_beep(220, 90, 147, 220);
-            shake = 22;
+            shake = 20;
             screen = S_FAIL;
             screen_at = now_ms;
             return;
@@ -287,12 +333,12 @@ static void land(void)
     left--;
     pulse = 14;
     shake = imax(shake, 5);
-    bottom_dirty = 1;
+    hud_dirty = foot_dirty = 1;
     add_burst(cx, cy + MELON_R - 10, 14, C_FLESH, 0xffa3b0u, 0);
     if (left <= 0) {                                 /* the melon is cleared: it bursts */
         add_burst(cx, cy, PART_MAX, C_FLESH, 0x4fc060u, 1);
         k86_audio_beep(660, 70, 990, 140);
-        shake = 16;
+        shake = 14;
         level++;
         screen = S_CLEAR;
         screen_at = now_ms;
@@ -302,36 +348,28 @@ static void land(void)
 }
 
 /* ---- drawing ---- */
-static void line(int x0, int y0, int x1, int y1, int w, uint32_t c)
-{
-    gfx_thick_line(&canvas, x0, y0, x1, y1, w, c);
-}
 
 /* A knife with its tip at (tx, ty), its handle away along `a` (1/100 degree): a tapering blade with a bright
- * edge, a guard, and a handle with two rivets. `fade` (0..100) dims it into the background for a trail. */
+ * edge, a guard, and a handle with rivets. fade > 0 (percent): only a dim blade, for the trail. */
 static void draw_knife(int tx, int ty, int a, int fade)
 {
     int dx = tcos(a), dy = tsin(a);
-    uint32_t steel = fade ? lerp(C_STEEL, 0x1d4550u, fade, 100) : C_STEEL, dark = fade ? lerp(C_STEEL_DK, 0x1d4550u, fade, 100) : C_STEEL_DK;
-    static const int wd[5] = { 7, 13, 17, 19, 19 };
-    for (int k = 0; k < 5; k++) {
-        int p0 = KNIFE_BLADE * k / 5, p1 = KNIFE_BLADE * (k + 1) / 5 + 2;
-        line(tx + dx * p0 / 1024, ty + dy * p0 / 1024, tx + dx * p1 / 1024, ty + dy * p1 / 1024, wd[k] + 4, dark);
-        line(tx + dx * p0 / 1024, ty + dy * p0 / 1024, tx + dx * p1 / 1024, ty + dy * p1 / 1024, wd[k], steel);
-    }
+    int bx = tx + dx * BLADE / 1024, by = ty + dy * BLADE / 1024;
+    uint32_t steel = fade ? lerp(C_STEEL, 0x1f4d59u, fade, 100) : C_STEEL, dark = fade ? lerp(C_STEEL_DK, 0x1f4d59u, fade, 100) : C_STEEL_DK;
+    strip(tx, ty, bx, by, 4, 12, dark);
+    strip(tx, ty, bx, by, 2, 9, steel);
     if (fade)
         return;
-    int bx = tx + dx * KNIFE_BLADE / 1024, by = ty + dy * KNIFE_BLADE / 1024;
-    int hx = bx + dx * KNIFE_HANDLE / 1024, hy = by + dy * KNIFE_HANDLE / 1024;
-    line(bx - dy * 16 / 1024, by + dx * 16 / 1024, bx + dy * 16 / 1024, by - dx * 16 / 1024, 9, 0x4a4f5bu);     /* guard */
-    line(bx, by, hx, hy, 26, 0x4e2f1bu);
-    line(bx, by, hx, hy, 20, C_HANDLE);
-    line(bx, by, hx, hy, 6, 0xa86d3fu);
-    for (int k = 0; k < 2; k++) {
-        int p = KNIFE_HANDLE * (k + 1) / 3;
-        gfx_fill_circle(&canvas, bx + dx * p / 1024, by + dy * p / 1024, 4, 0xe9c46au);
-    }
-    gfx_fill_circle(&canvas, hx, hy, 13, C_HANDLE);
+    strip(tx + dx * 6 / 1024, ty + dy * 6 / 1024, bx, by, 1, 3, 0xffffffu);                      /* the bright edge */
+    int hx = bx + dx * HANDLE / 1024, hy = by + dy * HANDLE / 1024;
+    strip(bx - dy * 15 / 1024, by + dx * 15 / 1024, bx + dy * 15 / 1024, by - dx * 15 / 1024, 5, 5, 0x4a4f5bu);   /* guard */
+    strip(bx, by, hx, hy, 14, 12, 0x4e2f1bu);
+    strip(bx, by, hx, hy, 11, 9, C_HANDLE);
+    strip(bx, by, hx, hy, 3, 2, 0xa86d3fu);
+    for (int k = 1; k <= 2; k++)
+        gfx_fill_circle(&canvas, bx + dx * (HANDLE * k / 3) / 1024, by + dy * (HANDLE * k / 3) / 1024, 3, 0xe9c46au);
+    gfx_fill_circle(&canvas, hx, hy, 11, 0x4e2f1bu);
+    gfx_fill_circle(&canvas, hx, hy, 9, C_HANDLE);
 }
 
 static void text_c(int x, int y, const char *s, enum text_style st, uint32_t col)
@@ -351,6 +389,16 @@ static void draw_button(struct gfx_rect r, const char *label, int primary, int d
     text_c(r.x + r.w / 2, r.y + lift + (r.h - 6 - text_height(TEXT_BOLD)) / 2, label, TEXT_BOLD, C_TEXT);
 }
 
+static void copy_bg(int x, int y, int w, int h)
+{
+    x = imax(x, 0);
+    y = imax(y, 0);
+    w = imin(w, canvas.w - x);
+    h = imin(h, canvas.h - y);
+    if (w > 0 && h > 0)
+        gfx_blit(&canvas, x, y, &bgpic, x, y, w, h);
+}
+
 /* the melon: its picture, then what turns on it (the stripes and seeds), then the knives in it */
 static void draw_melon(int ox, int oy)
 {
@@ -358,17 +406,17 @@ static void draw_melon(int ox, int oy)
     gfx_blit(&canvas, mx - SPR / 2, my - SPR / 2, &spr, 0, 0, SPR, SPR);
     int r = MELON_R + pulse / 2;
     for (int i = 0; i < 14; i++) {                                                  /* the rind's stripes */
-        int a0 = mel_ang + i * 2570, a1 = a0 + 1500, rr = r - 12;
-        line(mx + tcos(a0) * rr / 1024, my + tsin(a0) * rr / 1024, mx + tcos(a1) * rr / 1024, my + tsin(a1) * rr / 1024, 11, 0x74d476u);
+        int a0 = mel_ang + i * 2570, a1 = a0 + 1500, rr = r - 11;
+        strip(mx + tcos(a0) * rr / 1024, my + tsin(a0) * rr / 1024, mx + tcos(a1) * rr / 1024, my + tsin(a1) * rr / 1024, 6, 6, 0x74d476u);
     }
     for (int i = 0; i < 10; i++) {                                                  /* seeds */
-        int a = mel_ang + i * 3600, rr = 62 + (i % 3) * 24;
+        int a = mel_ang + i * 3600, rr = 56 + (i % 3) * 22;
         int sx = mx + tcos(a) * rr / 1024, sy = my + tsin(a) * rr / 1024;
-        gfx_fill_circle(&canvas, sx, sy, 9, 0x2a1418u);
+        gfx_fill_circle(&canvas, sx, sy, 8, 0x2a1418u);
         gfx_fill_circle(&canvas, sx - 2, sy - 3, 3, 0x6b4a4eu);
     }
     for (int i = 0; i < nstuck; i++) {
-        int a = stuck[i] + mel_ang, rr = MELON_R - 36 + pulse / 2;
+        int a = stuck[i] + mel_ang, rr = MELON_R - 30 + pulse / 2;
         draw_knife(mx + tcos(a) * rr / 1024, my + tsin(a) * rr / 1024, a, 0);
     }
 }
@@ -376,49 +424,48 @@ static void draw_melon(int ox, int oy)
 static void draw_hud(void)
 {
     char num[16], lv[24];
+    copy_bg(0, 0, canvas.w, box.y);
     snprintf(num, sizeof(num), "%d", score);
-    text_c(canvas.w / 2, 36, num, TEXT_LARGE, C_TEXT);
+    text_c(canvas.w / 2, 30, num, TEXT_LARGE, C_TEXT);
     snprintf(lv, sizeof(lv), "Level %d", imax(1, level - (screen == S_CLEAR ? 1 : 0)));
-    text_c(canvas.w / 2, 116, lv, TEXT_SMALL, C_DIM);
+    text_c(canvas.w / 2, 112, lv, TEXT_SMALL, C_DIM);
 }
 
-static void draw_bottom(void)
+/* the foot of the screen: the next knife, ready to throw, and the ones left behind it */
+static void draw_foot(void)
 {
-    gfx_blit(&canvas, 0, split_y, &bgpic, 0, split_y, canvas.w, canvas.h - split_y);
+    int y0 = box.y + box.h;
+    copy_bg(0, y0, canvas.w, canvas.h - y0);
     if (screen == S_MENU || screen == S_OVER)
         return;
-    for (int i = 0; i < left; i++) {                                                /* the knives still to throw */
-        int x = 50 + i * 36, y = canvas.h - 150;
-        line(x, y, x, y + 54, 12, C_STEEL);
-        line(x, y + 54, x, y + 96, 15, C_HANDLE);
+    for (int i = 0; i < left - (flying ? 1 : 0) - 1 && i < 11; i++) {               /* the knives still to come */
+        int x = 40 + i * 30, y = canvas.h - 96;
+        strip(x, y, x, y + 40, 4, 8, C_STEEL);
+        strip(x, y + 40, x, y + 72, 8, 8, C_HANDLE);
     }
-    if (screen == S_PLAY && !flying && left > 0 && now_ms - screen_at > 150)
-        text_c(canvas.w / 2, canvas.h - 120, "Tap to throw", TEXT_SMALL, C_DIM);
+    if (screen == S_PLAY && left > 0 && !flying) {
+        draw_knife(cx, ready_y(), 9000, 0);
+        if (now_ms - screen_at > 150)
+            text_c(canvas.w / 2, canvas.h - 52, "Tap to throw", TEXT_SMALL, C_DIM);
+    }
 }
 
-static void draw_top(void)
+static void draw_world(void)                    /* the melon's box: it is all redrawn, every frame */
 {
     int ox = shake ? (int)(rnd() % (uint32_t)(shake * 2 + 1)) - shake : 0, oy = shake ? (int)(rnd() % (uint32_t)(shake * 2 + 1)) - shake : 0;
-    gfx_blit(&canvas, 0, 0, &bgpic, 0, 0, canvas.w, split_y);
-    if (screen == S_MENU) {
-        draw_melon(0, 0);
-        text_c(canvas.w / 2, 60, "MELON", TEXT_LARGE, C_FLESH);
-        text_c(canvas.w / 2, 138, "KNIFE", TEXT_LARGE, C_TEXT);
-        return;
-    }
-    draw_hud();
+    copy_bg(box.x, box.y, box.w, box.h);
     if (screen != S_CLEAR || now_ms - screen_at < 90)
         draw_melon(ox, oy);
-    if (flying)
+    if (flying) {
         for (int g = 3; g >= 1; g--)                                               /* a trail behind the knife */
-            if (fly_y + g * 70 < canvas.h - 120)
-                draw_knife(cx, fly_y + g * 70, 9000, 55 + g * 14);
-    if (flying)
+            if (fly_y + g * 60 < ready_y() + 20)
+                draw_knife(cx, fly_y + g * 60, 9000, 52 + g * 14);
         draw_knife(cx, fly_y, 9000, 0);
+    }
     if (screen == S_FAIL && fall_y >= 0)
         draw_knife(fall_x, fall_y, 9000 + fall_rot, 0);
     for (int i = 0; i < PART_MAX; i++)
-        if (parts[i].life > 0)
+        if (parts[i].life > 0 && parts[i].x > box.x && parts[i].x < box.x + box.w && parts[i].y > box.y && parts[i].y < box.y + box.h)
             gfx_fill_circle(&canvas, parts[i].x, parts[i].y, parts[i].r, parts[i].col);
     if (screen == S_CLEAR && now_ms - screen_at < 1100)
         text_c(canvas.w / 2, cy - 36, "Splat!", TEXT_LARGE, C_TEXT);
@@ -432,16 +479,17 @@ static void draw_top(void)
 static void draw_menu_extras(void)
 {
     char b[40];
+    text_c(canvas.w / 2, 40, "MELON", TEXT_LARGE, C_FLESH);
+    text_c(canvas.w / 2, 112, "KNIFE", TEXT_LARGE, C_TEXT);
     snprintf(b, sizeof(b), "Best  %u", (unsigned)sv.best);
-    text_c(canvas.w / 2, cy + MELON_R + 64, b, TEXT_BODY, C_GOLD);
+    text_c(canvas.w / 2, box.y + box.h + 6, b, TEXT_BODY, C_GOLD);
     draw_button(btn_play, "Play", 1, pressed == 1);
-    text_c(canvas.w / 2, btn_play.y + btn_play.h + 40, "Tap to throw. Don't hit a knife.", TEXT_SMALL, C_DIM);
+    text_c(canvas.w / 2, btn_play.y + btn_play.h + 36, "Tap to throw. Don't hit a knife.", TEXT_SMALL, C_DIM);
 }
 
 static void draw_over(void)
 {
     gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, 150);
-    gfx_fill_round_rect(&canvas, 60, 340, canvas.w - 120, 580, 40, 0x102a32u);
     gfx_fill_round_rect(&canvas, 60, 340, canvas.w - 120, 580, 40, 0x1d4550u);
     gfx_fill_round_rect(&canvas, 66, 346, canvas.w - 132, 568, 36, 0x153841u);
     char b[40];
@@ -458,28 +506,49 @@ static void draw_over(void)
 static void layout(void)
 {
     cx = canvas.w / 2;
-    cy = canvas.h * 36 / 100;
-    split_y = imin(canvas.h, cy + MELON_R + 220);
-    int bw = imin(canvas.w - 160, 440);
-    btn_play = (struct gfx_rect){ (canvas.w - bw) / 2, screen == S_OVER ? 690 : cy + MELON_R + 112, bw, 104 };
-    btn_menu = (struct gfx_rect){ (canvas.w - bw) / 2, 810, bw, 84 };
+    cy = canvas.h * 40 / 100;
+    int bx = imax(0, cx - BOX), bw = imin(canvas.w, cx + BOX) - bx;
+    int by = imax(0, cy - BOX), bh = imin(canvas.h - 200, cy + BOX) - by;
+    box = (struct gfx_rect){ bx, by, bw, bh };
+    int bwid = imin(canvas.w - 160, 440);
+    btn_play = (struct gfx_rect){ (canvas.w - bwid) / 2, screen == S_OVER ? 690 : box.y + box.h + 56, bwid, 104 };
+    btn_menu = (struct gfx_rect){ (canvas.w - bwid) / 2, 810, bwid, 84 };
 }
 
-/* Draws what changed and shows it: the top part (the melon, always), the bottom part (when it changed). */
+/* Draws what changed and shows it. force: everything. */
 static void redraw(int force)
 {
     if (!bgpic.px || !spr.px)
         return;
-    draw_top();
-    int bottom = force || bottom_dirty || flying || screen != S_PLAY;
-    if (bottom)
-        draw_bottom();
-    if (screen == S_MENU)
-        draw_menu_extras();
+    uint32_t t0 = k86_uptime_ms();
+    int still = screen == S_MENU || screen == S_OVER;
+    int all = force || still;
+    draw_world();
+    k86_present(box.x, box.y, box.w, box.h);
+    if (all || hud_dirty) {
+        draw_hud();
+        if (still)
+            draw_menu_extras();
+        k86_present(0, 0, canvas.w, box.y);
+    }
+    if (all || foot_dirty || flying) {
+        draw_foot();
+        if (screen == S_MENU)
+            draw_menu_extras();
+        if (screen == S_OVER)
+            draw_over();
+        k86_present(0, box.y + box.h, canvas.w, canvas.h - box.y - box.h);
+    }
     if (screen == S_OVER)
-        draw_over();
-    k86_present(0, 0, canvas.w, bottom ? canvas.h : split_y);
-    bottom_dirty = flying;                               /* (the knife's column is drawn while it flies, and once after) */
+        k86_present(0, 0, canvas.w, canvas.h);
+    hud_dirty = foot_dirty = flying;                      /* (the knife's column is drawn while it flies, and once after) */
+    perf_sum += k86_uptime_ms() - t0;
+    perf_max = imax(perf_max, (int)(k86_uptime_ms() - t0));
+    if (++perf_n >= 150) {                                /* the Log app shows how long a frame takes, to tune it */
+        k86_logf("melonknife: draw avg %d ms, max %d", (int)(perf_sum / (uint32_t)perf_n), perf_max);
+        perf_n = perf_max = 0;
+        perf_sum = 0;
+    }
 }
 
 static int in_front(void)
@@ -535,7 +604,7 @@ static void frame(void)
         }
     if (flying) {
         fly_y -= THROW_SPEED * dt / 1000;
-        if (fly_y <= cy + MELON_R - 44)
+        if (fly_y <= cy + MELON_R - 40)
             land();
     }
     if (screen == S_FAIL) {
@@ -546,6 +615,8 @@ static void frame(void)
             finish_game();
             layout();
             k86_timer_set(0);
+            redraw(1);
+            return;
         }
     }
     if (screen == S_CLEAR && now_ms - screen_at > 1150)
@@ -553,6 +624,8 @@ static void frame(void)
     if (!in_front() && screen == S_PLAY) {
         screen = S_MENU;
         layout();
+        redraw(1);
+        return;
     }
     redraw(0);
 }
