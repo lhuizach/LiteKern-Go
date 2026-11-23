@@ -1,16 +1,27 @@
-/* Traffic Racer: our own lane-dodging driving game for LiteKern Go. A high chase camera looks down the road:
- * the road is drawn a line at a time in perspective (it narrows only a little, because the camera looks steeply
- * down), it bends gently, guardrails and desert scenery slide past, and the cars are drawn from above and
- * behind, shaded so they look solid. Nothing is a 3D model, so it runs on the phone's CPU.
+/* Traffic Racer: our own driving game for LiteKern Go, in the style of the Android game of that name. Landscape:
+ * hold the phone on its side like a steering wheel and tilt it to steer (the accelerometer); the car moves
+ * smoothly across the whole road, there are no lanes to switch. The car accelerates by itself, like a normal car
+ * (30 km/h at the start, then steadily faster), and never stops completely. The whole bottom half of the screen
+ * is the brake: hold it to brake hard, let go and it accelerates again. Squeezing past traffic scores extra.
+ * PC: left and right arrows steer, Down or Space brakes, Esc pauses. Without the accelerometer, dragging a finger
+ * left and right in the top half steers.
  *
- * Four lanes. Swipe left or right (or tap the left or right of the screen) to change lane. Traffic comes in
- * waves that always leave one lane free; the speed climbs the longer you last. Squeezing past a car scores
- * extra (a near miss). Keys for the PC: left and right arrows, Esc.
- *
- * Whole numbers only, drawn in code. Its own palette and art; the best score is kept in the user's home
- * folder. The timer only runs while driving, and the game pauses itself when another app is in front. */
+ * With the extras area installed the road, scenery and cars are drawn in real 3D on the phone's GPU (see the GPU
+ * section below); without it, a 2.5D picture is drawn on the CPU. Whole numbers only. The app draws on a
+ * landscape picture and turns it onto the portrait window. Its own palette and art; the best score is kept in the
+ * user's home folder. The timer only runs while driving, and the game pauses itself when another app is in front. */
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "kernel/input.h"
 #include "kernel/text.h"
@@ -18,6 +29,7 @@
 #include "kernel/widget.h"
 #include "sdk/audio.h"
 #include "sdk/kern86.h"
+#include "sdk/touch2.h"
 
 #define SAVE_FILE "trafficracer.dat"
 #define SAVE_MAGIC 0x54524331u
@@ -32,9 +44,13 @@
 #define CAM_H 7560                      /* its height: puts the road across the screen at the bottom */
 #define HIT_DZ 850                      /* cars this close along the road can touch */
 #define SLOT 1100                       /* roadside things: one every this far along, on each side */
-#define V_START 5500                    /* units per second */
-#define V_MAX 11000
-#define LANE_SPEED 3200                 /* sideways, units per second */
+/* Speeds are in units per second; 220 units are a metre, so 1 km/h is about 61 units/s. */
+#define V_MIN 733                       /* 12 km/h: the car never stops */
+#define V_START 1833                    /* 30 km/h */
+#define V_MAX 14667                     /* 240 km/h */
+#define KPH(v) ((v) * 9 / 550)
+#define BRAKE_DECEL 2300                /* units/s per second: about 38 km/h a second, hard */
+#define RAIL_X 765                      /* the most the car's middle can be from the road's middle */
 #define CARS_MAX 24
 #define PART_MAX 28
 
@@ -65,16 +81,16 @@ static const int car_h[4] = { 570, 640, 700, 960 };
 
 enum screen { S_MENU, S_PLAY, S_DYING, S_PAUSE, S_OVER };
 enum { B_NONE = -1, B_PLAY, B_SKIN0, B_SKIN1, B_SKIN2, B_SKIN3, B_SOUND, B_PAUSE, B_RESUME, B_RESTART, B_MENU,
-       B_AGAIN, B_COUNT };
+       B_AGAIN, B_FLIP, B_COUNT };
 
 struct save {
     uint32_t magic;
     uint32_t best;
-    uint8_t sound, skin, pad[2];
+    uint8_t sound, skin, flip, pad;           /* flip: steering the other way round */
 };
 
 struct car {
-    int used, lane, z, prev_z, kind, near_done;
+    int used, lane, z, prev_z, kind, near_done, sp;    /* sp: its speed along the road, units/s */
     uint32_t col;
 };
 
@@ -84,7 +100,9 @@ struct particle {
 };
 
 static struct k86_window win;
-static struct gfx_surface canvas;
+static struct gfx_surface wcan;          /* the window's canvas, portrait */
+static struct gfx_surface canvas;        /* what everything draws on: the same picture on its side (landscape) */
+static int land_dir;                     /* 0: the phone's top is on the left, 1: on the right */
 static struct save sv;
 static char home[K86_PATH_MAX];
 static int vol = -1;
@@ -103,9 +121,13 @@ static int zp, zfar, zcut;              /* the player's distance (a row near the
 /* the game */
 static struct car cars[CARS_MAX];
 static struct particle parts[PART_MAX];
-static int play_ms, v, tv, scroll;
+static int play_ms, v, scroll;
 static int dist, bonus, score, new_best;
-static int xp, lane_target;             /* the player's sideways place (units), and the lane they're heading for */
+static int xp;                          /* the player's sideways place, units from the road's middle */
+static int steer, steer_s, braking;     /* wanted steering and smoothed (-1000..1000), the brake held */
+static int key_l, key_r, key_b, touch_steer, touch_brake, finger_down, brake_hint_until;
+static int off_x, off_y;                /* screen pixels to window pixels, from the last pointer event */
+static const int lane_sp[LANES] = { 3667, 3178, 2750, 2322 };   /* each lane's traffic speed (60, 52, 45, 38 km/h) */
 static int curve, curve_tgt, curve_timer;    /* the road's bend: -256..256 */
 static int wave_acc, next_gap, free_lane;
 static uint32_t crash_since;
@@ -113,10 +135,146 @@ static char msg[16];
 static uint32_t msg_until;
 static int perf_n, perf_max;
 static uint32_t perf_sum;
-static int g_on, g_x0, g_y0, g_moved;
-static uint32_t g_t0;
+static int g_on, g_x0;
 
 /* ---- small helpers ---- */
+/* ---- the tilt sensor: the phone's accelerometer (Bosch BMC150 on i2c), read from sysfs ---- */
+static int acc_fd[3] = { -1, -1, -1 }, acc_ok, acc_g = 512, acc_tried_ms;
+static int acc_m[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+static int acc_rx, acc_ry;
+
+static int read_text(const char *path, char *out, int max)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    int n = (int)read(fd, out, (size_t)max - 1);
+    close(fd);
+    if (n < 0)
+        return -1;
+    out[n] = 0;
+    return n;
+}
+
+static void acc_init(void)
+{
+    char path[96], txt[96];
+    acc_tried_ms = (int)k86_uptime_ms();
+    for (int d = 0; d < 8; d++) {
+        strcpy(path, "/sys/bus/iio/devices/iio:device0/name");
+        path[strlen("/sys/bus/iio/devices/iio:device")] = (char)('0' + d);
+        if (read_text(path, txt, sizeof(txt)) < 0 || strncmp(txt, "bmc150_accel", 12))
+            continue;
+        const char *axes = "xyz";
+        char base[64];
+        strcpy(base, "/sys/bus/iio/devices/iio:device0/");
+        base[strlen("/sys/bus/iio/devices/iio:device")] = (char)('0' + d);
+        for (int a = 0; a < 3; a++) {
+            strcpy(path, base);
+            strcat(path, "in_accel_");
+            path[strlen(path)] = 0;
+            int l = (int)strlen(path);
+            path[l] = axes[a];
+            path[l + 1] = 0;
+            strcat(path, "_raw");
+            acc_fd[a] = open(path, O_RDONLY | O_CLOEXEC);
+        }
+        strcpy(path, base);
+        strcat(path, "in_accel_scale");
+        if (read_text(path, txt, sizeof(txt)) > 0) {          /* "0.019154": metres/s2 a step; 1 g is 9.807 */
+            int whole = 0, frac = 0, digits = 0;
+            const char *c = txt;
+            while (*c >= '0' && *c <= '9') whole = whole * 10 + (*c++ - '0');
+            if (*c == '.')
+                for (c++; *c >= '0' && *c <= '9' && digits < 6; digits++)
+                    frac = frac * 10 + (*c++ - '0');
+            for (; digits < 6; digits++)
+                frac *= 10;
+            int micro = whole * 1000000 + frac;
+            if (micro > 0)
+                acc_g = 9807000 / micro;
+        }
+        strcpy(path, base);
+        strcat(path, "in_mount_matrix");
+        if (read_text(path, txt, sizeof(txt)) > 0) {          /* "-1, 0, 0; 0, 1, 0; 0, 0, 1" */
+            int k = 0, sign = 1, val = 0, have = 0;
+            for (const char *c = txt; ; c++) {
+                if (*c == '-') sign = -1;
+                else if (*c >= '0' && *c <= '9') { val = val * 10 + (*c - '0'); have = 1; }
+                else {
+                    if (have && k < 9)
+                        acc_m[k++] = sign * val;
+                    sign = 1; val = 0; have = 0;
+                    if (!*c)
+                        break;
+                }
+            }
+        }
+        acc_ok = acc_fd[0] >= 0 && acc_fd[1] >= 0 && acc_fd[2] >= 0;
+        if (acc_ok)
+            k86_log("trafficracer: tilt sensor found");
+        return;
+    }
+}
+
+/* The reading, in the phone's own axes (x to the right of the screen, y up it, z out of it): 1 g is acc_g. At
+ * rest it points UP: held upright it is (0, +g, 0), on its side with the top to the left (+g, 0, 0). */
+static int acc_read(void)
+{
+    int raw[3];
+    if (!acc_ok)
+        return -1;
+    for (int a = 0; a < 3; a++) {
+        char t[24];
+        int n = (int)pread(acc_fd[a], t, sizeof(t) - 1, 0);
+        if (n <= 0)
+            return -1;
+        t[n] = 0;
+        raw[a] = atoi(t);
+    }
+    acc_rx = acc_m[0] * raw[0] + acc_m[1] * raw[1] + acc_m[2] * raw[2];
+    acc_ry = acc_m[3] * raw[0] + acc_m[4] * raw[1] + acc_m[5] * raw[2];
+    return 0;
+}
+
+/* window (portrait) pixels <-> landscape pixels */
+static void to_land(int px, int py, int *lx, int *ly)
+{
+    if (land_dir == 0) { *lx = py; *ly = wcan.w - 1 - px; }
+    else { *lx = wcan.h - 1 - py; *ly = px; }
+}
+
+static void land_alloc(void)
+{
+    free(canvas.px);
+    canvas = (struct gfx_surface){ (uint32_t *)calloc((size_t)wcan.w * (size_t)wcan.h, 4), wcan.h, wcan.w, wcan.h };
+}
+
+/* The landscape picture onto the window, turned (in small squares, for the cache). */
+static void present(void)
+{
+    enum { T = 32 };
+    for (int ty = 0; ty < wcan.h; ty += T) {
+        int ye = ty + T < wcan.h ? ty + T : wcan.h;
+        for (int tx = 0; tx < wcan.w; tx += T) {
+            int xe = tx + T < wcan.w ? tx + T : wcan.w;
+            for (int py = ty; py < ye; py++) {
+                uint32_t *d = wcan.px + (size_t)py * wcan.stride;
+                if (land_dir == 0) {
+                    const uint32_t *sp = canvas.px + (size_t)(wcan.w - 1 - tx) * canvas.stride + py;
+                    for (int px = tx; px < xe; px++, sp -= canvas.stride)
+                        d[px] = *sp;
+                } else {
+                    const uint32_t *sp = canvas.px + (size_t)tx * canvas.stride + (wcan.h - 1 - py);
+                    for (int px = tx; px < xe; px++, sp += canvas.stride)
+                        d[px] = *sp;
+                }
+            }
+        }
+    }
+    k86_present(0, 0, wcan.w, wcan.h);
+}
+
 static uint32_t rnd(void)
 {
     rng_state = rng_state * 1664525u + 1013904223u;
@@ -416,7 +574,7 @@ static void draw_world_car(int x, int z, int kind, uint32_t col, int lean)
 
 static int player_lean(void)
 {
-    return iclamp((lane_x(lane_target) - xp) / 12, -40, 40);
+    return iclamp(steer_s / 25, -40, 40);
 }
 
 static void draw_cars_and_player(void)
@@ -455,8 +613,295 @@ static void draw_particles(void)
             gfx_fill_rect(&canvas, parts[i].x >> 4, parts[i].y >> 4, 8, 8, parts[i].col);
 }
 
+/* ---- the GPU 3D renderer ---------------------------------------------------------------------------
+ * With the extras area installed (phone/sandbox/gld.c, built into the Alpine sandbox) the road, the scenery and the
+ * cars are drawn in real 3D on the phone's GPU by a helper program, lkx-gld, run by this app. Each frame we send it
+ * the scene in whole numbers (a few hundred bytes) and it writes a picture into a shared file, which we enlarge into
+ * the window (it draws at 3/4 of the size: the GPU's readback is what costs) and put the HUD on. Without the helper,
+ * or if it stops, the 2.5D drawing above is used as before. */
+#define GL_ENTER "/extras/enter.sh"
+#define GL_BIN "/extras/alpine/usr/local/bin/lkx-gld"
+#define GL_FRAME "/dev/shm/lkxgl.frame"
+#define GL_SOCK "/dev/shm/lkxgl.sock"
+#define GL_FRAME_MAGIC 0x4c47474cu
+#define GL_SCENE_MAGIC 0x4e435347u
+#define GL_QUIT_MAGIC 0x5154494bu
+#define GL_HDR 64
+#define GL_PCT 75
+#define GL_CARS 32
+
+struct gl_frame_header { uint32_t magic, seq, w, h, stride, scene_seq; int32_t player_x, player_y; uint32_t slot; };
+struct gl_car { int32_t x, z, kind; uint32_t col; int32_t yaw, roll, pad[2]; };
+struct gl_scene {
+    uint32_t magic, seq;
+    int32_t xp, zp, scroll, curve, speed, shake_x, shake_y, time_ms, ncars, player_vis;
+    uint32_t player_col;
+    int32_t player_lean;
+    struct gl_car cars[GL_CARS];
+};
+
+static pid_t gl_pid;
+static int gl_sock = -1, gl_state;                      /* 0 not tried, 1 starting, 2 running, 3 unavailable */
+static const unsigned char *gl_map;
+static size_t gl_len;
+static uint32_t gl_w, gl_h, gl_sent_seq, gl_started_ms;
+
+static int gl_map_frame(void)
+{
+    struct stat st;
+    int fd = open(GL_FRAME, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    if (fstat(fd, &st) || st.st_size < GL_HDR) { close(fd); return -1; }
+    const struct gl_frame_header *h = mmap(NULL, GL_HDR, PROT_READ, MAP_SHARED, fd, 0);
+    if (h == MAP_FAILED) { close(fd); return -1; }
+    uint32_t magic = h->magic, w = h->w, ht = h->h;
+    munmap((void *)h, GL_HDR);
+    size_t len = GL_HDR + 2 * (size_t)w * ht * 4;
+    if (magic != GL_FRAME_MAGIC || w == 0 || ht == 0 || (size_t)st.st_size < len) { close(fd); return -1; }
+    void *m = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED)
+        return -1;
+    gl_map = m;
+    gl_len = len;
+    gl_w = w;
+    gl_h = ht;
+    return 0;
+}
+
+static int gl_connect(void)
+{
+    int s = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    struct sockaddr_un a;
+    memset(&a, 0, sizeof(a));
+    a.sun_family = AF_UNIX;
+    strcpy(a.sun_path, GL_SOCK);
+    if (s < 0)
+        return -1;
+    if (connect(s, (struct sockaddr *)&a, sizeof(a))) { close(s); return -1; }
+    if (gl_map_frame()) { close(s); return -1; }
+    gl_sock = s;
+    return 0;
+}
+
+static void gl_num(int val, char *out)                  /* val >= 0 */
+{
+    char tmp[12];
+    int n = 0;
+    do { tmp[n++] = (char)('0' + val % 10); val /= 10; } while (val);
+    while (n)
+        *out++ = tmp[--n];
+    *out = 0;
+}
+
+static void gl_start(void)
+{
+    if (gl_state)
+        return;
+    if (access(GL_ENTER, X_OK) || access(GL_BIN, X_OK)) {
+        gl_state = 3;
+        return;
+    }
+    gl_started_ms = k86_uptime_ms();
+    if (gl_connect() == 0) {                            /* one is running already */
+        gl_state = 2;
+        return;
+    }
+    char size[32], num[12];
+    gl_num((canvas.w * GL_PCT / 100) & ~1, size);
+    strcat(size, "x");
+    gl_num((canvas.h * GL_PCT / 100) & ~1, num);
+    strcat(size, num);
+    mkdir("/extras/alpine/run", 0755);
+    mkdir("/extras/alpine/run/u", 0700);
+    unlink(GL_SOCK);
+    unlink(GL_FRAME);
+    pid_t p = fork();
+    if (p < 0) {
+        gl_state = 3;
+        return;
+    }
+    if (p == 0) {
+        setsid();
+        int in = open("/dev/null", O_RDONLY), out = open("/tmp/lkx-gld.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (in >= 0) dup2(in, 0);
+        if (out >= 0) { dup2(out, 1); dup2(out, 2); }
+        for (int fd = 3; fd < 64; fd++)
+            close(fd);
+        execl(GL_ENTER, GL_ENTER, "env", "XDG_RUNTIME_DIR=/run/u", "HOME=/root", "/usr/local/bin/lkx-gld", "--serve",
+              "--size", size, "--msaa", "0", (char *)NULL);
+        _exit(127);
+    }
+    gl_pid = p;
+    gl_state = 1;
+    k86_log("trafficracer: starting the GPU renderer");
+}
+
+/* While it starts: is it up yet? Returns 1 the moment it is. */
+static int gl_check(void)
+{
+    if (gl_state != 1)
+        return 0;
+    if (gl_connect() == 0) {
+        gl_state = 2;
+        k86_log("trafficracer: GPU renderer ready");
+        return 1;
+    }
+    if (k86_uptime_ms() - gl_started_ms > 30000) {
+        gl_state = 3;
+        k86_log("trafficracer: no GPU renderer, drawing on the CPU");
+    }
+    return 0;
+}
+
+static void gl_stop(void)
+{
+    if (gl_sock >= 0) {
+        struct gl_scene q;
+        memset(&q, 0, sizeof(q));
+        q.magic = GL_QUIT_MAGIC;
+        (void)!send(gl_sock, &q, 32, 0);
+        close(gl_sock);
+        gl_sock = -1;
+    }
+    if (gl_pid > 0) {
+        for (int i = 0; i < 20; i++) {
+            if (waitpid(gl_pid, NULL, WNOHANG) == gl_pid) { gl_pid = 0; break; }
+            usleep(50000);
+        }
+        if (gl_pid > 0) { kill(-gl_pid, SIGKILL); waitpid(gl_pid, NULL, 0); }
+    }
+}
+
+static int gl_active(void)
+{
+    return gl_state == 2 && gl_map && ((const volatile struct gl_frame_header *)gl_map)->seq > 0;
+}
+
+static void gl_send(int ox, int oy)
+{
+    struct gl_scene sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.magic = GL_SCENE_MAGIC;
+    sc.seq = ++gl_sent_seq;
+    sc.xp = xp;
+    sc.zp = zp;
+    sc.scroll = scroll;
+    sc.curve = curve;
+    sc.speed = v;
+    sc.shake_x = ox * 5;
+    sc.shake_y = oy * 5;
+    sc.time_ms = (int32_t)now_ms;
+    sc.player_vis = screen != S_DYING || (now_ms - crash_since) / 90 % 2 == 0;
+    sc.player_col = skin_col[sv.skin];
+    sc.player_lean = player_lean();
+    for (int i = 0; i < CARS_MAX && sc.ncars < GL_CARS; i++)
+        if (cars[i].used && cars[i].z > zp - 3500) {
+            struct gl_car *c = &sc.cars[sc.ncars++];
+            c->x = lane_x(cars[i].lane);
+            c->z = cars[i].z;
+            c->kind = cars[i].kind;
+            c->col = cars[i].col;
+        }
+    if (send(gl_sock, &sc, sizeof(sc), 0) < 0 && errno != EAGAIN && errno != EINTR) {
+        gl_state = 3;                                   /* it has stopped: back to the 2.5D drawing */
+        k86_log("trafficracer: GPU renderer stopped, drawing on the CPU");
+    }
+}
+
+/* two pixels' channels at once: a * n + b * (256 - n) per channel, n 0..256 */
+static inline uint32_t gl_lerp(uint32_t a, uint32_t b, uint32_t n)
+{
+    uint32_t rb = ((a & 0x00ff00ffu) * n + (b & 0x00ff00ffu) * (256 - n)) >> 8;
+    uint32_t g = ((a & 0x0000ff00u) * n + (b & 0x0000ff00u) * (256 - n)) >> 8;
+    return (rb & 0x00ff00ffu) | (g & 0x0000ff00u);
+}
+
+/* The picture, enlarged into the window with a smooth (bilinear) filter: each wanted source row is first made
+ * the width of the window (kept, as the next window row nearly always needs it again), then two of them blended. */
+static uint32_t gl_rows[2][2048];
+static int gl_row_y[2];
+
+static const uint32_t *gl_row(const uint32_t *src, int sy, const uint16_t *xi, const uint8_t *xf)
+{
+    int slot = sy & 1;
+    if (gl_row_y[slot] != sy) {
+        const uint32_t *r = src + (size_t)sy * gl_w;
+        for (int x = 0; x < canvas.w; x++) {
+            uint32_t a = r[xi[x]], b = r[xi[x] + 1 < (int)gl_w ? xi[x] + 1 : xi[x]];
+            gl_rows[slot][x] = gl_lerp(b, a, xf[x]);
+        }
+        gl_row_y[slot] = sy;
+    }
+    return gl_rows[slot];
+}
+
+static void gl_blit(void)
+{
+    static uint16_t xi[2048];
+    static uint8_t xf[2048];
+    static int map_dw, map_sw;
+    const struct gl_frame_header *h = (const struct gl_frame_header *)gl_map;
+    const uint32_t *src = (const uint32_t *)(gl_map + GL_HDR + (size_t)(h->slot & 1) * gl_w * gl_h * 4);
+    int dw = canvas.w, dh = canvas.h, sw = (int)gl_w, sh = (int)gl_h;
+    if (dw > 2048 || dw < 2 || dh < 2)
+        return;
+    if (map_dw != dw || map_sw != sw) {
+        for (int x = 0; x < dw; x++) {
+            int p = x * (sw - 1) * 256 / (dw - 1);
+            xi[x] = (uint16_t)(p >> 8);
+            xf[x] = (uint8_t)(p & 255);
+        }
+        map_dw = dw;
+        map_sw = sw;
+    }
+    gl_row_y[0] = gl_row_y[1] = -1;
+    for (int y = 0; y < dh; y++) {
+        int p = y * (sh - 1) * 256 / (dh - 1), y0 = p >> 8, fy = p & 255, y1 = y0 + 1 < sh ? y0 + 1 : y0;
+        const uint32_t *r0 = gl_row(src, y0, xi, xf), *r1 = gl_row(src, y1, xi, xf);
+        uint32_t *d = canvas.px + (size_t)y * canvas.stride;
+        if (!fy || y0 == y1) {
+            memcpy(d, r0, (size_t)dw * 4);
+        } else {
+            for (int x = 0; x < dw; x++)
+                d[x] = gl_lerp(r1[x], r0[x], (uint32_t)fy);
+        }
+    }
+}
+
+static void gl_draw(int ox, int oy)
+{
+    gl_send(ox, oy);
+    if (gl_state != 2)
+        return;
+    if (screen != S_PLAY && screen != S_DYING) {        /* a still screen: wait for its picture */
+        const volatile struct gl_frame_header *h = (const volatile struct gl_frame_header *)gl_map;
+        for (int i = 0; i < 80 && (int32_t)(h->scene_seq - gl_sent_seq) < 0; i++)
+            usleep(4000);
+    }
+    gl_blit();
+}
+
+/* where the player's car is, in the window (from the picture) */
+static int gl_player_x(void)
+{
+    return ((const struct gl_frame_header *)gl_map)->player_x * canvas.w / (int)gl_w;
+}
+static int gl_player_y(void)
+{
+    return ((const struct gl_frame_header *)gl_map)->player_y * canvas.h / (int)gl_h;
+}
+
 static void draw_scene(int ox, int oy)
 {
+    if (gl_active()) {
+        gl_draw(ox, oy);
+        if (gl_state == 2) {
+            draw_particles();
+            return;
+        }
+    }
     int sh = horizon, sc = cxm;
     horizon += oy;
     cxm += ox;
@@ -482,7 +927,7 @@ static void draw_hud(void)
         gfx_fill_round_rect(&canvas, p.x + p.w / 2 + 4, p.y + lift + (p.h - 36) / 2, 12, 36, 4, C_TEXT);
     }
     int rx = canvas.w - 112;                    /* the middle of the speed and distance lines (they're about 190 wide) */
-    num_text(v / 50, num);
+    num_text(KPH(v), num);
     line[0] = 0;
     cat(line, num);
     cat(line, " km/h");
@@ -495,8 +940,15 @@ static void draw_hud(void)
     cat(line, num);
     cat(line, " km");
     text_shadow_c(rx, 160, line, TEXT_BODY, C_GOLD);
+    if (braking) {                              /* the brake zone lights while it is held */
+        gfx_blend_round_rect(&canvas, 0, canvas.h / 2, canvas.w, canvas.h / 2, 0, 0xc01020u, 70);
+        text_shadow_c(canvas.w / 2, canvas.h - 80, "BRAKE", TEXT_HEADING, C_TEXT);
+    } else if ((int)now_ms < brake_hint_until) {
+        text_shadow_c(canvas.w / 2, canvas.h - 70, "Bottom half of the screen: brake", TEXT_BODY, C_DIM);
+    }
     if (msg[0] && now_ms < msg_until)
-        text_shadow_c(proj_x(xp, zp), proj_y(zp) - car_h[0] * FOC / zp / 2 - 70, msg, TEXT_HEADING, C_GOLD);
+        text_shadow_c(gl_active() ? gl_player_x() : proj_x(xp, zp),
+                      gl_active() ? gl_player_y() - 150 : proj_y(zp) - car_h[0] * FOC / zp / 2 - 70, msg, TEXT_HEADING, C_GOLD);
 }
 
 /* ---- layout ---- */
@@ -521,7 +973,9 @@ static void layout_buttons(void)
         for (int i = 0; i < 4; i++)
             btn[B_SKIN0 + i] = (struct gfx_rect){ x + i * (dot + gap), y, dot, dot };
         y += dot + 34;
-        btn[B_SOUND] = (struct gfx_rect){ x, y, pw, 84 };
+        int hw2 = (pw - 20) / 2;
+        btn[B_SOUND] = (struct gfx_rect){ x, y, hw2, 84 };
+        btn[B_FLIP] = (struct gfx_rect){ x + hw2 + 20, y, hw2, 84 };
     } else if (screen == S_PLAY) {
         btn[B_PAUSE] = (struct gfx_rect){ w - 12 - 96, 12, 96, 96 };
     } else if (screen == S_PAUSE) {
@@ -546,7 +1000,7 @@ static void add_car(int lane, int z)
     for (int i = 0; i < CARS_MAX; i++)
         if (!cars[i].used) {
             int roll = (int)(rnd() % 100);
-            cars[i] = (struct car){ 1, lane, z, z, roll < 40 ? 0 : roll < 70 ? 1 : roll < 90 ? 2 : 3, 0,
+            cars[i] = (struct car){ 1, lane, z, z, roll < 40 ? 0 : roll < 70 ? 1 : roll < 90 ? 2 : 3, 0, lane_sp[lane],
                                     traffic_col[rnd() % 8] };
             return;
         }
@@ -562,10 +1016,14 @@ static void spawn_wave(int z)
             add_car(lane, z + (int)(rnd() % 900));
 }
 
-static int gap_for(int s)
+static int gap_for(void)                 /* how far the player drives between one wave of traffic and the next */
 {
-    int t = 1300 - imin(400, play_ms / 250) + (int)(rnd() % 600);
-    return imax(3200, s * t / 1000);
+    return 5200 + (int)(rnd() % 3000) - imin(1400, play_ms / 30);
+}
+
+static int spawn_z(void)                 /* far off, in the haze */
+{
+    return gl_active() ? zp + 28000 : zfar;
 }
 
 static void start_game(void)
@@ -574,25 +1032,24 @@ static void start_game(void)
     memset(parts, 0, sizeof(parts));
     play_ms = 0;
     v = V_START;
-    tv = 1200 + v / 10;
     scroll = 0;
     dist = 0;
     bonus = 0;
     score = 0;
     new_best = 0;
-    lane_target = 1 + (int)(rnd() % 2);
-    xp = lane_x(lane_target);
+    xp = lane_x(1 + (int)(rnd() % 2));
+    steer = steer_s = braking = touch_steer = touch_brake = finger_down = 0;
     curve = 0;
     curve_tgt = 0;
     curve_timer = 4000;
-    free_lane = lane_target;
+    free_lane = 1;
     msg[0] = 0;
-    int s0 = v - tv;
     for (int k = 0; k < 3; k++)
-        spawn_wave(zp + 4500 + k * s0 * 16 / 10);
+        spawn_wave(zp + 9000 + k * 7000);
     wave_acc = 0;
-    next_gap = gap_for(s0);
+    next_gap = gap_for();
     screen = S_PLAY;
+    brake_hint_until = (int)k86_uptime_ms() + 5000;
     layout_buttons();
     last_frame = now_ms = k86_uptime_ms();
     front_checked = now_ms;
@@ -620,13 +1077,16 @@ static void to_screen(enum screen s)
     pressed = B_NONE;
     g_on = 0;
     layout_buttons();
-    k86_timer_set(s == S_PLAY || s == S_DYING ? FRAME_MS : 0);
+    k86_timer_set(s == S_PLAY || s == S_DYING ? FRAME_MS : s == S_MENU ? 300 : 0);
 }
 
 static void crash(void)
 {
     crash_since = now_ms;
-    add_burst(proj_x(xp, zp), proj_y(zp));
+    if (gl_active())
+        add_burst(gl_player_x(), gl_player_y());
+    else
+        add_burst(proj_x(xp, zp), proj_y(zp));
     sound(220, 90, 90, 260);
     if (score > (int)sv.best) {
         sv.best = (uint32_t)score;
@@ -636,21 +1096,39 @@ static void crash(void)
     to_screen(S_DYING);
 }
 
-static void change_lane(int dir)
+/* The input as one wanted steering, -1000 (full left) .. 1000: the tilt, else a finger in the top half, else keys. */
+static int wanted_steer(void)
 {
-    int t = iclamp(lane_target + dir, 0, LANES - 1);
-    if (t != lane_target) {
-        lane_target = t;
-        sound(420, 14, 0, 0);
+    int w = 0;
+    if (acc_ok && acc_read() == 0) {
+        int sgn = acc_rx >= 0 ? 1 : -1;                 /* which way up the phone is: the wheel turns the other way */
+        int lock = acc_g * 42 / 100;                    /* full lock at about 25 degrees of turn */
+        int t = sgn * acc_ry * 1000 / lock;
+        if (t > -40 && t < 40)
+            t = 0;                                      /* a dead zone */
+        w = iclamp(t, -1000, 1000);
+        if (sv.flip)
+            w = -w;
     }
+    if (touch_steer)
+        w = touch_steer;
+    if (key_l || key_r)
+        w = (key_r ? 800 : 0) - (key_l ? 800 : 0);
+    return w;
 }
 
 static void update(int dt)
 {
     play_ms += dt;
-    v = imin(V_MAX, V_START + play_ms * 60 / 1000);
-    tv = 1200 + v / 10;
-    int s = v - tv;
+    braking = touch_brake || key_b;
+
+    /* the speed: it picks up by itself, a normal car's way (quick at first, less so the faster it goes); the
+     * brake is hard; never below the crawl */
+    if (braking)
+        v -= BRAKE_DECEL * dt / 1000;
+    else
+        v += (1100 - 700 * v / V_MAX) * 611 / 10000 * dt / 1000;
+    v = iclamp(v, V_MIN, V_MAX);
     scroll += v * dt / 1000;
     dist += v * dt / 1000;
     score = dist / 200 + bonus;
@@ -664,31 +1142,39 @@ static void update(int dt)
     int dc = curve_tgt - curve, stp = imax(1, dt / 10);
     curve += iclamp(dc, -stp, stp);
 
-    /* the player slides to their lane */
-    int tx = lane_x(lane_target), mv = LANE_SPEED * dt / 1000;
-    xp += iclamp(tx - xp, -mv, mv);
+    /* steering: smooth, the car slides across the road wherever it is told, quicker the faster it goes */
+    steer = wanted_steer();
+    steer_s += (steer - steer_s) * imin(100, dt * 100 / 90) / 100;
+    int lat = 900 + v / 6;
+    xp += steer_s * lat / 1000 * dt / 1000;
+    if (xp > RAIL_X || xp < -RAIL_X) {                  /* the guard rail: it scrapes, and slows the car */
+        xp = iclamp(xp, -RAIL_X, RAIL_X);
+        v = imax(V_MIN, v - 1400 * dt / 1000);
+    }
 
-    /* traffic */
-    wave_acc += s * dt / 1000;
+    /* traffic: waves of cars, each lane at its own speed (a lane never overtakes itself) */
+    wave_acc += v * dt / 1000;
     if (wave_acc >= next_gap) {
         wave_acc -= next_gap;
-        spawn_wave(zfar);
-        next_gap = gap_for(s);
+        spawn_wave(spawn_z());
+        next_gap = gap_for();
     }
     for (int i = 0; i < CARS_MAX; i++) {
         struct car *c = &cars[i];
         if (!c->used)
             continue;
         c->prev_z = c->z;
-        c->z -= s * dt / 1000;
+        c->z -= (v - c->sp) * dt / 1000;
         int dx = iabs(lane_x(c->lane) - xp);
-        if (c->prev_z > zp - HIT_DZ && c->z < zp + HIT_DZ && dx < 390) {
+        int half_l = (car_h[c->kind] + car_h[0]) / 2 * 9 / 10, half_w = (car_w[c->kind] + car_w[0]) / 2 - 25;
+        int z_lo = imin(c->prev_z, c->z), z_hi = imax(c->prev_z, c->z);
+        if (z_lo <= zp + half_l && z_hi >= zp - half_l && dx < half_w) {
             crash();
             return;
         }
-        if (!c->near_done && c->z < zp - HIT_DZ) {
+        if (!c->near_done && c->z < zp - half_l) {
             c->near_done = 1;
-            if (dx < 470) {                     /* squeezed past: the player was partly in the next lane */
+            if (dx < half_w + 130) {            /* squeezed past */
                 bonus += 50;
                 memcpy(msg, "CLOSE! +50", sizeof("CLOSE! +50"));
                 msg_until = now_ms + 700;
@@ -725,7 +1211,7 @@ static void demo_scene(void)
     cars[0].kind = 2;
     cars[2].kind = 3;
     xp = lane_x(1);
-    lane_target = 1;
+    steer_s = 0;
     curve = 0;
     scroll = 0;
     v = V_START;
@@ -758,8 +1244,8 @@ static void draw_menu(void)
         gfx_fill_circle(&canvas, r.x + r.w / 2, r.y + r.h / 2, r.w / 2 - 5, skin_col[i]);
     }
     draw_button(B_SOUND, sv.sound ? "Sound: on" : "Sound: off", 0);
-    text_shadow_c(canvas.w / 2, btn[B_SOUND].y + btn[B_SOUND].h + 40, "Swipe or tap left and right", TEXT_SMALL, C_TEXT);
-    text_shadow_c(canvas.w / 2, btn[B_SOUND].y + btn[B_SOUND].h + 76, "to change lane", TEXT_SMALL, C_TEXT);
+    draw_button(B_FLIP, sv.flip ? "Steer: flip" : "Steer: normal", 0);
+    text_shadow_c(canvas.w / 2, btn[B_SOUND].y + btn[B_SOUND].h + 16, acc_ok ? "Tilt to steer, bottom half brakes" : "No tilt sensor: drag in the top half", TEXT_SMALL, C_TEXT);
 }
 
 static void draw_over(void)
@@ -813,7 +1299,7 @@ static void redraw(void)
         draw_over();
         break;
     }
-    k86_present(0, 0, canvas.w, canvas.h);
+    present();
 }
 
 static void pause_game(void)
@@ -825,6 +1311,21 @@ static void pause_game(void)
 static void frame(void)
 {
     now_ms = k86_uptime_ms();
+    if (screen == S_MENU) {                 /* waiting for the GPU renderer, and for the phone to be turned */
+        int changed = gl_check();
+        if (!acc_ok && (int)now_ms - acc_tried_ms > 2000)
+            acc_init();
+        if (acc_ok && acc_read() == 0 && (acc_rx > 60 || acc_rx < -60)) {
+            int d = acc_rx > 0 ? 0 : 1;
+            if (d != land_dir) {
+                land_dir = d;
+                changed = 1;
+            }
+        }
+        if (changed)
+            redraw();
+        return;
+    }
     int dt = imin(100, (int)(now_ms - last_frame));
     last_frame = now_ms;
     if (screen == S_PLAY) {
@@ -885,6 +1386,11 @@ static void press_action(int id)
         save();
         sound(500, 40, 0, 0);
         break;
+    case B_FLIP:
+        sv.flip = !sv.flip;
+        save();
+        sound(500, 40, 0, 0);
+        break;
     case B_PAUSE:
         pause_game();
         return;
@@ -902,54 +1408,81 @@ static void press_action(int id)
     redraw();
 }
 
-static void pointer_event(const struct k86_event *ev)
+/* The fingers: the brake is any finger in the bottom half of the (landscape) screen, held; a finger in the top
+ * half steers when there is no tilt sensor. Positions of a second finger come from /dev/shm/lkx-touch2. */
+static void read_fingers(int primary_down, int px, int py)
 {
-    struct wg_pointer p = wg_pointer_make(ev->x, ev->y, ev->buttons, ev->changed, ev->time_ms);
+    int lx, ly, brake = 0;
+    if (primary_down) {
+        to_land(px, py, &lx, &ly);
+        if (button_at(lx, ly) == B_NONE && ly >= canvas.h / 2)
+            brake = 1;
+    }
+    struct k86_touch2 t;
+    if (k86_touch2(&t) && t.n >= 2) {
+        to_land(t.x2 + off_x, t.y2 + off_y, &lx, &ly);
+        if (ly >= canvas.h / 2)
+            brake = 1;
+    }
+    touch_brake = brake;
+}
+
+static void pointer_event(const struct k86_event *ev0)
+{
+    int lx, ly;
+    struct k86_touch2 t2;
+    to_land(ev0->x, ev0->y, &lx, &ly);
+    if (k86_touch2(&t2) && t2.n >= 1) {
+        off_x = ev0->x - t2.x1;
+        off_y = ev0->y - t2.y1;
+    }
+    struct wg_pointer p = wg_pointer_make(lx, ly, ev0->buttons, ev0->changed, ev0->time_ms);
     now_ms = k86_uptime_ms();
     if (screen == S_DYING)
         return;
-    if (p.down) {
-        int id = button_at(p.x, p.y);
-        pressed = id;
-        if (screen == S_PLAY && id == B_NONE) {
-            g_on = 1;
+    if (screen == S_PLAY) {
+        if (p.down) {
+            int id = button_at(p.x, p.y);
+            pressed = id;
+            finger_down = 1;
             g_x0 = p.x;
-            g_y0 = p.y;
-            g_t0 = now_ms;
-            g_moved = 0;
-        } else if (screen != S_PLAY) {
-            redraw();
+        } else if (p.up) {
+            int id = pressed;
+            pressed = B_NONE;
+            finger_down = 0;
+            touch_steer = 0;
+            if (id != B_NONE && button_at(p.x, p.y) == id)
+                press_action(id);
+        } else if (p.held && finger_down && !acc_ok && pressed == B_NONE && p.y < canvas.h / 2) {
+            touch_steer = iclamp((p.x - g_x0) * 1000 / 220, -1000, 1000);     /* a finger slid left or right */
         }
+        read_fingers(finger_down, ev0->x, ev0->y);
+        return;
+    }
+    if (p.down) {
+        pressed = button_at(p.x, p.y);
+        redraw();
         return;
     }
     if (p.up) {
         int id = pressed;
         pressed = B_NONE;
-        if (g_on && screen == S_PLAY) {
-            g_on = 0;
-            if (!g_moved && iabs(p.x - g_x0) < 30 && iabs(p.y - g_y0) < 30 && (int)(now_ms - g_t0) < 350)
-                change_lane(p.x < canvas.w / 2 ? -1 : 1);
-            return;
-        }
         if (id != B_NONE && button_at(p.x, p.y) == id)
             press_action(id);
-        else if (screen != S_PLAY)
+        else
             redraw();
-        return;
-    }
-    if (p.held && screen == S_PLAY && g_on && iabs(p.x - g_x0) >= 64 && iabs(p.x - g_x0) > iabs(p.y - g_y0)) {
-        change_lane(p.x > g_x0 ? 1 : -1);
-        g_x0 = p.x;                             /* a long drag can take more than one lane */
-        g_moved = 1;
     }
 }
 
 static void key_event(const struct k86_event *ev)
 {
-    if (!ev->key.pressed)
-        return;
     uint16_t k = ev->key.key;
     now_ms = k86_uptime_ms();
+    if (k == KEY_LEFT) { key_l = ev->key.pressed; return; }
+    if (k == KEY_RIGHT) { key_r = ev->key.pressed; return; }
+    if (k == KEY_DOWN || k == KEY_SPACE) { key_b = ev->key.pressed; if (screen != S_MENU) return; }
+    if (!ev->key.pressed)
+        return;
     if (k == KEY_ESC) {
         if (screen == S_PLAY)
             press_action(B_PAUSE);
@@ -959,14 +1492,8 @@ static void key_event(const struct k86_event *ev)
             press_action(B_MENU);
         return;
     }
-    if (screen == S_PLAY) {
-        if (k == KEY_LEFT)
-            change_lane(-1);
-        else if (k == KEY_RIGHT)
-            change_lane(1);
-    } else if (screen == S_MENU && (k == KEY_ENTER || k == KEY_SPACE)) {
+    if (screen == S_MENU && (k == KEY_ENTER || k == KEY_SPACE))
         press_action(B_PLAY);
-    }
 }
 
 int main(void)
@@ -974,7 +1501,9 @@ int main(void)
     struct k86_header header;
     if (k86_window_open(&win))
         return 1;
-    canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
+    wcan = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
+    land_alloc();
+    acc_init();
     memset(&header, 0, sizeof(header));
     memcpy(header.title, "Traffic Racer", sizeof("Traffic Racer"));
     k86_header(&header);
@@ -982,6 +1511,7 @@ int main(void)
     now_ms = k86_uptime_ms();
     load();
     layout();
+    gl_start();
     to_screen(S_MENU);
     redraw();
     k86_log("trafficracer: open");
@@ -990,6 +1520,7 @@ int main(void)
         k86_back_wanted(screen != S_MENU);
         if (k86_wait_event(&ev)) {
             k86_timer_set(0);
+            gl_stop();
             return 1;
         }
         switch (ev.type) {
@@ -1007,8 +1538,9 @@ int main(void)
             redraw();
             break;
         case K86_EVENT_RESIZE:
-            canvas.w = ev.x;
-            canvas.h = ev.y;
+            wcan.w = ev.x;
+            wcan.h = ev.y;
+            land_alloc();
             layout();
             layout_buttons();
             now_ms = k86_uptime_ms();
@@ -1019,6 +1551,7 @@ int main(void)
             break;
         case K86_EVENT_CLOSE:
             k86_timer_set(0);
+            gl_stop();
             return 0;
         default:
             break;

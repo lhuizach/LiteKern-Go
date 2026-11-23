@@ -25,9 +25,12 @@ rm -f "$O"/lib/modules/*/build "$O"/lib/modules/*/source
 # Drivers a phone never uses (the RAM disk has to stay small, phone/README.md):
 # filesystems (btrfs, xfs, smb, ...), the firewall, USB HID, sensors, and all but the camera pipeline of the media drivers.
 VER=$(basename "$M")
-for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid drivers/iio; do
+for d in fs net/netfilter net/ipv4/netfilter net/ipv6/netfilter drivers/hid; do
     rm -rf "$O/lib/modules/$VER/kernel/$d"
 done
+# Sensors: all but the accelerometer (a Bosch BMC150 on i2c 5, read by Traffic Racer for steering) and what it needs.
+find "$O/lib/modules/$VER/kernel/drivers/iio" -name "*.ko*" |
+    grep -vE "/(bmc150-accel-core|bmc150-accel-i2c|industrialio-triggered-buffer|kfifo_buf)\.ko" | xargs -r rm -f
 # Of the media drivers, only what the camera pipeline (CAMSS) needs.
 find "$O/lib/modules/$VER/kernel/drivers/media" -name "*.ko*" |
     grep -vE "/drivers/media/(v4l2-core|mc|common/videobuf2|platform/qcom/camss)/" | xargs -r rm -f

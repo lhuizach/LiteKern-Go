@@ -5,7 +5,7 @@
   appslot.py NAME --tests "DIR DIR"    the same plus those app folders (the tests' misbehaving apps),
                                        in that order, as `make EXTRA_APPS="DIR DIR"` has them
   appslot.py NAME --drawer             where it is in the all-apps drawer instead (alphabetical, 4 columns
-                                       of 168 x 184 px tiles from y 216)
+                                       of 168 px wide tiles, rows from y 358 under the Recent card)
 
 So a test taps "Calculator" and adding an app can't move it: the apps are laid out the way the
 shell does it (kernel/appreg.c, kernel/desktop.c):
@@ -54,7 +54,9 @@ def main():
         raise SystemExit(1)
     if drawer:
         k = sorted(names, key=str.lower).index(name)
-        print((W - 4 * 168) // 2 + 84 + (k % 4) * 168, 216 + (k // 4) * 184)
+        rows = (len(names) + 3) // 4                    # shell's drw_row_h(): as tall as a home tile if they all fit
+        rh = max(120, min(184, (1280 - 358 - 24) // rows))
+        print((W - 4 * 168) // 2 + 84 + (k % 4) * 168, 358 + 72 + (k // 4) * rh)
         return
     dock = [n for n in DOCK if n in names]
     if name in dock:
