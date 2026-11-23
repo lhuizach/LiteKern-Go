@@ -653,7 +653,7 @@ int sys_app(uint32_t nr, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4,
         return 0;
     case SYS_SETUP_RUN:
         if (!setup_active())
-            setup_start();
+            setup_start(0);
         return 0;
     case SYS_WINDOW_BARE:
         if (!lkx_window())

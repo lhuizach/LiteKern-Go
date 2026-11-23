@@ -8,6 +8,7 @@
 #include "kernel/machine.h"
 #include "kernel/net.h"
 #include "kernel/timezones.h"
+#include "kernel/users.h"
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/screen.h"
@@ -28,7 +29,7 @@
 #define BLUR_R 22                               /* each of three box blurs */
 #define MASK_MAX (720 * 420)
 
-enum { P_HELLO, P_WIFI, P_ZONE, P_PRIVACY, P_LOOK, P_DONE, P_COUNT };
+enum { P_HELLO, P_WIFI, P_ZONE, P_PRIVACY, P_NAME, P_PIN, P_LOOK, P_DONE, P_COUNT };
 static const char *const words[] = { "hello", "bonjour", "hola", "ciao", "hallo", "hej", "ola", "salut" };
 #define NWORDS ((int)(sizeof(words) / sizeof(words[0])))
 
@@ -52,7 +53,27 @@ static struct {
     int nkeys;
     /* time zone */
     int zone, zscroll, zlast_y, zmoved;
+    /* the first run only: your name and a PIN */
+    int first, name_len, pin_len;
+    char name[32], pin[10];
+    const char *kb_act;
+    struct gfx_rect pad[12], skip;
+    char padc[12];
 } su;
+
+/* The name and PIN pages are for the first run; "Run Setup Again" leaves who you are alone. */
+static int hidden(int page)
+{
+    return !su.first && (page == P_NAME || page == P_PIN);
+}
+
+static int step(int page, int dir)
+{
+    do
+        page += dir;
+    while (page > P_HELLO && page < P_DONE && hidden(page));
+    return page;
+}
 
 static struct gfx_surface *S(void) { return screen_surface(); }
 static int imin(int a, int b) { return a < b ? a : b; }
@@ -188,8 +209,8 @@ static void button(struct gfx_surface *s, struct gfx_rect r, const char *label, 
     const struct theme *t = theme_get();
     gfx_blend_round_rect(s, r.x, r.y, r.w, r.h, r.h / 2, t->accent_bg, (uint32_t)alpha);
     int tw = text_width(label, TEXT_BOLD);
-    if (alpha > 200)
-        text_draw(s, r.x + (r.w - tw) / 2, r.y + (r.h - text_height(TEXT_BOLD)) / 2, label, TEXT_BOLD, t->accent_fg);
+    text_draw(s, r.x + (r.w - tw) / 2, r.y + (r.h - text_height(TEXT_BOLD)) / 2, label, TEXT_BOLD,
+              alpha > 200 ? t->accent_fg : gfx_mix(t->accent_fg, 0x000000u, 120));        /* dimmed while it can't be pressed */
 }
 
 static void centred(struct gfx_surface *s, int y, const char *str, enum text_style st, uint32_t c)
@@ -317,7 +338,8 @@ static void draw_keyboard(struct gfx_surface *s)
     gfx_blend_round_rect(s, jn.x, jn.y, jn.w, jn.h, 16, t->accent_bg, 240);
     text_draw(s, mode.x + (mode.w - text_width(su.kb_sym ? "abc" : "123", TEXT_BOLD)) / 2, mode.y + (mode.h - text_height(TEXT_BOLD)) / 2,
               su.kb_sym ? "abc" : "123", TEXT_BOLD, WHITE);
-    text_draw(s, jn.x + (jn.w - text_width("Join", TEXT_BOLD)) / 2, jn.y + (jn.h - text_height(TEXT_BOLD)) / 2, "Join", TEXT_BOLD, t->accent_fg);
+    const char *act = su.kb_act ? su.kb_act : "Join";
+    text_draw(s, jn.x + (jn.w - text_width(act, TEXT_BOLD)) / 2, jn.y + (jn.h - text_height(TEXT_BOLD)) / 2, act, TEXT_BOLD, t->accent_fg);
 }
 
 static void draw_chrome(struct gfx_surface *s, int page)
@@ -328,8 +350,13 @@ static void draw_chrome(struct gfx_surface *s, int page)
     int cx = 62, cy = 92;
     gfx_thick_line(s, cx + 8, cy - 18, cx - 10, cy, 5, WHITE);
     gfx_thick_line(s, cx - 10, cy, cx + 8, cy + 18, 5, WHITE);
-    int n = P_COUNT - 1, x = (s->w - (n * 22 + 22)) / 2;                     /* the progress: a wide dot for this page */
-    for (int i = 1; i <= n; i++) {
+    int n = 0;                                                               /* the progress: a wide dot for this page */
+    for (int i = 1; i < P_COUNT; i++)
+        n += !hidden(i);
+    int x = (s->w - (n * 24 + 30)) / 2;
+    for (int i = 1; i < P_COUNT; i++) {
+        if (hidden(i))
+            continue;
         int cur = i == page;
         gfx_fill_round_rect(s, x, 84, cur ? 44 : 14, 14, 7, cur ? WHITE : gfx_mix(WHITE, 0x000000u, 90));
         x += (cur ? 44 : 14) + 10;
@@ -378,6 +405,7 @@ static void draw_page(struct gfx_surface *s, int page)
                 centred(s, 460, "Connecting...", TEXT_SMALL, 0xc8c8c8u);
                 spinner(s, w / 2 - text_width("Connecting...", TEXT_SMALL) / 2 - 30, 460 + text_height(TEXT_SMALL) / 2, 14, WHITE);
             }
+            su.kb_act = "Join";
             draw_keyboard(s);
             return;
         }
@@ -451,6 +479,49 @@ static void draw_page(struct gfx_surface *s, int page)
         button(s, su.btn, "Continue", 235);
         return;
     }
+    if (page == P_NAME) {
+        draw_chrome(s, page);
+        centred(s, 190, "What's your name?", TEXT_HEADING, WHITE);
+        centred(s, 252, "It goes on your lock screen", TEXT_SMALL, 0xc8c8c8u);
+        su.field = (struct gfx_rect){ 44, 330, w - 88, 100 };
+        su.showbtn = (struct gfx_rect){ 0, 0, 0, 0 };
+        gfx_blend_round_rect(s, su.field.x, su.field.y, su.field.w, su.field.h, 28, WHITE, 36);
+        if (su.name_len)
+            text_draw_fit(s, su.field.x + 28, su.field.y + (su.field.h - text_height(TEXT_BODY)) / 2, su.name, su.field.w - 56, TEXT_BODY, WHITE);
+        else
+            text_draw(s, su.field.x + 28, su.field.y + (su.field.h - text_height(TEXT_BODY)) / 2, "Name", TEXT_BODY, 0x909090u);
+        su.kb_act = "Next";
+        draw_keyboard(s);
+        return;
+    }
+    if (page == P_PIN) {
+        draw_chrome(s, page);
+        centred(s, 190, "Lock your phone?", TEXT_HEADING, WHITE);
+        centred(s, 252, "Choose a PIN of 4 to 8 digits, or use no lock", TEXT_SMALL, 0xc8c8c8u);
+        int dx = (w - (8 * 52)) / 2;
+        for (int i = 0; i < 8; i++)
+            gfx_fill_circle(s, dx + i * 52 + 26, 340, 12, i < su.pin_len ? WHITE : gfx_mix(WHITE, 0x000000u, 80));
+        static const char pc[12] = { '1', '2', '3', '4', '5', '6', '7', '8', '9', 0, '0', 2 };
+        int kw = 170, kh = 96, gx = 24, gy = 16, x0 = (w - 3 * kw - 2 * gx) / 2, y0 = 410;
+        for (int i = 0; i < 12; i++) {
+            su.padc[i] = pc[i];
+            if (!pc[i]) { su.pad[i] = (struct gfx_rect){ 0, 0, 0, 0 }; continue; }
+            struct gfx_rect k = { x0 + (i % 3) * (kw + gx), y0 + (i / 3) * (kh + gy), kw, kh };
+            su.pad[i] = k;
+            gfx_blend_round_rect(s, k.x, k.y, k.w, k.h, kh / 2, WHITE, pc[i] == 2 ? 18 : 36);
+            char one[2] = { pc[i], 0 };
+            if (pc[i] == 2) {
+                gfx_thick_line(s, k.x + k.w / 2 + 14, k.y + kh / 2 - 14, k.x + k.w / 2 - 14, k.y + kh / 2, 4, WHITE);
+                gfx_thick_line(s, k.x + k.w / 2 - 14, k.y + kh / 2, k.x + k.w / 2 + 14, k.y + kh / 2 + 14, 4, WHITE);
+            } else {
+                text_draw(s, k.x + (k.w - text_width(one, TEXT_HEADING)) / 2, k.y + (k.h - text_height(TEXT_HEADING)) / 2, one, TEXT_HEADING, WHITE);
+            }
+        }
+        button(s, su.btn, "Set PIN", su.pin_len >= 4 ? 235 : 90);
+        su.skip = (struct gfx_rect){ (w - 340) / 2, h - 124, 340, 80 };
+        text_draw(s, su.skip.x + (su.skip.w - text_width("Use no lock", TEXT_BOLD)) / 2, su.skip.y + (su.skip.h - text_height(TEXT_BOLD)) / 2, "Use no lock", TEXT_BOLD, 0xe0e0e0u);
+        return;
+    }
     if (page == P_LOOK) {
         draw_chrome(s, page);
         centred(s, 190, "Choose your look", TEXT_HEADING, WHITE);
@@ -514,11 +585,37 @@ static void go(int page)
         su.entering = 0;
         wifi_scan();
     }
+    if (page == P_NAME && !su.name_len && users_count() > 0) {          /* the name it has now, to change */
+        const struct user *u = users_get(0);
+        if (u)
+            for (su.name_len = 0; u->name[su.name_len] && su.name_len < 24; su.name_len++)
+                su.name[su.name_len] = u->name[su.name_len];
+        su.name[su.name_len] = 0;
+    }
+    if (page == P_PIN)
+        su.pin_len = 0;
     draw_page(&su.page_pic, page);
+}
+
+static void apply_account(void)
+{
+    if (!su.first)
+        return;
+    if (users_count() == 0) {
+        if (users_add(su.name_len && !users_bad_name(su.name) ? su.name : "User", su.pin_len >= 4 ? su.pin : "", 1) >= 0)
+            users_set_current(0);
+        return;
+    }
+    if (su.name_len && !users_bad_name(su.name))
+        users_rename(0, su.name);
+    if (su.pin_len >= 4)
+        users_set_password(0, su.pin);
+    users_set_current(0);                              /* you stay logged in: this is your first start */
 }
 
 static void finish(void)
 {
+    apply_account();
     kprintf("setup: done (%s, accent %s)\n", su.light ? "light" : "dark", theme_accent(su.accent, 0));
     su.active = 0;
     wallpaper_refresh();
@@ -533,7 +630,7 @@ static void finish(void)
 
 /* --- the interface ------------------------------------------------------------------------------------------ */
 
-void setup_start(void)
+void setup_start(int first)
 {
     if (buffer(&su.bg) || buffer(&su.page_pic) || buffer(&su.prev_pic) || buffer(&su.tmp)) {
         kprintf("setup: out of memory; skipped\n");
@@ -542,6 +639,9 @@ void setup_start(void)
     /* the scratch holds a whole word at 240 px ("bonjour" is about 900 wide): the screen's pixels, shaped wide */
     su.tmp.w = su.tmp.stride = 2048;
     su.tmp.h = (int)((uint32_t)S()->w * (uint32_t)S()->h / 2048);
+    su.first = first;
+    su.name_len = su.pin_len = 0;
+    su.name[0] = su.pin[0] = 0;
     su.light = theme_is_light();
     su.zone = 0;
     su.zscroll = 0;
@@ -623,8 +723,28 @@ void setup_tick(void)
     screen_present();
 }
 
+static void next_from_name(void);
+
 static void key_press(char c)
 {
+    if (su.page == P_NAME) {
+        if (c == 1) {
+            su.kb_shift = !su.kb_shift;
+        } else if (c == 2) {
+            if (su.name_len > 0)
+                su.name[--su.name_len] = 0;
+        } else if (c == 3) {
+            su.kb_sym = !su.kb_sym;
+        } else if (c == 4) {
+            next_from_name();
+        } else if (su.name_len < 24) {
+            su.name[su.name_len++] = c;
+            su.name[su.name_len] = 0;
+            if (su.kb_shift && !su.kb_sym)
+                su.kb_shift = 0;
+        }
+        return;
+    }
     if (c == 1) {                                       /* shift */
         su.kb_shift = !su.kb_shift;
     } else if (c == 2) {                                /* backspace */
@@ -648,17 +768,22 @@ static void key_press(char c)
     su.join_bad = c == 4 ? su.join_bad : 0;
 }
 
+static void next_from_name(void)
+{
+    go(step(P_NAME, 1));
+}
+
 static void tap(int x, int y)
 {
     if (uptime_ms() - su.page_at < FADE_MS)
         return;
     if (su.page != P_HELLO && su.page != P_DONE && inside(su.back, x, y)) {
-        if (su.page == P_WIFI && su.entering)
+        if (su.page == P_WIFI && su.entering) {
             su.entering = 0;
-        else
-            go(su.page - 1);
-        if (su.page == P_WIFI)
             show_now(P_WIFI);
+        } else {
+            go(step(su.page, -1));
+        }
         return;
     }
     if (su.page == P_HELLO) {
@@ -710,7 +835,7 @@ static void tap(int x, int y)
     }
     if (su.page == P_ZONE) {
         if (inside(su.btn, x, y)) {
-            go(P_PRIVACY);
+            go(step(P_ZONE, 1));
             return;
         }
         for (int i = 0; i < LKX_ZONES; i++) {
@@ -726,7 +851,39 @@ static void tap(int x, int y)
     }
     if (su.page == P_PRIVACY) {
         if (inside(su.btn, x, y))
-            go(P_LOOK);
+            go(step(P_PRIVACY, 1));
+        return;
+    }
+    if (su.page == P_NAME) {
+        for (int i = 0; i < su.nkeys; i++)
+            if (inside(su.keys[i].r, x, y)) {
+                key_press(su.keys[i].c);
+                if (su.page == P_NAME)
+                    show_now(P_NAME);
+                break;
+            }
+        return;
+    }
+    if (su.page == P_PIN) {
+        for (int i = 0; i < 12; i++)
+            if (su.padc[i] && inside(su.pad[i], x, y)) {
+                if (su.padc[i] == 2) {
+                    if (su.pin_len > 0)
+                        su.pin[--su.pin_len] = 0;
+                } else if (su.pin_len < 8) {
+                    su.pin[su.pin_len++] = su.padc[i];
+                    su.pin[su.pin_len] = 0;
+                }
+                show_now(P_PIN);
+                return;
+            }
+        if (inside(su.btn, x, y) && su.pin_len >= 4)
+            go(step(P_PIN, 1));
+        else if (inside(su.skip, x, y)) {
+            su.pin_len = 0;
+            su.pin[0] = 0;
+            go(step(P_PIN, 1));
+        }
         return;
     }
     if (su.page == P_LOOK) {
@@ -799,14 +956,14 @@ void setup_key(uint16_t key, int pressed)
     if (key == KEY_ENTER || key == KEY_SPACE) {
         if (su.page == P_DONE)
             finish();
-        else
-            go(su.page + 1);
+        else if (su.page != P_NAME && su.page != P_PIN)
+            go(step(su.page, 1));
     } else if ((key == KEY_ESC || key == KEY_PHONE_BACK) && su.page > P_HELLO) {
         if (su.page == P_WIFI && su.entering) {
             su.entering = 0;
             show_now(P_WIFI);
         } else {
-            go(su.page - 1);
+            go(step(su.page, -1));
         }
     }
 }

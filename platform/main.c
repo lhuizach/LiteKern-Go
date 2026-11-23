@@ -29,6 +29,7 @@
 #include "kernel/screen.h"
 #include "kernel/screensaver.h"
 #include "kernel/serial.h"
+#include "kernel/errno.h"
 #include "kernel/settings.h"
 #include "kernel/splash.h"
 #include "kernel/status.h"
@@ -50,6 +51,7 @@
 void plat_setup_finished(void)
 {
     unlink(SETUP_FLAG);
+    settings_write_file("setup-done", "1", 1);          /* a fresh phone only runs it once */
 }
 
 extern const uint8_t vga_font_8x16[4096];      /* build-linux/gen/vgafont.c */
@@ -394,8 +396,13 @@ int main(int argc, char **argv)
     desktop_start();
     /* The first-run setup: on the phone when /extras/lkx-setup exists (made by a fresh install, or by hand),
      * on the PC with LKX_SETUP=1. */
-    if (getenv("LKX_SETUP") || access(SETUP_FLAG, F_OK) == 0)
-        setup_start();
+    {
+        char probe[1];
+        int fresh = access("/extras", F_OK) == 0 && settings_read_file("setup-done", probe, 1) == -ENOENT &&
+                    settings_read_file("settings.txt", probe, 1) == -ENOENT;     /* a phone that has never been set up */
+        if (getenv("LKX_SETUP") || access(SETUP_FLAG, F_OK) == 0 || fresh)
+            setup_start(1);
+    }
 #endif
     ready = 1;
     for (;;)

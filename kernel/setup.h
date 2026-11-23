@@ -7,7 +7,8 @@
 
 #include <stdint.h>
 
-void setup_start(void);
+/* first: a first run (it also asks your name and a PIN); 0: "Run Setup Again", which leaves who you are alone. */
+void setup_start(int first);
 int setup_active(void);
 void setup_tick(void);                                  /* every pass of the input loop: the animation */
 void setup_pointer(int x, int y, uint8_t buttons);
