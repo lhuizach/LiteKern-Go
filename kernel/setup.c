@@ -6,6 +6,8 @@
 #include "kernel/kern86_abi.h"
 #include "kernel/lockscreen.h"
 #include "kernel/machine.h"
+#include "kernel/net.h"
+#include "kernel/timezones.h"
 #include "kernel/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/screen.h"
@@ -26,7 +28,7 @@
 #define BLUR_R 22                               /* each of three box blurs */
 #define MASK_MAX (720 * 420)
 
-enum { P_HELLO, P_LOOK, P_DONE, P_COUNT };
+enum { P_HELLO, P_WIFI, P_ZONE, P_PRIVACY, P_LOOK, P_DONE, P_COUNT };
 static const char *const words[] = { "hello", "bonjour", "hola", "ciao", "hallo", "hej", "ola", "salut" };
 #define NWORDS ((int)(sizeof(words) / sizeof(words[0])))
 
@@ -40,6 +42,16 @@ static struct {
     int down, down_x, down_y;
     struct gfx_rect btn, card[2], dot[8];
     int last_rise, last_alpha, drawn_word;
+    /* Wi-Fi */
+    struct k86_wifi nets[8];
+    int nnets, sel, entering, kb_sym, kb_shift, show_pw, joining, joined, join_bad, pw_len;
+    uint32_t poll_at;
+    char pw[64], joined_ssid[K86_SSID_MAX];
+    struct gfx_rect rows[8], rescan, back, field, showbtn;
+    struct { struct gfx_rect r; char c; } keys[48];
+    int nkeys;
+    /* time zone */
+    int zone, zscroll, zlast_y, zmoved;
 } su;
 
 static struct gfx_surface *S(void) { return screen_surface(); }
@@ -205,27 +217,236 @@ static void mock(struct gfx_surface *s, struct gfx_rect r, int light, int select
         gfx_fill_round_rect(s, r.x + 30 + i * (r.w - 60) / 4 + 6, r.y + r.h - 62, (r.w - 60) / 4 - 12, 36, 10, i == 0 ? ac : bg);
 }
 
+/* --- Wi-Fi: the list, the password and the keyboard for it ---------------------------------------------------- */
+
+static void wifi_scan(void)
+{
+    su.nnets = net_scan(su.nets, 8);
+    if (su.nnets < 0)
+        su.nnets = 0;
+}
+
+static void wifi_poll(void)
+{
+    struct k86_net n;
+    net_status(&n);
+    if (n.wifi == K86_NET_UP) {
+        su.joining = 0;
+        su.joined = 1;
+        su.join_bad = 0;
+        memcpy(su.joined_ssid, n.ssid, sizeof(su.joined_ssid));
+    } else if (n.wifi == K86_NET_WRONG_KEY) {
+        su.joining = 0;
+        su.join_bad = 1;
+    }
+}
+
+static void bars(struct gfx_surface *s, int x, int y, int signal, uint32_t c)
+{
+    for (int i = 0; i < 4; i++) {
+        int h = 10 + i * 8;
+        gfx_fill_round_rect(s, x + i * 12, y + 34 - h, 8, h, 3, signal * 4 / 100 >= i ? c : gfx_mix(c, 0x000000u, 70));
+    }
+}
+
+static void lock_icon(struct gfx_surface *s, int x, int y, uint32_t c)
+{
+    gfx_fill_round_rect(s, x, y + 10, 24, 18, 4, c);
+    gfx_rect_outline(s, x + 5, y, 14, 14, c);
+    gfx_rect_outline(s, x + 6, y + 1, 12, 12, c);
+}
+
+static const char *const kb_rows[2][3] = {
+    { "qwertyuiop", "asdfghjkl", "zxcvbnm" },
+    { "1234567890", "-/:;()&@\"$", ".,?!'#%+=_" },
+};
+
+static void draw_keyboard(struct gfx_surface *s)
+{
+    const struct theme *t = theme_get();
+    int w = s->w, kh = 88, gap = 9, y0 = s->h - 4 * (kh + gap) - 20, n = 0;
+    su.nkeys = 0;
+    for (int r = 0; r < 3; r++) {
+        const char *row = kb_rows[su.kb_sym][r];
+        int len = (int)strlen(row), kw = (w - 2 * 14 - 9 * gap) / 10;
+        int side = r == 2 ? kw * 3 / 2 : 0, x0 = (w - len * kw - (len - 1) * gap) / 2;
+        if (r == 2)
+            x0 = 14 + side + gap;
+        for (int i = 0; i < len; i++) {
+            char c = row[i];
+            if (!su.kb_sym && su.kb_shift && c >= 'a' && c <= 'z')
+                c = (char)(c - 32);
+            struct gfx_rect k = { x0 + i * (kw + gap), y0 + r * (kh + gap), kw, kh };
+            su.keys[n].r = k; su.keys[n++].c = c;
+            gfx_blend_round_rect(s, k.x, k.y, k.w, k.h, 16, WHITE, 38);
+            char one[2] = { c, 0 };
+            text_draw(s, k.x + (k.w - text_width(one, TEXT_BODY)) / 2, k.y + (k.h - text_height(TEXT_BODY)) / 2, one, TEXT_BODY, WHITE);
+        }
+        if (r == 2) {
+            struct gfx_rect sh = { 14, y0 + r * (kh + gap), side, kh }, bk = { w - 14 - side, y0 + r * (kh + gap), side, kh };
+            su.keys[n].r = sh; su.keys[n++].c = 1;                              /* shift (or #+=) */
+            su.keys[n].r = bk; su.keys[n++].c = 2;                              /* backspace */
+            gfx_blend_round_rect(s, sh.x, sh.y, sh.w, sh.h, 16, su.kb_shift && !su.kb_sym ? t->accent_bg : WHITE, su.kb_shift && !su.kb_sym ? 230 : 20);
+            gfx_blend_round_rect(s, bk.x, bk.y, bk.w, bk.h, 16, WHITE, 20);
+            const char *l1 = "^", *l2 = "<";
+            text_draw(s, sh.x + (sh.w - text_width(l1, TEXT_BOLD)) / 2, sh.y + (sh.h - text_height(TEXT_BOLD)) / 2, l1, TEXT_BOLD, WHITE);
+            text_draw(s, bk.x + (bk.w - text_width(l2, TEXT_BOLD)) / 2, bk.y + (bk.h - text_height(TEXT_BOLD)) / 2, l2, TEXT_BOLD, WHITE);
+        }
+    }
+    int by = y0 + 3 * (kh + gap), mode_w = 150, join_w = 190;
+    struct gfx_rect mode = { 14, by, mode_w, kh }, sp = { 14 + mode_w + gap, by, w - 28 - mode_w - join_w - 2 * gap, kh },
+                    jn = { w - 14 - join_w, by, join_w, kh };
+    su.keys[n].r = mode; su.keys[n++].c = 3;
+    su.keys[n].r = sp; su.keys[n++].c = ' ';
+    su.keys[n].r = jn; su.keys[n++].c = 4;
+    su.nkeys = n;
+    gfx_blend_round_rect(s, mode.x, mode.y, mode.w, mode.h, 16, WHITE, 20);
+    gfx_blend_round_rect(s, sp.x, sp.y, sp.w, sp.h, 16, WHITE, 38);
+    gfx_blend_round_rect(s, jn.x, jn.y, jn.w, jn.h, 16, t->accent_bg, 240);
+    text_draw(s, mode.x + (mode.w - text_width(su.kb_sym ? "abc" : "123", TEXT_BOLD)) / 2, mode.y + (mode.h - text_height(TEXT_BOLD)) / 2,
+              su.kb_sym ? "abc" : "123", TEXT_BOLD, WHITE);
+    text_draw(s, jn.x + (jn.w - text_width("Join", TEXT_BOLD)) / 2, jn.y + (jn.h - text_height(TEXT_BOLD)) / 2, "Join", TEXT_BOLD, t->accent_fg);
+}
+
+static void draw_chrome(struct gfx_surface *s, int page)
+{
+    if (page == P_HELLO)
+        return;
+    su.back = (struct gfx_rect){ 14, 44, 96, 96 };
+    int cx = 62, cy = 92;
+    gfx_thick_line(s, cx + 8, cy - 18, cx - 10, cy, 5, WHITE);
+    gfx_thick_line(s, cx - 10, cy, cx + 8, cy + 18, 5, WHITE);
+    int n = P_COUNT - 1, x = (s->w - (n * 22 + 22)) / 2;                     /* the progress: a wide dot for this page */
+    for (int i = 1; i <= n; i++) {
+        int cur = i == page;
+        gfx_fill_round_rect(s, x, 84, cur ? 44 : 14, 14, 7, cur ? WHITE : gfx_mix(WHITE, 0x000000u, 90));
+        x += (cur ? 44 : 14) + 10;
+    }
+}
+
+static void secondary(struct gfx_surface *s, struct gfx_rect r, const char *label)
+{
+    gfx_blend_round_rect(s, r.x, r.y, r.w, r.h, r.h / 2, WHITE, 30);
+    text_draw(s, r.x + (r.w - text_width(label, TEXT_BOLD)) / 2, r.y + (r.h - text_height(TEXT_BOLD)) / 2, label, TEXT_BOLD, WHITE);
+}
+
 static void draw_page(struct gfx_surface *s, int page)
 {
     gfx_blit(s, 0, 0, &su.bg, 0, 0, s->w, s->h);
     int w = s->w, h = s->h;
+    const struct theme *t = theme_get();
     su.btn = (struct gfx_rect){ (w - 460) / 2, h - 250, 460, 108 };
+    memset(su.rows, 0, sizeof(su.rows));
     if (page == P_HELLO) {
         centred(s, h - 370, "Welcome to LiteKern Go", TEXT_BODY, 0xd8d8d8u);
         button(s, su.btn, "Get started", 235);
         return;
     }
+    if (page == P_WIFI) {
+        draw_chrome(s, page);
+        if (su.entering) {                                  /* the password */
+            centred(s, 190, "Enter the password", TEXT_HEADING, WHITE);
+            centred(s, 252, su.nets[su.sel].ssid, TEXT_BODY, 0xc8c8c8u);
+            su.field = (struct gfx_rect){ 44, 330, w - 88 - 150, 100 };
+            su.showbtn = (struct gfx_rect){ w - 44 - 140, 330, 140, 100 };
+            gfx_blend_round_rect(s, su.field.x, su.field.y, su.field.w, su.field.h, 28, WHITE, 36);
+            secondary(s, su.showbtn, su.show_pw ? "Hide" : "Show");
+            char dots[72];
+            int n = su.pw_len < 40 ? su.pw_len : 40, k = 0;
+            for (int i = 0; i < n; i++)
+                dots[k++] = su.show_pw ? su.pw[su.pw_len - n + i] : '*';
+            dots[k] = 0;
+            if (k)
+                text_draw_fit(s, su.field.x + 28, su.field.y + (su.field.h - text_height(TEXT_BODY)) / 2, dots, su.field.w - 56, TEXT_BODY, WHITE);
+            else
+                text_draw(s, su.field.x + 28, su.field.y + (su.field.h - text_height(TEXT_BODY)) / 2, "Password", TEXT_BODY, 0x909090u);
+            if (su.join_bad)
+                centred(s, 460, "That password didn't work. Try again.", TEXT_SMALL, 0xff8f7au);
+            else if (su.joining)
+                centred(s, 460, "Connecting...", TEXT_SMALL, 0xc8c8c8u);
+            draw_keyboard(s);
+            return;
+        }
+        centred(s, 190, "Connect to Wi-Fi", TEXT_HEADING, WHITE);
+        centred(s, 252, "To get weather, music and the web", TEXT_SMALL, 0xc8c8c8u);
+        su.rescan = (struct gfx_rect){ w - 44 - 170, 300, 170, 64 };
+        secondary(s, su.rescan, "Rescan");
+        text_draw(s, 44, 314, su.nnets ? "Networks" : "No networks found", TEXT_BOLD, 0xe0e0e0u);
+        for (int i = 0; i < su.nnets && i < 6; i++) {
+            struct gfx_rect r = { 36, 390 + i * 104, w - 72, 92 };
+            su.rows[i] = r;
+            int me = su.joined && !strcmp(su.nets[i].ssid, su.joined_ssid);
+            gfx_blend_round_rect(s, r.x, r.y, r.w, r.h, 26, me ? t->accent_bg : WHITE, me ? 170 : 28);
+            text_draw_fit(s, r.x + 28, r.y + (r.h - text_height(TEXT_BODY)) / 2, su.nets[i].ssid, r.w - 200, TEXT_BODY, WHITE);
+            bars(s, r.x + r.w - 76, r.y + 28, su.nets[i].signal, WHITE);
+            if (su.nets[i].secure)
+                lock_icon(s, r.x + r.w - 124, r.y + 30, 0xe0e0e0u);
+        }
+        if (su.joining)
+            centred(s, 390 + 6 * 104 + 6, "Connecting...", TEXT_SMALL, 0xc8c8c8u);
+        else if (su.joined)
+            centred(s, 390 + 6 * 104 + 6, "Connected", TEXT_SMALL, 0xa6f0b8u);
+        if (su.joined)
+            button(s, su.btn, "Continue", 235);
+        else
+            secondary(s, su.btn, "Skip for now");
+        return;
+    }
+    if (page == P_ZONE) {
+        int top = 290, bot = h - 270, rh = 92, n = LKX_ZONES, total = n * rh;
+        su.zscroll = su.zscroll < 0 ? 0 : su.zscroll > total - (bot - top) ? total - (bot - top) : su.zscroll;
+        for (int i = 0; i < n; i++) {
+            int y = top + i * rh - su.zscroll;
+            if (y + rh < top || y > bot)
+                continue;
+            struct gfx_rect r = { 36, y, w - 72, rh - 10 };
+            gfx_blend_round_rect(s, r.x, r.y, r.w, r.h, 26, i == su.zone ? t->accent_bg : WHITE, i == su.zone ? 210 : 26);
+            text_draw(s, r.x + 30, r.y + (r.h - text_height(TEXT_BODY)) / 2, lkx_zones[i].name, TEXT_BODY, i == su.zone ? t->accent_fg : WHITE);
+        }
+        gfx_blit(s, 0, 0, &su.bg, 0, 0, w, top);                        /* the list scrolls under the header and the button */
+        gfx_blit(s, 0, bot, &su.bg, 0, bot, w, h - bot);
+        draw_chrome(s, page);
+        centred(s, 190, "Where are you?", TEXT_HEADING, WHITE);
+        centred(s, 246, "So your clock shows the right time", TEXT_SMALL, 0xc8c8c8u);
+        button(s, su.btn, "Continue", 235);
+        return;
+    }
+    if (page == P_PRIVACY) {
+        draw_chrome(s, page);
+        int cx = w / 2, cy = 360;
+        gfx_fill_circle(s, cx, cy, 96, t->accent_bg);
+        gfx_fill_round_rect(s, cx - 38, cy - 8, 76, 56, 12, t->accent_fg);
+        gfx_rect_outline(s, cx - 24, cy - 48, 48, 48, t->accent_fg);
+        gfx_rect_outline(s, cx - 23, cy - 47, 46, 46, t->accent_fg);
+        gfx_rect_outline(s, cx - 22, cy - 46, 44, 44, t->accent_fg);
+        centred(s, 500, "Your phone, your data", TEXT_HEADING, WHITE);
+        static const char *const lines[3][2] = {
+            { "Nothing is sent anywhere", "unless you send it yourself" },
+            { "No accounts, no tracking", "and no ads or analytics" },
+            { "Photos and files", "stay on this phone" } };
+        struct gfx_rect c = { 56, 600, w - 112, 3 * 112 + 24 };
+        gfx_blend_round_rect(s, c.x, c.y, c.w, c.h, 32, WHITE, 30);
+        for (int i = 0; i < 3; i++) {
+            int y = c.y + 22 + i * 112;
+            gfx_fill_circle(s, c.x + 54, y + 50, 10, t->accent_bg);
+            text_draw(s, c.x + 90, y + 14, lines[i][0], TEXT_BOLD, WHITE);
+            text_draw(s, c.x + 90, y + 54, lines[i][1], TEXT_SMALL, 0xc8c8c8u);
+        }
+        button(s, su.btn, "Continue", 235);
+        return;
+    }
     if (page == P_LOOK) {
-        centred(s, 150, "Choose your look", TEXT_HEADING, WHITE);
-        centred(s, 214, "You can change it later in Settings", TEXT_SMALL, 0xc8c8c8u);
-        int cw = (w - 3 * 56) / 2, ch = cw * 16 / 10;
+        draw_chrome(s, page);
+        centred(s, 190, "Choose your look", TEXT_HEADING, WHITE);
+        centred(s, 246, "You can change it later in Settings", TEXT_SMALL, 0xc8c8c8u);
+        int cw = (w - 3 * 56) / 2, ch = cw * 14 / 10;
         for (int i = 0; i < 2; i++) {
-            su.card[i] = (struct gfx_rect){ 56 + i * (cw + 56), 300, cw, ch };
+            su.card[i] = (struct gfx_rect){ 56 + i * (cw + 56), 320, cw, ch };
             mock(s, su.card[i], i, su.light == i);
             const char *l = i ? "Light" : "Dark";
-            text_draw(s, su.card[i].x + (cw - text_width(l, TEXT_BOLD)) / 2, 300 + ch + 26, l, TEXT_BOLD, WHITE);
+            text_draw(s, su.card[i].x + (cw - text_width(l, TEXT_BOLD)) / 2, 320 + ch + 26, l, TEXT_BOLD, WHITE);
         }
-        int y = 300 + ch + 110, n = su.naccents, d = 64, gap = imin(28, (w - 80 - n * d) / imax(1, n - 1));
+        int y = 320 + ch + 104, n = su.naccents, d = 64, gap = imin(28, (w - 80 - n * d) / imax(1, n - 1));
         int x = (w - (n * d + (n - 1) * gap)) / 2;
         gfx_blend_round_rect(s, x - 28, y - 22, n * d + (n - 1) * gap + 56, d + 44, (d + 44) / 2, WHITE, 26);
         for (int i = 0; i < n; i++) {
@@ -240,7 +461,6 @@ static void draw_page(struct gfx_surface *s, int page)
         return;
     }
     /* done */
-    const struct theme *t = theme_get();
     int cx = w / 2, cy = 330;
     gfx_fill_circle(s, cx, cy, 96, t->accent_bg);
     gfx_thick_line(s, cx - 42, cy + 2, cx - 12, cy + 34, 14, t->accent_fg);
@@ -260,12 +480,24 @@ static void draw_page(struct gfx_surface *s, int page)
     button(s, su.btn, "Start", 235);
 }
 
+static void show_now(int page)
+{
+    draw_page(&su.page_pic, page);
+    gfx_blit(S(), 0, 0, &su.page_pic, 0, 0, S()->w, S()->h);
+    screen_damage_all();
+    screen_present();
+}
+
 static void go(int page)
 {
     gfx_blit(&su.prev_pic, 0, 0, S(), 0, 0, S()->w, S()->h);   /* what shows now, to fade from */
     su.from_page = su.page;
     su.page = page;
     su.page_at = uptime_ms();
+    if (page == P_WIFI) {
+        su.entering = 0;
+        wifi_scan();
+    }
     draw_page(&su.page_pic, page);
 }
 
@@ -295,6 +527,9 @@ void setup_start(void)
     su.tmp.w = su.tmp.stride = 2048;
     su.tmp.h = (int)((uint32_t)S()->w * (uint32_t)S()->h / 2048);
     su.light = theme_is_light();
+    su.zone = 0;
+    su.zscroll = 0;
+    su.entering = su.joining = su.joined = su.join_bad = 0;
     su.accent = theme_accent_index();
     su.naccents = 0;
     while (su.naccents < 8 && theme_accent(su.naccents, 0))
@@ -323,6 +558,15 @@ void setup_tick(void)
         return;
     struct gfx_surface *s = S();
     uint32_t now = uptime_ms();
+    if (su.page == P_WIFI && su.joining && (int32_t)(now - su.poll_at) >= 600) {
+        su.poll_at = now;
+        wifi_poll();
+        if (su.joined || su.join_bad) {
+            if (su.joined)
+                su.entering = 0;
+            show_now(P_WIFI);
+        }
+    }
     int fade = (int)(now - su.page_at), fading = fade < FADE_MS;
     int hello = su.page == P_HELLO, alpha = 0, rise = 0;
     if (hello) {
@@ -359,12 +603,109 @@ void setup_tick(void)
     screen_present();
 }
 
+static void key_press(char c)
+{
+    if (c == 1) {                                       /* shift */
+        su.kb_shift = !su.kb_shift;
+    } else if (c == 2) {                                /* backspace */
+        if (su.pw_len > 0)
+            su.pw[--su.pw_len] = 0;
+    } else if (c == 3) {                                /* 123 / abc */
+        su.kb_sym = !su.kb_sym;
+    } else if (c == 4) {                                /* join */
+        if (su.pw_len > 0) {
+            su.joining = 1;
+            su.join_bad = 0;
+            su.poll_at = uptime_ms();
+            net_join(su.nets[su.sel].ssid, su.pw);
+        }
+    } else if (su.pw_len < 63) {
+        su.pw[su.pw_len++] = c;
+        su.pw[su.pw_len] = 0;
+        if (su.kb_shift && !su.kb_sym)
+            su.kb_shift = 0;
+    }
+    su.join_bad = c == 4 ? su.join_bad : 0;
+}
+
 static void tap(int x, int y)
 {
     if (uptime_ms() - su.page_at < FADE_MS)
         return;
+    if (su.page != P_HELLO && su.page != P_DONE && inside(su.back, x, y)) {
+        if (su.page == P_WIFI && su.entering)
+            su.entering = 0;
+        else
+            go(su.page - 1);
+        if (su.page == P_WIFI)
+            show_now(P_WIFI);
+        return;
+    }
     if (su.page == P_HELLO) {
         if (inside(su.btn, x, y) || uptime_ms() - su.start_at > 1500)
+            go(P_WIFI);
+        return;
+    }
+    if (su.page == P_WIFI) {
+        if (su.entering) {
+            if (inside(su.showbtn, x, y))
+                su.show_pw = !su.show_pw;
+            else
+                for (int i = 0; i < su.nkeys; i++)
+                    if (inside(su.keys[i].r, x, y)) {
+                        key_press(su.keys[i].c);
+                        break;
+                    }
+            show_now(P_WIFI);
+            if (su.joined && !su.joining) {
+                su.entering = 0;
+                show_now(P_WIFI);
+            }
+            return;
+        }
+        for (int i = 0; i < 6 && i < su.nnets; i++)
+            if (inside(su.rows[i], x, y)) {
+                su.sel = i;
+                su.pw_len = 0;
+                su.pw[0] = 0;
+                su.join_bad = 0;
+                if (su.nets[i].secure && !su.nets[i].known) {
+                    su.entering = 1;
+                } else {
+                    su.joining = 1;
+                    su.poll_at = uptime_ms();
+                    net_join(su.nets[i].ssid, "");
+                }
+                show_now(P_WIFI);
+                return;
+            }
+        if (inside(su.rescan, x, y)) {
+            wifi_scan();
+            show_now(P_WIFI);
+            return;
+        }
+        if (inside(su.btn, x, y))
+            go(P_ZONE);
+        return;
+    }
+    if (su.page == P_ZONE) {
+        if (inside(su.btn, x, y)) {
+            go(P_PRIVACY);
+            return;
+        }
+        for (int i = 0; i < LKX_ZONES; i++) {
+            int yy = 290 + i * 92 - su.zscroll;
+            if (y >= 290 && y < S()->h - 270 && y >= yy && y < yy + 82 && x >= 36 && x < S()->w - 36) {
+                su.zone = i;
+                machine_set_timezone(i);
+                show_now(P_ZONE);
+                return;
+            }
+        }
+        return;
+    }
+    if (su.page == P_PRIVACY) {
+        if (inside(su.btn, x, y))
             go(P_LOOK);
         return;
     }
@@ -373,10 +714,7 @@ static void tap(int x, int y)
             if (inside(su.card[i], x, y) && su.light != i) {
                 su.light = i;
                 theme_set(su.light, su.accent);
-                draw_page(&su.page_pic, P_LOOK);
-                gfx_blit(S(), 0, 0, &su.page_pic, 0, 0, S()->w, S()->h);
-                screen_damage_all();
-                screen_present();
+                show_now(P_LOOK);
                 return;
             }
         for (int i = 0; i < su.naccents; i++) {
@@ -385,10 +723,7 @@ static void tap(int x, int y)
             if (inside(r, x, y) && su.accent != i) {
                 su.accent = i;
                 theme_set(su.light, su.accent);
-                draw_page(&su.page_pic, P_LOOK);
-                gfx_blit(S(), 0, 0, &su.page_pic, 0, 0, S()->w, S()->h);
-                screen_damage_all();
-                screen_present();
+                show_now(P_LOOK);
                 return;
             }
         }
@@ -406,9 +741,19 @@ void setup_pointer(int x, int y, uint8_t buttons)
     if (down && !su.down) {
         su.down_x = x;
         su.down_y = y;
+        su.zlast_y = y;
+        su.zmoved = 0;
+    } else if (down && su.page == P_ZONE && y > 290 && y < S()->h - 270) {          /* dragging the list */
+        int dy = y - su.zlast_y;
+        if (su.zmoved || dy * dy > 20 * 20) {
+            su.zmoved = 1;
+            su.zscroll -= dy;
+            su.zlast_y = y;
+            show_now(P_ZONE);
+        }
     } else if (!down && su.down) {
         int dx = x - su.down_x, dy = y - su.down_y;
-        if (dx * dx + dy * dy < 40 * 40)
+        if (!su.zmoved && dx * dx + dy * dy < 40 * 40)
             tap(x, y);
     }
     su.down = down;
@@ -429,12 +774,19 @@ void setup_key(uint16_t key, int pressed)
     }
     if (!pressed || uptime_ms() - su.page_at < FADE_MS)
         return;
+    if (su.page == P_WIFI && su.entering && key != KEY_ESC && key != KEY_PHONE_BACK)
+        return;                                  /* (typing is the on-screen keys) */
     if (key == KEY_ENTER || key == KEY_SPACE) {
         if (su.page == P_DONE)
             finish();
         else
             go(su.page + 1);
     } else if ((key == KEY_ESC || key == KEY_PHONE_BACK) && su.page > P_HELLO) {
-        go(su.page - 1);
+        if (su.page == P_WIFI && su.entering) {
+            su.entering = 0;
+            show_now(P_WIFI);
+        } else {
+            go(su.page - 1);
+        }
     }
 }
