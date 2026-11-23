@@ -316,6 +316,24 @@ int main(int argc, char **argv)
     theme_set(theme_find_style(DEFAULT_STYLE), theme_find_accent(DEFAULT_ACCENT));
     splash_set_brief(!strcmp(be->name, "headless"));    /* the tests: no waiting on fades */
     splash_start();
+    {   /* a preview of the splash: LKX_SPLASH_PREVIEW="PREFIX:300,2000,..." writes PREFIX-300.png ... and exits */
+        const char *pv = getenv("LKX_SPLASH_PREVIEW");
+        const char *colon = pv ? strchr(pv, ':') : 0;
+        if (colon) {
+            char prefix[200];
+            snprintf(prefix, sizeof(prefix), "%.*s", (int)(colon - pv), pv);
+            for (const char *p = colon + 1; *p;) {
+                unsigned t = (unsigned)strtoul(p, (char **)&p, 10);
+                char path[256];
+                splash_preview(t);
+                snprintf(path, sizeof(path), "%s-%u.png", prefix, t);
+                plat_screenshot(path);
+                if (*p == ',')
+                    p++;
+            }
+            exit(0);
+        }
+    }
     if (screen_ready() && !splash_active() && cursor_init() < 0)
         kprintf("cursor: no \"arrow\" cursor built in\n");
     boot_report(0);

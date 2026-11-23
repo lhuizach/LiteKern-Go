@@ -9,6 +9,8 @@
 #ifndef LKX_SPLASH_H
 #define LKX_SPLASH_H
 
+#include <stdint.h>
+
 /* Show it (after the screen and the console are up), if it's the chosen one. */
 void splash_start(void);
 
@@ -29,5 +31,9 @@ void splash_fade_end(void);
 /* No fades and no minimum time: the logo, then the first screen at once
  * (lkx-shell's headless backend, so the tests don't wait on it). */
 void splash_set_brief(int brief);
+
+/* Draw the splash as it is `t_ms` after it began (the tests and previews: platform/main.c's
+ * LKX_SPLASH_PREVIEW). */
+void splash_preview(uint32_t t_ms);
 
 #endif
