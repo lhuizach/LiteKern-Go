@@ -418,7 +418,15 @@ static const char *const blocked[] = {
     "scorecardresearch.com", "quantserve.com", "taboola.com", "outbrain.com", "criteo.com", "criteo.net",
     "adnxs.com", "amazon-adsystem.com", "hotjar.com", "moatads.com", "adsrvr.org", "rubiconproject.com",
     "pubmatic.com", "openx.net", "casalemedia.com", "mathtag.com", "bluekai.com", "krxd.net", "chartbeat.com",
-    "yieldmo.com", "adform.net", "smartadserver.com","zedo.com", "serving-sys.com",
+    "yieldmo.com", "adform.net", "smartadserver.com", "zedo.com", "serving-sys.com",
+    "adsafeprotected.com", "imrworldwide.com", "ads-twitter.com", "analytics.twitter.com", "ads.linkedin.com",
+    "snap.licdn.com", "bat.bing.com", "clarity.ms", "fullstory.com", "mixpanel.com", "amplitude.com",
+    "optimizely.com", "segment.io", "cdn.segment.com", "mc.yandex.ru", "an.yandex.ru", "adroll.com",
+    "bidswitch.net", "sharethrough.com", "smaato.net", "teads.tv", "triplelift.com", "id5-sync.com",
+    "everesttech.net", "demdex.net", "omtrdc.net", "adobedtm.com", "tiqcdn.com", "cookielaw.org",
+    "onetrust.com", "cookiebot.com", "trustarc.com", "quantcount.com", "nr-data.net",
+    "sentry.io", "bugsnag.com", "datadoghq.com", "tapad.com", "liadm.com", "ml314.com", "3lift.com",
+    "gumgum.com", "indexww.com", "contextweb.com", "lijit.com", "sovrn.com", "conversantmedia.com",
 };
 
 static gboolean begin_load(gpointer d)

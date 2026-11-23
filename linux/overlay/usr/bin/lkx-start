@@ -90,6 +90,22 @@ mount_extras() {
     return 1
 }
 [ -f /usr/share/litekern/disk.img ] && mount_extras
+
+# Compressed swap in RAM (zram), on the phone only: the browser's three processes can take 400 MB or more for
+# a page, and there is no other swap, so a heavy page used to stall. 768 MB of it holds about twice that,
+# compressed, for a few hundred MB of RAM. If anything is missing, nothing happens.
+setup_zram() {
+    modprobe zram 2>/dev/null || return 1
+    [ -e /sys/block/zram0/disksize ] || return 1
+    echo lzo-rle > /sys/block/zram0/comp_algorithm 2>/dev/null
+    echo 768M > /sys/block/zram0/disksize || return 1
+    mkswap /dev/zram0 > /dev/null 2>&1 || return 1
+    swapon /dev/zram0 || return 1
+    echo 100 > /proc/sys/vm/swappiness
+}
+if [ -f /usr/share/litekern/disk.img ]; then
+    if setup_zram; then echo "lkx-start: zram swap on (768 MB)" > "$out"; else echo "lkx-start: no zram swap" > "$out"; fi
+fi
 i=0
 while [ -z "$disk" ] && [ $i -lt 100 ]; do
     disk=$(find_disk) || disk=
