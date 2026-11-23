@@ -81,12 +81,12 @@ static const int car_h[4] = { 570, 640, 700, 960 };
 
 enum screen { S_MENU, S_PLAY, S_DYING, S_PAUSE, S_OVER };
 enum { B_NONE = -1, B_PLAY, B_SKIN0, B_SKIN1, B_SKIN2, B_SKIN3, B_SOUND, B_PAUSE, B_RESUME, B_RESTART, B_MENU,
-       B_AGAIN, B_FLIP, B_COUNT };
+       B_AGAIN, B_FLIP, B_GFX, B_COUNT };
 
 struct save {
     uint32_t magic;
     uint32_t best;
-    uint8_t sound, skin, flip, pad;           /* flip: steering the other way round */
+    uint8_t sound, skin, flip, gfx;           /* flip: steering the other way round; gfx: 0 high, 1 low (smaller 3D picture) */
 };
 
 struct car {
@@ -629,7 +629,7 @@ static void draw_particles(void)
 #define GL_SCENE_MAGIC 0x4e435347u
 #define GL_QUIT_MAGIC 0x5154494bu
 #define GL_HDR 64
-#define GL_PCT 75
+#define GL_PCT (sv.gfx ? 55 : 75)
 #define GL_CARS 32
 
 struct gl_frame_header { uint32_t magic, seq, w, h, stride, scene_seq; int32_t player_x, player_y; uint32_t slot; };
@@ -774,6 +774,24 @@ static void gl_stop(void)
         }
         if (gl_pid > 0) { kill(-gl_pid, SIGKILL); waitpid(gl_pid, NULL, 0); }
     }
+}
+
+/* The picture size is fixed when the renderer starts: a new Graphics choice starts it again. */
+static void gl_restart(void)
+{
+    if (gl_state == 3)
+        return;
+    gl_stop();
+    usleep(300000);
+    if (gl_map) {
+        munmap((void *)gl_map, gl_len);
+        gl_map = NULL;
+    }
+    unlink(GL_SOCK);
+    unlink(GL_FRAME);
+    gl_state = 0;
+    gl_sent_seq = 0;
+    gl_start();
 }
 
 static int gl_active(void)
@@ -975,9 +993,10 @@ static void layout_buttons(void)
         for (int i = 0; i < 4; i++)
             btn[B_SKIN0 + i] = (struct gfx_rect){ x + i * (dot + gap), y, dot, dot };
         y += dot + 34;
-        int hw2 = (pw - 20) / 2;
-        btn[B_SOUND] = (struct gfx_rect){ x, y, hw2, 84 };
-        btn[B_FLIP] = (struct gfx_rect){ x + hw2 + 20, y, hw2, 84 };
+        int rw = imin(w - 80, 700), rx = (w - rw) / 2, hw3 = (rw - 40) / 3;
+        btn[B_SOUND] = (struct gfx_rect){ rx, y, hw3, 84 };
+        btn[B_FLIP] = (struct gfx_rect){ rx + hw3 + 20, y, hw3, 84 };
+        btn[B_GFX] = (struct gfx_rect){ rx + 2 * (hw3 + 20), y, hw3, 84 };
     } else if (screen == S_PLAY) {
         btn[B_PAUSE] = (struct gfx_rect){ w - 12 - 96, 12, 96, 96 };
     } else if (screen == S_PAUSE) {
@@ -1252,6 +1271,7 @@ static void draw_menu(void)
     }
     draw_button(B_SOUND, sv.sound ? "Sound: on" : "Sound: off", 0);
     draw_button(B_FLIP, sv.flip ? "Steer: flip" : "Steer: normal", 0);
+    draw_button(B_GFX, sv.gfx ? "Graphics: low" : "Graphics: high", 0);
     text_shadow_c(canvas.w / 2, btn[B_SOUND].y + btn[B_SOUND].h + 16, acc_ok ? "Tilt to steer, bottom half brakes" : "No tilt sensor: drag in the top half", TEXT_SMALL, C_TEXT);
 }
 
@@ -1397,6 +1417,12 @@ static void press_action(int id)
         sv.flip = !sv.flip;
         save();
         sound(500, 40, 0, 0);
+        break;
+    case B_GFX:
+        sv.gfx = !sv.gfx;
+        save();
+        sound(500, 40, 0, 0);
+        gl_restart();
         break;
     case B_PAUSE:
         pause_game();
