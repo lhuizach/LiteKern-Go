@@ -217,8 +217,10 @@ static void acc_init(void)
     }
 }
 
-/* The reading, in the phone's own axes (x to the right of the screen, y up it, z out of it): 1 g is acc_g. At
- * rest it points UP: held upright it is (0, +g, 0), on its side with the top to the left (+g, 0, 0). */
+/* The reading, in the phone's own axes (x to the right of the screen, y up it, z out of it): 1 g is acc_g. On
+ * this phone it is the pull of gravity, pointing DOWN (measured: flat on its back it reads z = -1 g): held upright
+ * it is (0, -g, 0), on its side with the top to the left (-g, 0, 0), top to the right (+g, 0, 0). Turning the
+ * phone like a wheel then moves the y part, and the sign of x says which way up it is. */
 static int acc_read(void)
 {
     int raw[3];
@@ -1316,7 +1318,7 @@ static void frame(void)
         if (!acc_ok && (int)now_ms - acc_tried_ms > 2000)
             acc_init();
         if (acc_ok && acc_read() == 0 && (acc_rx > 60 || acc_rx < -60)) {
-            int d = acc_rx > 0 ? 0 : 1;
+            int d = acc_rx > 0 ? 1 : 0;            /* the reading is gravity: down is +x when the top is on the right */
             if (d != land_dir) {
                 land_dir = d;
                 changed = 1;
