@@ -68,6 +68,16 @@ static const char *const btn_label[NBTN] = { "Back", "Next", "Reload", "Home" };
 
 static int view_h(void) { return canvas.h - 2 * BAR; }
 
+/* The view's tallest height so far (the keyboard down). The engine draws for it, and when the on-screen keyboard
+ * makes the window shorter the page is not squashed to fit: the keyboard covers the bottom of it. */
+static int full_view_h;
+static int ref_h(void)
+{
+    if (view_h() > full_view_h)
+        full_view_h = view_h();
+    return full_view_h;
+}
+
 /* ---- the engine ----------------------------------------------------------------------------- */
 
 static int engine_installed(void)
@@ -134,8 +144,8 @@ static int try_connect(void)
 
 /* How big the engine draws, as a percent of the view. WebKit's cost goes with the pixels it paints (on the
  * phone: 25 fps at 100, 41 at 75, 80 at 50 while scrolling), and the app enlarges the picture, which is cheap.
- * 75 by default; a number from 40 to 100 in /extras/web-scale changes it (takes effect when the engine starts). */
-static int render_pct = 75;
+ * 85 by default; a number from 40 to 100 in /extras/web-scale changes it (takes effect when the engine starts). */
+static int render_pct = 85;
 
 static void load_render_pct(void)
 {
@@ -152,7 +162,7 @@ static void engine_spawn(void)
 {
     char size[24], zoomarg[16], vscalearg[16];
     load_render_pct();
-    snprintf(size, sizeof(size), "%dx%d", (canvas.w * render_pct / 100) & ~1, (view_h() * render_pct / 100) & ~1);
+    snprintf(size, sizeof(size), "%dx%d", (canvas.w * render_pct / 100) & ~1, (ref_h() * render_pct / 100) & ~1);
     snprintf(zoomarg, sizeof(zoomarg), "%.3f", 2.0 * render_pct / 100);
     snprintf(vscalearg, sizeof(vscalearg), "%.3f", render_pct / 100.0);
     mkdir("/extras/alpine/run", 0755);
@@ -353,8 +363,9 @@ static void draw_view(void)
     }
     int prev_sy = -1;
     uint32_t *prev = NULL;
+    int ref = ref_h();
     for (int y = 0; y < dh; y++) {
-        int sy = (int)((uint32_t)y * frame_h / (uint32_t)dh);
+        int sy = (int)((uint32_t)y * frame_h / (uint32_t)ref);
         uint32_t *dst = (uint32_t *)(canvas.px + (size_t)(BAR + y) * canvas.stride);
         if (sy == prev_sy && prev) {
             memcpy(dst, prev, (size_t)dw * 4);
@@ -536,6 +547,7 @@ int main(void)
     if (k86_window_open(&win))
         return 1;
     canvas = (struct gfx_surface){ win.canvas, win.w, win.h, win.stride };
+    ref_h();
     engine_start();
     last_change_ms = k86_uptime_ms();
     redraw();
