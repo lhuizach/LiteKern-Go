@@ -6350,7 +6350,7 @@ static void home_key(void)
 static int volume = 60;                 /* 0..100 */
 static uint32_t vol_until;              /* the pop-up shows until then (0: hidden) */
 static uint16_t vol_key;                /* the volume key held, or 0 */
-static uint32_t vol_repeat_at;
+static uint32_t vol_repeat_at, vol_pressed_at;
 static int vol_before;                  /* the level before Volume Down: a screenshot puts it back */
 static const char *toast;
 static uint32_t toast_until;
@@ -6478,6 +6478,8 @@ static void screenshot(void)
 static void volume_tick(void)
 {
     uint32_t now = uptime_ms();
+    if (vol_key && (int32_t)(now - vol_pressed_at) > 4000)
+        vol_key = 0;                    /* a release that never came: stop, rather than run to 0 or 100 */
     if (vol_key && (int32_t)(now - vol_repeat_at) >= 0) {
         vol_change(vol_key == KEY_VOLUME_UP);
         vol_repeat_at = now + VOL_REPEAT_MS;
@@ -6637,6 +6639,7 @@ static int phone_key(const struct key_event *k)
             if (vol_key == KEY_VOLUME_DOWN) {   /* Volume Down, then Power: a screenshot */
                 vol_key = 0;
                 volume = vol_before;            /* not a volume change after all */
+                machine_set_volume(volume);     /* (the apps' level too, not only the slider's) */
                 power_held = 1;                 /* nor a lock, nor the menu */
                 screenshot();
             }
@@ -6663,6 +6666,7 @@ static int phone_key(const struct key_event *k)
         } else if (vol_key != k->key) {
             vol_before = volume;
             vol_key = (uint16_t)k->key;
+            vol_pressed_at = uptime_ms();
             vol_repeat_at = uptime_ms() + POWER_HOLD_MS;
             vol_change(k->key == KEY_VOLUME_UP);
         }

@@ -99,17 +99,19 @@ static long now_ms(void)
 
 int k86_volume(void)
 {
+    static int last = 60;                       /* the last good reading: a failed read must not jump the volume */
     char t[8];
     int fd = open(VOLUME_FILE, O_RDONLY);
     if (fd < 0)
-        return 60;
+        return last;
     ssize_t n = read(fd, t, sizeof(t) - 1);
     close(fd);
     if (n <= 0)
-        return 60;
+        return last;
     t[n] = '\0';
     int v = atoi(t);
-    return v < 0 ? 0 : v > 100 ? 100 : v;
+    last = v < 0 ? 0 : v > 100 ? 100 : v;
+    return last;
 }
 
 static void set_mask(struct snd_pcm_hw_params *p, int var, unsigned bit)

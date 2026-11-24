@@ -364,10 +364,11 @@ static void write_volume_file(void)
 {
     char t[8];
     int n = snprintf(t, sizeof(t), "%d\n", saved_volume);
-    FILE *f = fopen(VOLUME_FILE, "w");
+    FILE *f = fopen(VOLUME_FILE ".tmp", "w");          /* written whole, then renamed in: a reader never sees it empty */
     if (f) {
         fwrite(t, 1, (size_t)n, f);
         fclose(f);
+        rename(VOLUME_FILE ".tmp", VOLUME_FILE);
     }
 }
 
