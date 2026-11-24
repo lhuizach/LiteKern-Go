@@ -14,6 +14,7 @@
 #include "kernel/widget.h"
 #include "sdk/kern86.h"
 #include "sdk/audio.h"
+#include "sdk/sfx.h"
 
 #define COLS 15
 #define ROWS_MAX 26
@@ -193,10 +194,10 @@ static void cat(char *dst, const char *src)
         ;
 }
 
-static void sound(int hz1, int ms1, int hz2, int ms2)
+static void sound(int id, int semis)
 {
     if (sv.sound)
-        k86_audio_beep(hz1, ms1, hz2, ms2);
+        k86_sfx_shot(id, semis);
 }
 
 static int best_slot(void)
@@ -976,7 +977,7 @@ static void die(void)
     screen = S_DYING;
     dying_since = now_ms;
     pressed = B_NONE;
-    sound(220, 130, 147, 260);
+    sound(SFX_FAIL, 0);
     int hx = snake[0].x * cell + cell / 2, hy = snake[0].y * cell + cell / 2;
     spawn_particles(hx, hy, C_APPLE, 28, 1500);
     spawn_particles(hx, hy, skins[sv.skin].body, 16, 1100);
@@ -1038,7 +1039,7 @@ static void tick(void)
         int cx = nx * cell + cell / 2, cy = ny * cell + cell / 2;
         add_floater(cx, cy - cell / 2, t, C_TEXT);
         spawn_particles(cx, cy, C_APPLE, 14, 900);
-        sound(660, 45, 990, 60);
+        sound(SFX_COIN, 0);
         step_ms = imax(55, speed_base_ms[sv.speed] - 6 * imin(apples / 5, 9));
         if (!place_random(&food)) {              /* the whole board is snake: well done */
             new_best = score > best_at_start;
@@ -1069,7 +1070,7 @@ static void tick(void)
         int cx = nx * cell + cell / 2, cy = ny * cell + cell / 2;
         add_floater(cx, cy - cell / 2, t, C_GOLD);
         spawn_particles(cx, cy, C_GOLD, 24, 1200);
-        sound(880, 55, 1320, 120);
+        sound(SFX_LEVELUP, 0);
         hdr_dirty = 1;
     }
 }
@@ -1125,9 +1126,9 @@ static void frame(void)
             step_start = now_ms;
             if (now_ms - count_start >= 2400) {
                 counting = 0;
-                sound(990, 60, 0, 0);
+                sound(SFX_COIN, 0);
             } else if ((now_ms - count_start) % 600 < (uint32_t)dt && now_ms - count_start < 1800) {
-                sound(440, 40, 0, 0);
+                sound(SFX_BACK, 0);
             }
         } else {
             int guard = 0;
@@ -1211,28 +1212,28 @@ static void press_action(int id)
 {
     switch (id) {
     case B_PLAY:
-        sound(520, 40, 780, 70);
+        sound(SFX_TAP, 0);
         start_game();
         break;
     case B_SPEED0: case B_SPEED1: case B_SPEED2:
         sv.speed = (uint8_t)(id - B_SPEED0);
         save();
-        sound(330, 30, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_MODE0: case B_MODE1:
         sv.mode = (uint8_t)(id - B_MODE0);
         save();
-        sound(330, 30, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_SKIN0: case B_SKIN1: case B_SKIN2: case B_SKIN3:
         sv.skin = (uint8_t)(id - B_SKIN0);
         save();
-        sound(400, 30, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_SOUND:
         sv.sound = !sv.sound;
         save();
-        sound(500, 40, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_PAUSE:
         go(S_PAUSE);
@@ -1251,7 +1252,7 @@ static void press_action(int id)
         break;
     case B_RESTART:
     case B_AGAIN:
-        sound(520, 40, 780, 70);
+        sound(SFX_TAP, 0);
         start_game();
         break;
     case B_MENU:

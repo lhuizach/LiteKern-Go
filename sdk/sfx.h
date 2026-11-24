@@ -25,6 +25,7 @@ enum k86_sfx {
     SFX_PAUSE,      /* two falling notes */
     SFX_RESUME,     /* two rising notes */
     SFX_COIN,       /* a two-note sparkle: points */
+    SFX_CRASH,      /* a car crash: a burst of noise, a boom and a clang */
     SFX_COUNT
 };
 
@@ -36,5 +37,10 @@ void k86_sfx_pump(void);
 /* 1 while anything is still sounding (keep the timer going). */
 int k86_sfx_busy(void);
 void k86_sfx_close(void);
+
+/* For apps whose timer isn't always running: plays one sound at once, with no pump, from a small helper process
+ * (like k86_audio_beep). A small sound asked for while another plays is dropped; FAIL, WIN, LEVELUP and CRASH
+ * cut off whatever is playing. Don't mix this with k86_sfx_play in one app. */
+void k86_sfx_shot(int id, int semis);
 
 #endif

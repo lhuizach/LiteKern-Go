@@ -28,6 +28,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/audio.h"
+#include "sdk/sfx.h"
 #include "sdk/kern86.h"
 #include "sdk/touch2.h"
 
@@ -330,10 +331,10 @@ static void cat(char *dst, const char *src)
         ;
 }
 
-static void sound(int hz1, int ms1, int hz2, int ms2)
+static void sound(int id, int semis)
 {
     if (sv.sound)
-        k86_audio_beep(hz1, ms1, hz2, ms2);
+        k86_sfx_shot(id, semis);
 }
 
 static void load(void)
@@ -1143,7 +1144,7 @@ static void crash(void)
         add_burst(gl_player_x(), gl_player_y());
     else
         add_burst(proj_x(xp, zp), proj_y(zp));
-    sound(220, 90, 90, 260);
+    sound(SFX_CRASH, 0);
     if (score > (int)sv.best) {
         sv.best = (uint32_t)score;
         new_best = 1;
@@ -1260,7 +1261,7 @@ static void update(int dt)
             c->near_done = 1;                           /* no CLOSE bonus for a car we bumped */
             if (now_ms >= bump_until) {
                 bump_until = now_ms + 250;
-                sound(260, 30, 0, 0);
+                sound(SFX_THUD, 0);
             }
         }
         if (!c->near_done && c->z < zp - half_l) {
@@ -1269,7 +1270,7 @@ static void update(int dt)
                 bonus += 50;
                 memcpy(msg, "CLOSE! +50", sizeof("CLOSE! +50"));
                 msg_until = now_ms + 700;
-                sound(880, 40, 1180, 60);
+                sound(SFX_WHOOSH, 0);
             }
         }
         if (c->z < zcut)
@@ -1539,7 +1540,7 @@ static void press_action(int id)
     case B_PLAY:
     case B_AGAIN:
     case B_RESTART:
-        sound(520, 40, 780, 70);
+        sound(SFX_TAP, 0);
         start_game();
         break;
     case B_GARAGE:
@@ -1552,23 +1553,23 @@ static void press_action(int id)
         to_screen(S_SETTINGS);
         break;
     case B_BACK:
-        sound(400, 30, 0, 0);
+        sound(SFX_TAP, 0);
         to_screen(S_MENU);
         break;
     case B_SOUND:
         sv.sound = !sv.sound;
         save();
-        sound(500, 40, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_FLIP:
         sv.flip = !sv.flip;
         save();
-        sound(500, 40, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_GFX:
         sv.gfx = !sv.gfx;
         save();
-        sound(500, 40, 0, 0);
+        sound(SFX_TAP, 0);
         gl_restart();
         break;
     case B_PAUSE:
@@ -1586,11 +1587,11 @@ static void press_action(int id)
         if (id >= B_SKIN0 && id <= B_SKIN7) {
             sv.skin = (uint8_t)(id - B_SKIN0);
             save();
-            sound(400, 30, 0, 0);
+            sound(SFX_TAP, 0);
         } else if (id >= B_ENV0 && id <= B_ENV4) {
             sv.env = (uint8_t)(id - B_ENV0);
             save();
-            sound(400, 30, 0, 0);
+            sound(SFX_TAP, 0);
         }
         break;
     }

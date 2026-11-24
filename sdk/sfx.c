@@ -2,8 +2,11 @@
  * falls, for noise a filter that can sweep) are summed and written to the speaker from the app's timer. */
 #include "sdk/sfx.h"
 
+#include <signal.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "sdk/audio.h"
 
@@ -149,6 +152,12 @@ void k86_sfx_play(int id, int semis)
         bell(900, 2093, 900, 70, semis);
         break;
     }
+    case SFX_CRASH:
+        start(0, W_NOISE, 9000, 500, 420, 250, 2, 0);
+        start(0, W_SINE, 130, 34, 520, 230, 2, semis);
+        bell(0, 520, 260, 80, semis);
+        start(40, W_NOISE, 15000, 3000, 120, 120, 2, 0);
+        break;
     case SFX_PAUSE:
         start(0, W_SINE, 700, 650, 90, 110, 2, semis);
         start(90, W_SINE, 500, 380, 130, 110, 2, semis);
@@ -265,6 +274,24 @@ static int voice_sample(struct voice *p)
     return (int)((int64_t)s * (rise > 65535 ? 65535 : rise) >> 16) * (env >> 4) / 4096 * p->amp / 256;
 }
 
+/* The next n frames of everything that is sounding (mono, put in both channels). */
+static void render(int16_t *buf, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (music >= 0 && msamp <= 0) {
+            music_step();
+            msamp = RATE * 60 / tunes[music].bpm / 2;
+        }
+        msamp--;
+        int mix = 0;
+        for (int k = 0; k < VOICES; k++)
+            if (v[k].live)
+                mix += voice_sample(&v[k]);
+        mix = mix * 3 / 4;                      /* headroom for several voices at once */
+        buf[i * 2] = buf[i * 2 + 1] = (int16_t)(mix > 32767 ? 32767 : mix < -32768 ? -32768 : mix);
+    }
+}
+
 int k86_sfx_busy(void)
 {
     if (music >= 0)
@@ -299,24 +326,60 @@ void k86_sfx_pump(void)
     int16_t buf[CHUNK * 2];
     while (want > 0) {
         int n = want < CHUNK ? want : CHUNK;
-        for (int i = 0; i < n; i++) {
-            if (music >= 0 && msamp <= 0) {
-                music_step();
-                msamp = RATE * 60 / tunes[music].bpm / 2;
-            }
-            msamp--;
-            int mix = 0;
-            for (int k = 0; k < VOICES; k++)
-                if (v[k].live)
-                    mix += voice_sample(&v[k]);
-            mix = mix * 3 / 4;                  /* headroom for several voices at once */
-            buf[i * 2] = buf[i * 2 + 1] = (int16_t)(mix > 32767 ? 32767 : mix < -32768 ? -32768 : mix);
-        }
+        render(buf, n);
         int w = k86_audio_write(buf, n);
         if (w <= 0)
             break;
         want -= n;
     }
+}
+
+/* ---- fire and forget: for apps whose timer isn't always running ---- */
+static pid_t shot_child;
+
+void k86_sfx_shot(int id, int semis)
+{
+    static int ignoring;
+    if (!ignoring) {
+        signal(SIGCHLD, SIG_IGN);               /* nobody waits for the helper: no zombies */
+        ignoring = 1;
+    }
+    int big = id == SFX_FAIL || id == SFX_WIN || id == SFX_LEVELUP || id == SFX_CRASH;
+    if (shot_child > 0 && kill(shot_child, 0) == 0) {
+        if (!big)
+            return;                             /* a small sound asked for while one plays is dropped */
+        kill(shot_child, SIGKILL);              /* a big one takes over */
+        usleep(15000);
+    }
+    shot_child = fork();
+    if (shot_child != 0)
+        return;
+    memset(v, 0, sizeof(v));
+    music = -1;
+    k86_sfx_play(id, semis);
+    if (k86_audio_open(RATE))
+        _exit(0);
+    int16_t buf[CHUNK * 2];
+    for (;;) {
+        int live = 0;
+        for (int i = 0; i < VOICES; i++)
+            live |= v[i].live;
+        if (!live)
+            break;
+        int space = k86_audio_space();
+        if (space < 64) {
+            usleep(3000);
+            continue;
+        }
+        int n = space < CHUNK ? space : CHUNK;
+        render(buf, n);
+        if (k86_audio_write(buf, n) < 0)
+            break;
+    }
+    for (int i = 0; i < 100 && k86_audio_space() < k86_audio_buffer(); i++)    /* the last of it plays out */
+        usleep(5000);
+    k86_audio_close();
+    _exit(0);
 }
 
 void k86_sfx_close(void)

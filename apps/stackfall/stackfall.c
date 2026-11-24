@@ -16,6 +16,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/audio.h"
+#include "sdk/sfx.h"
 #include "sdk/kern86.h"
 
 #define W 10
@@ -146,10 +147,10 @@ static void num_text(int v, char *out)
     out[n] = 0;
 }
 
-static void sound(int hz1, int ms1, int hz2, int ms2)
+static void sound(int id, int semis)
 {
     if (sv.sound)
-        k86_audio_beep(hz1, ms1, hz2, ms2);
+        k86_sfx_shot(id, semis);
 }
 
 static void load(void)
@@ -345,7 +346,7 @@ static void game_over(void)
     if (lines > (int)sv.best_lines)
         sv.best_lines = (uint32_t)lines;
     save();
-    sound(330, 140, 160, 260);
+    sound(SFX_FAIL, 0);
     cur = -1;
     go(S_OVER);
 }
@@ -438,7 +439,7 @@ static void rotate(int dir)
             cur_rot = nr;
             cur_x = nx;
             cur_y = ny;
-            sound(520, 18, 0, 0);
+            sound(SFX_TAP, 0);
             moved();
             return;
         }
@@ -489,11 +490,11 @@ static void lock_piece(void)
         clear_mask = mask;
         clear_start = now_ms;
         if (n >= 4)
-            sound(660, 70, 990, 140);
+            sound(SFX_LEVELUP, 0);
         else
-            sound(600, 50, 800, 80);
+            sound(SFX_COIN, 0);
     } else {
-        sound(190, 25, 0, 0);
+        sound(SFX_THUD, 0);
         spawn_next();
     }
 }
@@ -547,7 +548,7 @@ static void hold_swap(void)
         return;
     int old = hold_p;
     hold_p = cur;
-    sound(400, 25, 0, 0);
+    sound(SFX_TAP, 0);
     if (old < 0) {
         spawn_next();                           /* clears hold_used, set it again below */
     } else if (!spawn(old)) {
@@ -826,13 +827,13 @@ static void press_action(int id)
     case B_PLAY:
     case B_AGAIN:
     case B_RESTART:
-        sound(520, 40, 780, 70);
+        sound(SFX_TAP, 0);
         start_game();
         break;
     case B_SOUND:
         sv.sound = !sv.sound;
         save();
-        sound(500, 40, 0, 0);
+        sound(SFX_TAP, 0);
         break;
     case B_PAUSE:
         pause_game();
