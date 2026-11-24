@@ -727,6 +727,7 @@ static void next_from_name(void);
 
 static void key_press(char c)
 {
+    machine_ui_sound(c == 2 ? UI_KEY_DEL : c == 1 ? UI_KEY_DEL : c == ' ' ? UI_KEY_SPACE : UI_KEY);
     if (su.page == P_NAME) {
         if (c == 1) {
             su.kb_shift = !su.kb_shift;

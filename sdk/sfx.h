@@ -31,6 +31,9 @@ enum k86_sfx {
     SFX_NOTIFY,     /* a two-note chime */
     SFX_SHUTTER,    /* a camera shutter: two clicks */
     SFX_BOOT,       /* the start-up chime */
+    SFX_KEY,        /* a keyboard key: a soft low "thock" with a tiny click on top (vary semis 0..3 so it never repeats exactly) */
+    SFX_KEY_SPACE,  /* the space bar and Enter: deeper */
+    SFX_KEY_DEL,    /* Delete: a lighter tick */
     SFX_COUNT
 };
 
@@ -39,6 +42,8 @@ void k86_sfx_play(int id, int semis);
 /* The tunes: 0 bouncy and bright, 1 slow and icy, 2 driving and dark, 3 dreamy and spacey. -1: none. */
 void k86_sfx_music(int tune);
 void k86_sfx_pump(void);
+/* The mixer's overall level, percent (100 at first): for sounds meant to sit under everything else. */
+void k86_sfx_gain(int pct);
 /* 1 while anything is still sounding (keep the timer going). */
 int k86_sfx_busy(void);
 void k86_sfx_close(void);

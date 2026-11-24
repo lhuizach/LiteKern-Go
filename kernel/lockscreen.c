@@ -1236,6 +1236,7 @@ static void pin_add(char c)
 /* A key of the PIN pad. */
 static void pad_press(int k)
 {
+    machine_ui_sound(UI_KEY);
     if (k == 9) {
         if (ls.pwlen)
             ls.pw[--ls.pwlen] = '\0';

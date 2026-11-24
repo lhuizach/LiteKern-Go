@@ -179,6 +179,7 @@ static void press(const struct key *k)
 {
     switch (k->kind) {
     case K_CHAR: {
+        machine_ui_sound(UI_KEY);
         int up = is_letter(k) && shift;
         send(k->sc, k->shift || up);
         kprintf("osk: key %s%s\n", k->label, up ? " (shift)" : "");
@@ -188,13 +189,16 @@ static void press(const struct key *k)
     }
     case K_SPACE:
     case K_ENTER:
+        machine_ui_sound(UI_KEY_SPACE);
         send(k->sc, 0);
         kprintf("osk: key %s\n", k->label);
         break;
     case K_BACK:
+        machine_ui_sound(UI_KEY_DEL);
         send(KEY_BACKSPACE, 0);
         break;
     case K_SHIFT: {
+        machine_ui_sound(UI_KEY_DEL);
         uint32_t now = uptime_ms();
         if (shift == 1 && now - shift_ms <= DOUBLE_SHIFT_MS)
             shift = 2;                      /* twice quickly: caps lock */
@@ -205,6 +209,7 @@ static void press(const struct key *k)
         break;
     }
     case K_PAGE:
+        machine_ui_sound(UI_KEY_DEL);
         page = !page;
         kprintf("osk: page %s\n", page ? "123" : "ABC");
         break;
@@ -343,6 +348,7 @@ void osk_tick(void)
         return;
     uint32_t now = uptime_ms();
     if ((int32_t)(now - repeat_at) >= 0) {
+        machine_ui_sound(UI_KEY_DEL);
         send(KEY_BACKSPACE, 0);
         repeat_at = now + REPEAT_MS;
     }

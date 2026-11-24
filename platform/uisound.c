@@ -1,5 +1,6 @@
 /* LiteKern Go: the shell's own sounds (kernel/machine.h, machine_ui_sound): short effects from the SDK's synthesizer,
  * played by a helper process so the shell never waits. Only where there is a sound card (not in the PC tests). */
+#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -7,6 +8,7 @@
 #include "sdk/sfx.h"
 
 static int muted;
+static uint32_t rnd = 0x9e3779b9u;
 
 void machine_ui_mute(int m)
 {
@@ -19,6 +21,14 @@ void machine_ui_sound(int id)
     if (have < 0)
         have = access("/dev/snd/pcmC0D2p", F_OK) == 0;
     int vol = machine_volume();
+    static int quiet;
+    if (!quiet) {                       /* the shell's sounds sit under the apps' own: a little quieter */
+        k86_sfx_gain(55);
+        quiet = 1;
+    }
+    rnd ^= rnd << 13;
+    rnd ^= rnd >> 17;
+    rnd ^= rnd << 5;
     if (!have || muted || vol <= 0)
         return;
     switch (id) {
@@ -32,6 +42,9 @@ void machine_ui_sound(int id)
     case UI_VOLUME:  k86_sfx_shot(SFX_TAP, vol / 10); break;      /* the tick rises with the level */
     case UI_ON:      k86_sfx_shot(SFX_RESUME, 0); break;
     case UI_OFF:     k86_sfx_shot(SFX_PAUSE, 0); break;
+    case UI_KEY:       k86_sfx_shot(SFX_KEY, (int)(rnd >> 8 & 3)); break;
+    case UI_KEY_SPACE: k86_sfx_shot(SFX_KEY_SPACE, (int)(rnd >> 8 & 1)); break;
+    case UI_KEY_DEL:   k86_sfx_shot(SFX_KEY_DEL, (int)(rnd >> 8 & 1)); break;
     default: break;
     }
 }

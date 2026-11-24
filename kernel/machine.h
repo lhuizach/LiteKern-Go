@@ -28,7 +28,8 @@ void machine_set_airplane(int on);
 
 /* The shell's own sounds (platform/uisound.c): a small sound for a tap, lock, unlock, screenshot, volume change and so on.
  * Silent while the volume is 0 or machine_ui_mute(1) (do not disturb) is set. */
-enum { UI_TAP, UI_BACK, UI_LOCK, UI_UNLOCK, UI_SHUTTER, UI_BOOT, UI_NOTIFY, UI_VOLUME, UI_ON, UI_OFF };
+enum { UI_TAP, UI_BACK, UI_LOCK, UI_UNLOCK, UI_SHUTTER, UI_BOOT, UI_NOTIFY, UI_VOLUME, UI_ON, UI_OFF,
+       UI_KEY, UI_KEY_SPACE, UI_KEY_DEL };      /* the on-screen keyboard and the PIN pad */
 void machine_ui_sound(int id);
 void machine_ui_mute(int muted);
 /* LiteKern Go: a short buzz on the phone's vibrator; nothing on a machine without one. */

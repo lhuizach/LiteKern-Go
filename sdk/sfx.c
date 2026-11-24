@@ -33,7 +33,7 @@ struct voice {
 
 static struct voice v[VOICES];
 static int16_t sine_t[256];
-static int ready, opened, idle, music = -1, mstep, msamp;
+static int ready, opened, idle, music = -1, mstep, msamp, gain = 100;
 static uint32_t rng = 0x2545f491u;
 
 static void init(void)
@@ -191,6 +191,19 @@ void k86_sfx_play(int id, int semis)
         bell(390, 1568, 900, 60, semis);
         break;
     }
+    case SFX_KEY:
+        start(0, W_SINE, 280, 120, 42, 200, 1, semis);
+        start(0, W_NOISE, 5200, 1800, 16, 120, 1, 0);
+        start(0, W_TRI, 1900, 1300, 9, 28, 1, semis);
+        break;
+    case SFX_KEY_SPACE:
+        start(0, W_SINE, 175, 72, 62, 215, 1, semis);
+        start(0, W_NOISE, 3600, 1100, 24, 110, 1, 0);
+        break;
+    case SFX_KEY_DEL:
+        start(0, W_SINE, 340, 150, 34, 175, 1, semis);
+        start(0, W_NOISE, 6800, 2600, 13, 105, 1, 0);
+        break;
     case SFX_PAUSE:
         start(0, W_SINE, 700, 650, 90, 110, 2, semis);
         start(90, W_SINE, 500, 380, 130, 110, 2, semis);
@@ -320,7 +333,7 @@ static void render(int16_t *buf, int n)
         for (int k = 0; k < VOICES; k++)
             if (v[k].live)
                 mix += voice_sample(&v[k]);
-        mix = mix * 3 / 4;                      /* headroom for several voices at once */
+        mix = mix * 3 / 4 * gain / 100;         /* headroom for several voices at once */
         buf[i * 2] = buf[i * 2 + 1] = (int16_t)(mix > 32767 ? 32767 : mix < -32768 ? -32768 : mix);
     }
 }
@@ -464,6 +477,11 @@ void k86_sfx_shot(int id, int semis)
     shot_play(id, semis);
 }
 #endif
+
+void k86_sfx_gain(int pct)
+{
+    gain = pct < 0 ? 0 : pct > 200 ? 200 : pct;
+}
 
 void k86_sfx_close(void)
 {
