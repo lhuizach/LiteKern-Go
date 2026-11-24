@@ -9,7 +9,12 @@
 #include <unistd.h>
 
 #include "sdk/audio.h"
+#ifndef SFX_IN_SHELL
 #include "sdk/kern86.h"
+#else
+#include <stdio.h>
+#include <sys/wait.h>
+#endif
 
 #define RATE 48000
 #define VOICES 20
@@ -159,6 +164,33 @@ void k86_sfx_play(int id, int semis)
         bell(0, 520, 260, 80, semis);
         start(40, W_NOISE, 15000, 3000, 120, 120, 2, 0);
         break;
+    case SFX_LOCK:
+        bell(0, 1175, 220, 70, semis);
+        bell(100, 880, 330, 70, semis);
+        break;
+    case SFX_UNLOCK:
+        bell(0, 880, 200, 60, semis);
+        bell(85, 1175, 220, 65, semis);
+        bell(170, 1568, 420, 70, semis);
+        break;
+    case SFX_NOTIFY:
+        bell(0, 1319, 320, 85, semis);
+        bell(150, 1760, 520, 85, semis);
+        break;
+    case SFX_SHUTTER:
+        start(0, W_NOISE, 12000, 6000, 30, 180, 1, 0);
+        start(0, W_SINE, 1200, 800, 24, 70, 1, semis);
+        start(65, W_NOISE, 6000, 2500, 50, 150, 1, 0);
+        break;
+    case SFX_BOOT: {
+        static const int n[4] = { 523, 784, 1047, 1319 };
+        for (int i = 0; i < 4; i++) {
+            start(i * 130, W_TRI, n[i], n[i], 750, 70, 6, semis);
+            start(i * 130, W_SINE, n[i] * 2, n[i] * 2, 500, 25, 6, semis);
+        }
+        bell(390, 1568, 900, 60, semis);
+        break;
+    }
     case SFX_PAUSE:
         start(0, W_SINE, 700, 650, 90, 110, 2, semis);
         start(90, W_SINE, 500, 380, 130, 110, 2, semis);
@@ -324,7 +356,9 @@ void k86_sfx_pump(void)
     static int lastv = -1;
     int cv = k86_volume();
     if (cv != lastv) {                          /* the Log app shows the level the sound is being played at */
+#ifndef SFX_IN_SHELL
         k86_logf("sfx: volume %d%%", cv);
+#endif
         lastv = cv;
     }
     int space = k86_audio_space(), queued = k86_audio_buffer() - space, want = TARGET - queued;
@@ -343,25 +377,11 @@ void k86_sfx_pump(void)
 }
 
 /* ---- fire and forget: for apps whose timer isn't always running ---- */
-static pid_t shot_child;
+static pid_t shot_child __attribute__((unused));
 
-void k86_sfx_shot(int id, int semis)
+/* What the helper does: make the sound, play it to the end, go. */
+static void shot_play(int id, int semis)
 {
-    static int ignoring;
-    if (!ignoring) {
-        signal(SIGCHLD, SIG_IGN);               /* nobody waits for the helper: no zombies */
-        ignoring = 1;
-    }
-    int big = id == SFX_FAIL || id == SFX_WIN || id == SFX_LEVELUP || id == SFX_CRASH;
-    if (shot_child > 0 && kill(shot_child, 0) == 0) {
-        if (!big)
-            return;                             /* a small sound asked for while one plays is dropped */
-        kill(shot_child, SIGKILL);              /* a big one takes over */
-        usleep(15000);
-    }
-    shot_child = fork();
-    if (shot_child != 0)
-        return;
     memset(v, 0, sizeof(v));
     music = -1;
     k86_sfx_play(id, semis);
@@ -390,6 +410,60 @@ void k86_sfx_shot(int id, int semis)
     k86_audio_close();
     _exit(0);
 }
+
+#ifdef SFX_IN_SHELL
+/* In the shell SIGCHLD is the shell's own, so the helper forks once more and the first one is waited for at once.
+ * One sound at a time: asked while one plays, it is dropped. */
+#define SHOT_PID "/dev/shm/lkx-sfx.pid"
+
+void k86_sfx_shot(int id, int semis)
+{
+    FILE *f = fopen(SHOT_PID, "r");
+    if (f) {
+        int p = 0;
+        if (fscanf(f, "%d", &p) == 1 && p > 1 && kill((pid_t)p, 0) == 0) {
+            fclose(f);
+            return;
+        }
+        fclose(f);
+    }
+    pid_t c = fork();
+    if (c < 0)
+        return;
+    if (c > 0) {
+        waitpid(c, 0, 0);
+        return;
+    }
+    if (fork() != 0)
+        _exit(0);
+    f = fopen(SHOT_PID, "w");
+    if (f) {
+        fprintf(f, "%d\n", (int)getpid());
+        fclose(f);
+    }
+    shot_play(id, semis);
+}
+#else
+void k86_sfx_shot(int id, int semis)
+{
+    static int ignoring;
+    if (!ignoring) {
+        signal(SIGCHLD, SIG_IGN);               /* nobody waits for the helper: no zombies */
+        ignoring = 1;
+    }
+    int big = id == SFX_FAIL || id == SFX_WIN || id == SFX_LEVELUP || id == SFX_CRASH;
+    if (shot_child > 0 && kill(shot_child, 0) == 0) {
+        if (!big)
+            return;                             /* a small sound asked for while one plays is dropped */
+        kill(shot_child, SIGKILL);              /* a big one takes over */
+        usleep(15000);
+    }
+    shot_child = fork();
+    if (shot_child != 0)
+        return;
+    shot_play(id, semis);
+}
+#endif
 
 void k86_sfx_close(void)
 {

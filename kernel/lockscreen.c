@@ -1039,6 +1039,7 @@ static int start(int animate_from_desktop)
 
 void lockscreen_lock(void)
 {
+    machine_ui_sound(UI_LOCK);
     ls.login = 0;
     ls.who = users_current();
     ls.pick = ls.who > 0 ? ls.who : 0;
@@ -1081,6 +1082,7 @@ static void unlock(void)
     } else {
         kprintf("lock: unlocked\n");
     }
+    machine_ui_sound(UI_UNLOCK);
     if (screen_buffer(&ls.under) == 0 && screen_buffer(&ls.frame) == 0) {
         ls.menu_open = ls.hover = 0;
         draw_into(&ls.frame, 0, 0);         /* the lock screen as it was */

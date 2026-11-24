@@ -394,6 +394,7 @@ int main(int argc, char **argv)
     log_pointer(in.x, in.y, in.buttons, 1);
 #ifndef LKX_SELFTEST_GFX
     desktop_start();
+    machine_ui_sound(UI_BOOT);
     /* The first-run setup: on the phone when /extras/lkx-setup exists (made by a fresh install, or by hand),
      * on the PC with LKX_SETUP=1. */
     {

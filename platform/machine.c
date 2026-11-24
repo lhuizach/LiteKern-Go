@@ -45,6 +45,7 @@
 
 static int target;                  /* on the EeePC: the backlight and the clock are ours */
 static int zone = LKX_ZONE_DEFAULT;
+static int saved_airplane;              /* airplane mode: 1 on (kept in machine.txt) */
 static int saved_volume = 60;       /* the loudspeaker's level, 0-100 (apps read it from VOLUME_FILE) */
 #define VOLUME_FILE "/dev/shm/lkx-volume"
 static void write_volume_file(void);
@@ -152,13 +153,14 @@ static int write_brightness(int percent)
 
 static void save(void)
 {
-    char text[128];
+    char text[192];
     int b = brightness_now();
     int n = snprintf(text, sizeof(text), "timezone %s\n", lkx_zones[zone].name);
     if (b >= 0)
         n += snprintf(text + n, sizeof(text) - (size_t)n, "brightness %d\n", b);
     n += snprintf(text + n, sizeof(text) - (size_t)n, "touchpad %d\n", plat_touchpad_speed);
     n += snprintf(text + n, sizeof(text) - (size_t)n, "volume %d\n", saved_volume);
+    n += snprintf(text + n, sizeof(text) - (size_t)n, "airplane %d\n", saved_airplane);
     settings_write_file(MACHINE_FILE, text, (uint32_t)n);
 }
 
@@ -180,6 +182,8 @@ static void load(void)
         } else if (!strncmp(l, "volume ", 7)) {
             int v = atoi(l + 7);
             saved_volume = v < 0 ? 0 : v > 100 ? 100 : v;
+        } else if (!strncmp(l, "airplane ", 9)) {
+            saved_airplane = atoi(l + 9) ? 1 : 0;
         } else if (!strncmp(l, "touchpad ", 9)) {
             int t = atoi(l + 9);
             plat_touchpad_speed = t < 0 ? 0 : t > 100 ? 100 : t;
@@ -463,6 +467,17 @@ void machine_set_volume(int percent)
 {
     saved_volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     write_volume_file();
+}
+
+int machine_airplane(void)
+{
+    return saved_airplane;
+}
+
+void machine_set_airplane(int on)
+{
+    saved_airplane = on ? 1 : 0;
+    save();
 }
 
 void machine_volume_commit(void)

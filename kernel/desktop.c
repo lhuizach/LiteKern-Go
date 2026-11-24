@@ -694,7 +694,7 @@ static struct gfx_rect power_rect(void)
 
 /* The network icon, left of the power button (only with network hardware). */
 static struct k86_net net_shown;
-static int net_present(void) { return net_shown.wired != K86_NET_NONE || net_shown.wifi != K86_NET_NONE; }
+static int net_present(void) { return net_shown.wired != K86_NET_NONE || net_shown.wifi != K86_NET_NONE || machine_airplane(); }
 
 static struct gfx_rect net_rect(void)
 {
@@ -2104,7 +2104,17 @@ static void draw_topbar(void)
     draw_note_icons(clock_x + text_width(text, TEXT_BOLD) + 20, t->topbar_h / 2, bg);
     if (net_present()) {
         struct gfx_rect r = net_rect();
-        draw_net_icon(r.x + r.w / 2, r.y + r.h / 2, &net_shown, bg);
+        int cx0 = r.x + r.w / 2, cy0 = r.y + r.h / 2;
+        if (machine_airplane() && (net_shown.wifi == K86_NET_NONE || net_shown.wifi == K86_NET_OFF)) {
+            int cx = r.x + r.w / 2, cy = r.y + r.h / 2;                   /* a small plane: airplane mode is on */
+            gfx_thick_line(VS, VX(cx), VY(cy - B(9)), VX(cx), VY(cy + B(9)), B(2), bar_fg);
+            gfx_thick_line(VS, VX(cx), VY(cy - B(2)), VX(cx - B(9)), VY(cy + B(4)), B(2), bar_fg);
+            gfx_thick_line(VS, VX(cx), VY(cy - B(2)), VX(cx + B(9)), VY(cy + B(4)), B(2), bar_fg);
+            gfx_thick_line(VS, VX(cx), VY(cy + B(7)), VX(cx - B(4)), VY(cy + B(10)), B(2), bar_fg);
+            gfx_thick_line(VS, VX(cx), VY(cy + B(7)), VX(cx + B(4)), VY(cy + B(10)), B(2), bar_fg);
+        } else {
+            draw_net_icon(cx0, cy0, &net_shown, bg);
+        }
     }
     if (battery_present())
         draw_battery(battery_rect(), &machine_shown, bg);
@@ -4620,6 +4630,7 @@ static void menu_set(int open)
 
 static void launch(int i, struct gfx_rect from)
 {
+    machine_ui_sound(UI_TAP);
     const struct app *a = &builtin_apps[i];
     struct wm_window *w = app_win[i];
     if (w) {                            /* already open: bring it back */
@@ -5565,14 +5576,15 @@ static int tile_on(int i)
     case T_WIFI: return wifi_on();
     case T_DARK: return !theme_is_light();
     case T_DND:  return dnd;
+    case T_AIR:  return machine_airplane();
     default:     return 0;
     }
 }
 
-/* Airplane mode, Bluetooth and the flashlight have nothing behind them yet. */
+/* Bluetooth and the flashlight have nothing behind them yet. */
 static int tile_works(int i)
 {
-    if (i == T_AIR || i == T_BT || i == T_FLASH)
+    if (i == T_BT || i == T_FLASH)
         return 0;
     return i != T_WIFI || net_shown.wifi != K86_NET_NONE;
 }
@@ -5591,8 +5603,17 @@ static void open_named(const char *name, struct gfx_rect from)
 
 static void tile_tap(int i)
 {
+    machine_ui_sound(UI_TAP);
     switch (i) {
-    case T_AIR:
+    case T_AIR: {                           /* airplane mode: the radio off (Wi-Fi is all there is), back on when it ends */
+        int on = !machine_airplane();
+        machine_set_airplane(on);
+        net_wifi_set(!on);
+        machine_ui_sound(on ? UI_OFF : UI_ON);
+        show_toast(on ? "Airplane mode on" : "Airplane mode off");
+        kprintf("qs: airplane mode %s\n", on ? "on" : "off");
+        break;
+    }
     case T_BT:
     case T_FLASH:
         show_toast("Not available yet");
@@ -5621,6 +5642,7 @@ static void tile_tap(int i)
         break;
     case T_DND:
         dnd = !dnd;
+        machine_ui_mute(dnd);
         kprintf("qs: do not disturb %s\n", dnd ? "on" : "off");
         break;
     case T_LOCK:
@@ -6382,6 +6404,7 @@ static void vol_change(int up)
     volume = v < 0 ? 0 : v > 100 ? 100 : v;
     machine_set_volume(volume);
     kprintf("shell: volume %s, %d%%\n", up ? "up" : "down", volume);
+    machine_ui_sound(UI_VOLUME);
     vol_until = uptime_ms() + VOL_SHOW_MS;
     fx_start(&volv, 1);                 /* in from the left edge */
     shell_damage(vol_rect());
@@ -6472,6 +6495,7 @@ static void screenshot(void)
     } else {
         kprintf("shell: screenshot %s, %u KB\n", name, len / 1024);
         show_toast("Screenshot saved");
+        machine_ui_sound(UI_SHUTTER);
     }
 }
 
@@ -6830,6 +6854,12 @@ void desktop_tick(void)
     last_tick = ticks;
     struct k86_net n;                       /* the network and battery icons: redrawn when they change */
     net_status(&n);
+    static int air_applied;                 /* airplane mode survives a restart: Wi-Fi is turned off once it has appeared */
+    if (!air_applied && n.wifi != K86_NET_NONE) {
+        air_applied = 1;
+        if (machine_airplane() && n.wifi != K86_NET_OFF)
+            net_wifi_set(0);
+    }
     /* The icon shows only the battery: the other fields are zeroed in both copies so that the
      * comparison ignores them, and the brightness (which the control centre's slider reads) is
      * kept apart and put back. */

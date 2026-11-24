@@ -26,6 +26,11 @@ enum k86_sfx {
     SFX_RESUME,     /* two rising notes */
     SFX_COIN,       /* a two-note sparkle: points */
     SFX_CRASH,      /* a car crash: a burst of noise, a boom and a clang */
+    SFX_LOCK,       /* the phone locking: two soft falling bells */
+    SFX_UNLOCK,     /* the phone unlocking: three soft rising bells */
+    SFX_NOTIFY,     /* a two-note chime */
+    SFX_SHUTTER,    /* a camera shutter: two clicks */
+    SFX_BOOT,       /* the start-up chime */
     SFX_COUNT
 };
 
