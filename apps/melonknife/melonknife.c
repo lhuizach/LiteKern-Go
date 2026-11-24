@@ -16,6 +16,7 @@
 #include "kernel/theme.h"
 #include "kernel/widget.h"
 #include "sdk/audio.h"
+#include "sdk/sfx.h"
 #include "sdk/kern86.h"
 
 #define SAVE_FILE "melonknife.dat"
@@ -94,6 +95,7 @@ static int shake;                       /* the melon's shake, px */
 static int hud_dirty = 1, foot_dirty = 1;
 static struct gfx_rect btn_play, btn_menu, btn_pause, chip[4];
 static int pressed;                     /* 1 first button, 2 second, 3.. a world */
+static int hidden;                      /* the menu is not in front: no sound, no timer, until a touch */
 static int fail_obs;                    /* the knife that failed the level hit an obstacle */
 static uint32_t perf_sum;
 static int perf_n, perf_max;
@@ -362,6 +364,7 @@ static void start_level(void)
             stuck[nstuck++] = a;
     }
     left = imin(4 + idx / 4 + w, 9);
+    k86_sfx_music(w);
     screen = S_PLAY;
     screen_at = now_ms;
     hud_dirty = foot_dirty = 1;
@@ -422,7 +425,7 @@ static void throw_knife(void)
         return;
     flying = 1;
     fly_y = ready_y();
-    k86_audio_beep(520, 25, 0, 0);
+    k86_sfx_play(SFX_WHOOSH, 0);
 }
 
 static void land(void)
@@ -447,7 +450,9 @@ static void land(void)
         fall_vx = (from < rel || (from - rel > 18000)) ? 380 : -380;
         fall_rot = 0;
         add_burst(cx, cy + MELON_R, 14, C_STEEL, C_STEEL_DK, 0);
-        k86_audio_beep(220, 90, 147, 220);
+        k86_sfx_music(-1);
+        k86_sfx_play(SFX_CLINK, fail_obs ? -5 : 0);
+        k86_sfx_play(SFX_FAIL, 0);
         shake = 20;
         screen = S_FAIL;
         screen_at = now_ms;
@@ -463,14 +468,16 @@ static void land(void)
     add_burst(cx, cy + MELON_R - 10, 14, th->burst0, th->burst1, 0);
     if (left <= 0) {                                 /* the melon is cleared: it bursts */
         add_burst(cx, cy, PART_MAX, th->burst0, th->burst1, 1);
-        k86_audio_beep(660, 70, 990, 140);
+        k86_sfx_play(level > LEVELS ? SFX_WIN : SFX_LEVELUP, 0);
+        k86_sfx_play(SFX_SPLAT, 0);
         shake = 14;
         level++;
         screen = S_CLEAR;
         screen_at = now_ms;
         return;
     }
-    k86_audio_beep(330, 35, 0, 0);
+    k86_sfx_play(SFX_THUD, 0);
+    k86_sfx_play(SFX_COIN, imin(2 * (score - score0 - 1), 22));
 }
 
 /* ---- drawing ---- */
@@ -791,6 +798,7 @@ static void to_menu(void)
     nstuck = nobs = 0;
     flying = 0;
     set_theme(theme_of(sv.run_valid ? imax(1, (int)sv.run_level) : 1));
+    k86_sfx_music(cur_theme);
     layout();
     redraw(1);
 }
@@ -802,12 +810,16 @@ static void pause_game(void)
     screen = S_PAUSE;
     pressed = 0;
     layout();
-    k86_timer_set(0);
+    k86_sfx_close();
+    k86_sfx_play(SFX_PAUSE, 0);
+    k86_timer_set(FRAME_MS);
     redraw(1);
 }
 
 static void resume_game(void)
 {
+    k86_sfx_play(SFX_RESUME, 0);
+    k86_sfx_music(cur_theme);
     screen = S_PLAY;
     pressed = 0;
     layout();
@@ -825,13 +837,21 @@ static void frame(void)
     last_frame = now_ms;
     if (shake > 0)
         shake = imax(0, shake - 1);
+    if (screen == S_MENU && !in_front()) {
+        hidden = 1;
+        k86_sfx_close();
+        k86_timer_set(0);
+        return;
+    }
+    k86_sfx_pump();
     if (screen == S_MENU) {
         mel_ang = norm(mel_ang + 4500 * dt / 1000);        /* the melon turns on the menu, too */
         redraw(0);
         return;
     }
-    if (screen == S_OVER || screen == S_PAUSE) {
-        k86_timer_set(0);
+    if (screen == S_OVER || screen == S_PAUSE) {            /* nothing moves: the timer only runs for the last of the sound */
+        if (!k86_sfx_busy())
+            k86_timer_set(0);
         return;
     }
     in_level_ms += dt;
@@ -871,6 +891,7 @@ static void frame(void)
             sv.run_valid = 0;
             sv.best = LEVELS;
             save();
+            k86_sfx_music(-1);
             screen = S_OVER;
             layout();
             k86_timer_set(0);
@@ -881,6 +902,8 @@ static void frame(void)
     }
     if (!in_front() && screen == S_PLAY) {
         pause_game();
+        k86_sfx_close();
+        k86_timer_set(0);
         return;
     }
     redraw(0);
@@ -926,8 +949,10 @@ static void act(int id)
     } else if (screen == S_PAUSE) {
         if (id == 1)
             resume_game();
-        else if (id == 2)
+        else if (id == 2) {
+            k86_sfx_play(SFX_BACK, 0);
             to_menu();
+        }
     }
 }
 
@@ -947,6 +972,8 @@ static void pointer(const struct k86_event *ev)
     if (screen == S_MENU || screen == S_OVER || screen == S_PAUSE) {
         if (down && changed) {
             pressed = press_id(ev->x, ev->y);
+            if (pressed)
+                k86_sfx_play(SFX_TAP, 0);
             redraw(1);
         } else if (!down && changed) {
             int id = pressed;
@@ -976,6 +1003,7 @@ int main(void)
     mel_ang = 1200;
     k86_timer_set(FRAME_MS);
     redraw(1);
+    k86_sfx_music(cur_theme);
     k86_log("melonknife: open");
     for (;;) {
         struct k86_event ev;
@@ -984,6 +1012,11 @@ int main(void)
             return 1;
         switch (ev.type) {
         case K86_EVENT_POINTER:
+            if (hidden) {
+                hidden = 0;
+                if (screen == S_MENU)
+                    k86_sfx_music(cur_theme);
+            }
             pointer(&ev);
             break;
         case K86_EVENT_KEY:
@@ -1013,12 +1046,13 @@ int main(void)
             redraw(1);
             break;
         case K86_EVENT_CLOSE:
+            k86_sfx_close();
             k86_timer_set(0);
             return 0;
         default:
             break;
         }
-        if (screen == S_MENU || screen == S_PLAY || screen == S_CLEAR || screen == S_FAIL)
+        if (!hidden && (screen == S_MENU || screen == S_PLAY || screen == S_CLEAR || screen == S_FAIL || ((screen == S_OVER || screen == S_PAUSE) && k86_sfx_busy())))
             k86_timer_set(FRAME_MS);
     }
 }
