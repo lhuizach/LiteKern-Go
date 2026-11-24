@@ -63,6 +63,7 @@ static const struct world themes[4] = {
 struct save {
     uint32_t magic, best;                /* best: the furthest level reached */
     uint32_t run_valid, run_level, run_score;       /* the game to carry on: it is saved when each level starts */
+    uint32_t off;                        /* 1: no sound effects, 2: no music (older saves are 20 bytes: nothing off) */
 };
 
 struct particle {
@@ -93,12 +94,23 @@ static struct particle parts[PART_MAX];
 static int pulse;                       /* the melon's bump when a knife lands, px */
 static int shake;                       /* the melon's shake, px */
 static int hud_dirty = 1, foot_dirty = 1;
-static struct gfx_rect btn_play, btn_menu, btn_pause, chip[4];
+static struct gfx_rect btn_play, btn_menu, btn_pause, btn_music, btn_sound, chip[4];
 static int pressed;                     /* 1 first button, 2 second, 3.. a world */
 static int hidden;                      /* the menu is not in front: no sound, no timer, until a touch */
 static int fail_obs;                    /* the knife that failed the level hit an obstacle */
 static uint32_t perf_sum;
 static int perf_n, perf_max;
+
+static void sfx(int id, int semis)
+{
+    if (!(sv.off & 1))
+        k86_sfx_play(id, semis);
+}
+
+static void tune(int t)
+{
+    k86_sfx_music(sv.off & 2 ? -1 : t);
+}
 
 static int imin(int a, int b) { return a < b ? a : b; }
 static int imax(int a, int b) { return a > b ? a : b; }
@@ -167,7 +179,9 @@ static void load(void)
     memset(&sv, 0, sizeof(sv));
     sv.magic = SAVE_MAGIC;
     vol = k86_home(home);
-    if (vol >= 0 && k86_read(vol, home, SAVE_FILE, &s, sizeof(s)) == (int)sizeof(s) && s.magic == SAVE_MAGIC)
+    memset(&s, 0, sizeof(s));
+    int n = vol >= 0 ? k86_read(vol, home, SAVE_FILE, &s, sizeof(s)) : -1;
+    if ((n == (int)sizeof(s) || n == 20) && s.magic == SAVE_MAGIC)
         sv = s;
 }
 
@@ -364,7 +378,7 @@ static void start_level(void)
             stuck[nstuck++] = a;
     }
     left = imin(4 + idx / 4 + w, 9);
-    k86_sfx_music(w);
+    tune(w);
     screen = S_PLAY;
     screen_at = now_ms;
     hud_dirty = foot_dirty = 1;
@@ -425,7 +439,7 @@ static void throw_knife(void)
         return;
     flying = 1;
     fly_y = ready_y();
-    k86_sfx_play(SFX_WHOOSH, 0);
+    sfx(SFX_WHOOSH, 0);
 }
 
 static void land(void)
@@ -451,8 +465,8 @@ static void land(void)
         fall_rot = 0;
         add_burst(cx, cy + MELON_R, 14, C_STEEL, C_STEEL_DK, 0);
         k86_sfx_music(-1);
-        k86_sfx_play(SFX_CLINK, fail_obs ? -5 : 0);
-        k86_sfx_play(SFX_FAIL, 0);
+        sfx(SFX_CLINK, fail_obs ? -5 : 0);
+        sfx(SFX_FAIL, 0);
         shake = 20;
         screen = S_FAIL;
         screen_at = now_ms;
@@ -468,16 +482,16 @@ static void land(void)
     add_burst(cx, cy + MELON_R - 10, 14, th->burst0, th->burst1, 0);
     if (left <= 0) {                                 /* the melon is cleared: it bursts */
         add_burst(cx, cy, PART_MAX, th->burst0, th->burst1, 1);
-        k86_sfx_play(level > LEVELS ? SFX_WIN : SFX_LEVELUP, 0);
-        k86_sfx_play(SFX_SPLAT, 0);
+        sfx(level > LEVELS ? SFX_WIN : SFX_LEVELUP, 0);
+        sfx(SFX_SPLAT, 0);
         shake = 14;
         level++;
         screen = S_CLEAR;
         screen_at = now_ms;
         return;
     }
-    k86_sfx_play(SFX_THUD, 0);
-    k86_sfx_play(SFX_COIN, imin(2 * (score - score0 - 1), 22));
+    sfx(SFX_THUD, 0);
+    sfx(SFX_COIN, imin(2 * (score - score0 - 1), 22));
 }
 
 /* ---- drawing ---- */
@@ -609,6 +623,8 @@ static void draw_hud(void)
     if (screen == S_MENU) {
         text_c(canvas.w / 2, 14, "MELON KNIFE", TEXT_LARGE, C_TEXT);
         text_c(canvas.w / 2, 94, "100 levels  -  4 worlds", TEXT_SMALL, C_DIM);
+        draw_button(btn_music, sv.off & 2 ? "Music off" : "Music on", 0, pressed == 7);
+        draw_button(btn_sound, sv.off & 1 ? "Sound off" : "Sound on", 0, pressed == 8);
         return;
     }
     snprintf(num, sizeof(num), "%d", score);
@@ -742,6 +758,8 @@ static void layout(void)
     btn_play = (struct gfx_rect){ (canvas.w - bwid) / 2, ov ? 690 : box.y + box.h + 53, bwid, ov ? 104 : 96 };
     btn_menu = (struct gfx_rect){ (canvas.w - bwid) / 2, ov ? 810 : canvas.h - 220, bwid, ov ? 84 : 72 };
     btn_pause = (struct gfx_rect){ canvas.w - 132, 14, 120, 110 };
+    btn_music = (struct gfx_rect){ 10, 74, 190, 56 };
+    btn_sound = (struct gfx_rect){ canvas.w - 200, 74, 190, 56 };
     for (int i = 0; i < 4; i++)
         chip[i] = (struct gfx_rect){ i * canvas.w / 4, canvas.h - 134, canvas.w / 4, 130 };
 }
@@ -798,7 +816,7 @@ static void to_menu(void)
     nstuck = nobs = 0;
     flying = 0;
     set_theme(theme_of(sv.run_valid ? imax(1, (int)sv.run_level) : 1));
-    k86_sfx_music(cur_theme);
+    tune(cur_theme);
     layout();
     redraw(1);
 }
@@ -811,15 +829,15 @@ static void pause_game(void)
     pressed = 0;
     layout();
     k86_sfx_close();
-    k86_sfx_play(SFX_PAUSE, 0);
+    sfx(SFX_PAUSE, 0);
     k86_timer_set(FRAME_MS);
     redraw(1);
 }
 
 static void resume_game(void)
 {
-    k86_sfx_play(SFX_RESUME, 0);
-    k86_sfx_music(cur_theme);
+    sfx(SFX_RESUME, 0);
+    tune(cur_theme);
     screen = S_PLAY;
     pressed = 0;
     layout();
@@ -925,10 +943,15 @@ static int press_id(int x, int y)
         return 1;
     if (hit(btn_menu, x, y) && (screen != S_MENU || sv.run_valid) && !(screen == S_OVER && won && 0))
         return 2;
-    if (screen == S_MENU)
+    if (screen == S_MENU) {
+        if (hit(btn_music, x, y))
+            return 7;
+        if (hit(btn_sound, x, y))
+            return 8;
         for (int i = 0; i < 4; i++)
             if (hit(chip[i], x, y) && unlocked(i))
                 return 3 + i;
+    }
     return 0;
 }
 
@@ -939,7 +962,13 @@ static void act(int id)
             start_game(imax(1, imin(LEVELS, (int)sv.run_level)), (int)sv.run_score);
         else if (id == 1 || id == 2)
             start_game(1, 0);
-        else if (id >= 3)
+        else if (id == 7 || id == 8) {                   /* the sound switches */
+            sv.off ^= id == 7 ? 2u : 1u;
+            save();
+            tune(cur_theme);
+            sfx(SFX_TAP, 0);
+            redraw(1);
+        } else if (id >= 3 && id <= 6)
             start_game((id - 3) * PER_WORLD + 1, 0);
     } else if (screen == S_OVER) {
         if (id == 1)
@@ -950,7 +979,7 @@ static void act(int id)
         if (id == 1)
             resume_game();
         else if (id == 2) {
-            k86_sfx_play(SFX_BACK, 0);
+            sfx(SFX_BACK, 0);
             to_menu();
         }
     }
@@ -973,7 +1002,7 @@ static void pointer(const struct k86_event *ev)
         if (down && changed) {
             pressed = press_id(ev->x, ev->y);
             if (pressed)
-                k86_sfx_play(SFX_TAP, 0);
+                sfx(SFX_TAP, 0);
             redraw(1);
         } else if (!down && changed) {
             int id = pressed;
@@ -1003,7 +1032,7 @@ int main(void)
     mel_ang = 1200;
     k86_timer_set(FRAME_MS);
     redraw(1);
-    k86_sfx_music(cur_theme);
+    tune(cur_theme);
     k86_log("melonknife: open");
     for (;;) {
         struct k86_event ev;
@@ -1015,7 +1044,7 @@ int main(void)
             if (hidden) {
                 hidden = 0;
                 if (screen == S_MENU)
-                    k86_sfx_music(cur_theme);
+                    tune(cur_theme);
             }
             pointer(&ev);
             break;

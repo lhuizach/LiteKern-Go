@@ -9,11 +9,12 @@
 #include <unistd.h>
 
 #include "sdk/audio.h"
+#include "sdk/kern86.h"
 
 #define RATE 48000
 #define VOICES 20
 #define CHUNK 256
-#define TARGET 3000                     /* frames kept queued ahead: about 60 ms, enough to ride out a late timer tick */
+#define TARGET 4800                     /* frames kept queued ahead: about 100 ms, to ride out a late timer tick (a gap in the sound is a click or a buzz) */
 
 enum { W_SINE, W_TRI, W_SQUARE, W_SAW, W_NOISE };
 
@@ -320,6 +321,12 @@ void k86_sfx_pump(void)
         opened = 1;
     }
     idle = 0;
+    static int lastv = -1;
+    int cv = k86_volume();
+    if (cv != lastv) {                          /* the Log app shows the level the sound is being played at */
+        k86_logf("sfx: volume %d%%", cv);
+        lastv = cv;
+    }
     int space = k86_audio_space(), queued = k86_audio_buffer() - space, want = TARGET - queued;
     if (want > space)
         want = space;
