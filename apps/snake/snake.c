@@ -129,7 +129,7 @@ static struct floater floats[FLOAT_MAX];
 static uint32_t last_frame;
 static uint32_t front_checked;
 static int swiping, swipe_x, swipe_y;
-static int hdr_dirty;
+static int hdr_dirty, hdr_drawn;           /* hdr_drawn: the header was redrawn this frame, so it must be shown too */
 static int fading;
 
 /* ---- small helpers ---- */
@@ -1162,6 +1162,7 @@ static void frame(void)
         if (fading || hdr_dirty || (int)(now_ms - score_flash) < 400) {
             draw_game_full(0, 0, f, 0);
             hdr_dirty = 0;
+            hdr_drawn = 1;
         } else {
             draw_board(0, 0, f, 0);
             if (bonus_on)
@@ -1202,10 +1203,11 @@ static void frame(void)
         else
             gfx_darken(&canvas, 0, 0, canvas.w, canvas.h, 255 - t * 255 / 220);
     }
-    if (screen == S_PLAY && !fading && !counting && !hdr_dirty && !bonus_on)
+    if (screen == S_PLAY && !fading && !counting && !hdr_drawn && !bonus_on)
         k86_present(board_r.x - 14, board_r.y - 14, board_r.w + 28, board_r.h + 28);
     else
         k86_present(0, 0, canvas.w, canvas.h);
+    hdr_drawn = 0;
 }
 
 static void press_action(int id)
