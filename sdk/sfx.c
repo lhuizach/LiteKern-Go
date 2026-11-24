@@ -339,6 +339,7 @@ void k86_sfx_pump(void)
             break;
         want -= n;
     }
+    k86_audio_start();                          /* we keep less queued than the stream waits for before it starts */
 }
 
 /* ---- fire and forget: for apps whose timer isn't always running ---- */
@@ -382,6 +383,7 @@ void k86_sfx_shot(int id, int semis)
         render(buf, n);
         if (k86_audio_write(buf, n) < 0)
             break;
+        k86_audio_start();
     }
     for (int i = 0; i < 100 && k86_audio_space() < k86_audio_buffer(); i++)    /* the last of it plays out */
         usleep(5000);

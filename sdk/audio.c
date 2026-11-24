@@ -253,6 +253,16 @@ void k86_audio_flush(void)
     ioctl(pcm, SNDRV_PCM_IOCTL_PREPARE);
 }
 
+void k86_audio_start(void)
+{
+    if (pcm < 0)
+        return;
+    struct snd_pcm_status st;
+    memset(&st, 0, sizeof(st));
+    if (ioctl(pcm, SNDRV_PCM_IOCTL_STATUS, &st) == 0 && st.state == SNDRV_PCM_STATE_PREPARED)
+        ioctl(pcm, SNDRV_PCM_IOCTL_START);
+}
+
 void k86_audio_close(void)
 {
     if (pcm < 0)
@@ -309,6 +319,7 @@ void k86_audio_tone(int hz, int ms)
         phase += inc * (uint32_t)w;             /* only w frames went in: carry on from there */
         done += w;
     }
+    k86_audio_start();                          /* (a beep is shorter than the ring: it would never start by itself) */
     usleep((unsigned)((uint64_t)2 * period * 1000000ull / (unsigned)rate));   /* the last of it is still in the ring */
     k86_audio_close();
 }

@@ -32,6 +32,9 @@ int k86_audio_buffer(void);
  * It does NOT silence the output: the hardware keeps playing the last of the ring over and over.
  * To stop the sound (a pause, the end), k86_audio_close(); open again to carry on. */
 void k86_audio_flush(void);
+/* Start playing what has been written, at once. The stream normally starts only once half the ring (6144 frames,
+ * 128 ms) is in; a sound shorter than that, or a mixer that keeps less than that queued, needs this after its writes. */
+void k86_audio_start(void);
 void k86_audio_close(void);
 
 /* The volume, 0-100, as the shell has it now. */
